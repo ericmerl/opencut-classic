@@ -8,6 +8,12 @@ import {
 } from "@/commands/timeline";
 import type { EditorCore } from "@/core";
 import { processMediaAssets } from "@/media/processing";
+import { coerceParamValue } from "@/params";
+import {
+	buildElementParamValues,
+	getElementParam,
+	writeElementParamValue,
+} from "@/params/registry";
 import type { TimelineElement, TimelineTrack } from "@/timeline";
 import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import { DEFAULTS } from "@/timeline/defaults";
@@ -419,6 +425,37 @@ export class EditorAutomation {
 				retainSide: operation.retainSide,
 			});
 		}
+		if (operation.kind === "set_params") {
+			const entries = Object.entries(operation.params);
+			if (entries.length === 0) throw new Error("params cannot be empty");
+			let updatedElement = element;
+			for (const [key, requestedValue] of entries) {
+				const param = getElementParam({ element: updatedElement, key });
+				if (!param) {
+					throw new Error(
+						`parameter ${key} is not supported for ${element.type} elements`,
+					);
+				}
+				const value = coerceParamValue({ param, value: requestedValue });
+				if (value === null) {
+					throw new Error(`invalid value for parameter ${key}`);
+				}
+				updatedElement = writeElementParamValue({
+					element: updatedElement,
+					param,
+					value,
+				});
+			}
+			return new UpdateElementsCommand({
+				updates: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+						patch: updatedElement,
+					},
+				],
+			});
+		}
 		assertMediaTime(operation.startTime, "startTime", true);
 		if (operation.kind === "move") {
 			return new UpdateElementsCommand({
@@ -538,7 +575,7 @@ export class EditorAutomation {
 			duration: element.duration,
 			trimStart: element.trimStart,
 			trimEnd: element.trimEnd,
-			params: { ...element.params },
+			params: buildElementParamValues({ element }),
 			...("mediaId" in element ? { mediaId: element.mediaId } : {}),
 			...("sourceType" in element ? { sourceType: element.sourceType } : {}),
 			...("sourceUrl" in element ? { sourceUrl: element.sourceUrl } : {}),

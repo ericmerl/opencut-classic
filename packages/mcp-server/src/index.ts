@@ -45,7 +45,7 @@ function createServer(): McpServer {
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Atomically insert text, delete, move, split, or trim timeline elements. Read the project first and use its current revision.",
+				"Atomically insert text, delete, move, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
 			inputSchema: z.object({
 				projectId: z.string().min(1),
 				operationId: z.string().min(1),
@@ -70,6 +70,19 @@ function createServer(): McpServer {
 								trackId: z.string().min(1),
 								elementId: z.string().min(1),
 								startTime: z.number().int().nonnegative(),
+							}),
+							z.object({
+								kind: z.literal("set_params"),
+								trackId: z.string().min(1),
+								elementId: z.string().min(1),
+								params: z
+									.record(
+										z.string(),
+										z.union([z.string(), z.number(), z.boolean()]),
+									)
+									.refine((value) => Object.keys(value).length > 0, {
+										message: "params cannot be empty",
+									}),
 							}),
 							z.object({
 								kind: z.literal("trim"),

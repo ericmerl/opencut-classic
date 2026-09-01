@@ -76,6 +76,12 @@ export type AutomationEditOperation =
 			startTime: MediaTime;
 	  }
 	| {
+			kind: "set_params";
+			trackId: string;
+			elementId: string;
+			params: Record<string, string | number | boolean>;
+	  }
+	| {
 			kind: "trim";
 			trackId: string;
 			elementId: string;
