@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
+import { calculateNormalizationGain } from "./audio-normalization";
 import {
 	createProjectInputSchema,
 	editPlanInputSchema,
@@ -20,6 +21,10 @@ const completedExports = new Map<
 	{ fingerprint: string; result: Record<string, unknown> }
 >();
 const completedProjectOperations = new Map<
+	string,
+	{ fingerprint: string; result: Record<string, unknown> }
+>();
+const completedNormalizations = new Map<
 	string,
 	{ fingerprint: string; result: Record<string, unknown> }
 >();
@@ -87,10 +92,41 @@ function createServer(): McpServer {
 	);
 
 	server.registerTool(
+		"opencut_analyze_audio",
+		{
+			description:
+				"Measure the active timeline mix before export mastering, including integrated LUFS, sample peak, estimated true peak, and the uniform gain range available without clipping OpenCut volume controls.",
+			inputSchema: z.object({
+				projectId: z.string().min(1),
+				expectedRevision: z.number().int().nonnegative(),
+			}),
+		},
+		async (params) =>
+			toolResult(await bridge.request("analyze_audio", params, 5 * 60_000)),
+	);
+
+	server.registerTool(
+		"opencut_normalize_audio",
+		{
+			description:
+				"Measure and normalize the active timeline mix to a target integrated loudness while respecting a true-peak ceiling and preserving relative clip levels and volume automation.",
+			inputSchema: z.object({
+				projectId: z.string().min(1),
+				operationId: z.string().min(1),
+				expectedRevision: z.number().int().nonnegative(),
+				targetLufs: z.number().min(-36).max(-5).default(-14),
+				maxTruePeakDbtp: z.number().min(-9).max(0).default(-1),
+				maxGainDb: z.number().min(0).max(20).default(20),
+			}),
+		},
+		async (input) => toolResult(await normalizeAudio(input)),
+	);
+
+	server.registerTool(
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Atomically update project settings, create or configure tracks, set per-clip audio gain, mute, or linear fades, create, update, retime, or remove keyframes, create, update, or remove clip transitions, insert text or timed caption batches, delete, move, retime, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
+				"Atomically update project settings, create or configure tracks, set per-clip audio gain, mute, linear fades, or uniform mix gain, create, update, retime, or remove keyframes, create, update, or remove clip transitions, insert text or timed caption batches, delete, move, retime, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
 			inputSchema: editPlanInputSchema,
 		},
 		async (plan) => toolResult(await bridge.request("apply_edit_plan", plan)),
@@ -232,6 +268,83 @@ async function runProjectOperation({
 	return result;
 }
 
+async function normalizeAudio(input: {
+	projectId: string;
+	operationId: string;
+	expectedRevision: number;
+	targetLufs: number;
+	maxTruePeakDbtp: number;
+	maxGainDb: number;
+}): Promise<unknown> {
+	const fingerprint = JSON.stringify(input);
+	const prior = completedNormalizations.get(input.operationId);
+	if (prior) {
+		if (prior.fingerprint !== fingerprint) {
+			throw new Error(
+				"operationId was already used for a different audio normalization",
+			);
+		}
+		return { ...prior.result, status: "replayed" };
+	}
+	const beforeResult = await bridge.request(
+		"analyze_audio",
+		{
+			projectId: input.projectId,
+			expectedRevision: input.expectedRevision,
+		},
+		5 * 60_000,
+	);
+	if (!isAnalyzedAudio(beforeResult)) return beforeResult;
+	const before = beforeResult.analysis;
+	if (before.integratedLufs === null || before.estimatedTruePeakDbtp === null) {
+		return {
+			status: "rejected",
+			reason: "audible timeline mix is silent or below the loudness gate",
+			analysis: before,
+		};
+	}
+	const { appliedGainDb, limitedBy } = calculateNormalizationGain({
+		integratedLufs: before.integratedLufs,
+		estimatedTruePeakDbtp: before.estimatedTruePeakDbtp,
+		targetLufs: input.targetLufs,
+		maxTruePeakDbtp: input.maxTruePeakDbtp,
+		maxGainDb: input.maxGainDb,
+		minimumGainDb: before.minimumGainDb,
+		maximumGainDb: before.maximumGainDb,
+	});
+	const mutation = await bridge.request(
+		"apply_edit_plan",
+		{
+			projectId: input.projectId,
+			operationId: input.operationId,
+			expectedRevision: input.expectedRevision,
+			description: `Normalize timeline audio to ${input.targetLufs} LUFS`,
+			operations: [{ kind: "adjust_mix_gain", gainDb: appliedGainDb }],
+		},
+		5 * 60_000,
+	);
+	if (!isAppliedMutation(mutation)) return mutation;
+	const afterResult = await bridge.request(
+		"analyze_audio",
+		{ projectId: input.projectId, expectedRevision: mutation.revision },
+		5 * 60_000,
+	);
+	const result = {
+		status: "normalized",
+		operationId: input.operationId,
+		revision: mutation.revision,
+		targetLufs: input.targetLufs,
+		maxTruePeakDbtp: input.maxTruePeakDbtp,
+		appliedGainDb,
+		limitedBy,
+		before,
+		after: isAnalyzedAudio(afterResult) ? afterResult.analysis : afterResult,
+		mutation,
+	};
+	completedNormalizations.set(input.operationId, { fingerprint, result });
+	return result;
+}
+
 function parsePort(value: string): number {
 	const parsed = Number(value);
 	if (!Number.isInteger(parsed) || parsed < 1024 || parsed > 65535) {
@@ -279,4 +392,42 @@ function isActivatedProject(
 	if (!value || typeof value !== "object") return false;
 	const status = (value as Record<string, unknown>).status;
 	return status === "created" || status === "opened";
+}
+
+interface AudioAnalysisRecord {
+	integratedLufs: number | null;
+	estimatedTruePeakDbtp: number | null;
+	minimumGainDb: number;
+	maximumGainDb: number;
+	[key: string]: unknown;
+}
+
+function isAnalyzedAudio(value: unknown): value is Record<string, unknown> & {
+	status: "analyzed";
+	analysis: AudioAnalysisRecord;
+} {
+	if (!value || typeof value !== "object") return false;
+	const record = value as Record<string, unknown>;
+	if (record.status !== "analyzed" || !record.analysis) return false;
+	const analysis = record.analysis as Record<string, unknown>;
+	return (
+		(analysis.integratedLufs === null ||
+			typeof analysis.integratedLufs === "number") &&
+		(analysis.estimatedTruePeakDbtp === null ||
+			typeof analysis.estimatedTruePeakDbtp === "number") &&
+		typeof analysis.minimumGainDb === "number" &&
+		typeof analysis.maximumGainDb === "number"
+	);
+}
+
+function isAppliedMutation(value: unknown): value is Record<string, unknown> & {
+	status: "applied" | "replayed";
+	revision: number;
+} {
+	if (!value || typeof value !== "object") return false;
+	const record = value as Record<string, unknown>;
+	return (
+		(record.status === "applied" || record.status === "replayed") &&
+		typeof record.revision === "number"
+	);
 }

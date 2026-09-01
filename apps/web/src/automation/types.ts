@@ -91,6 +91,38 @@ export interface AutomationProjectListResult {
 	projects: AutomationProjectSummary[];
 }
 
+export interface AutomationAudioAnalysisRequest {
+	projectId: string;
+	expectedRevision: number;
+}
+
+export interface AutomationAudioAnalysis {
+	integratedLufs: number | null;
+	samplePeakDbfs: number | null;
+	estimatedTruePeakDbtp: number | null;
+	durationSeconds: number;
+	channels: number;
+	sampleRate: number;
+	analyzedBlocks: number;
+	minimumGainDb: number;
+	maximumGainDb: number;
+	affectedElementCount: number;
+}
+
+export type AutomationAudioAnalysisResult =
+	| {
+			status: "analyzed";
+			projectId: string;
+			revision: number;
+			analysis: AutomationAudioAnalysis;
+	  }
+	| {
+			status: "conflict";
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; reason: string };
+
 export interface AutomationCreateProjectRequest {
 	operationId: string;
 	name: string;
@@ -179,6 +211,10 @@ export type AutomationEditOperation =
 				outDuration: MediaTime;
 				floorDb: number;
 			};
+	  }
+	| {
+			kind: "adjust_mix_gain";
+			gainDb: number;
 	  }
 	| {
 			kind: "upsert_keyframe";

@@ -198,6 +198,16 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			{ message: "at least one audio control is required" },
 		),
 	z.object({
+		kind: z.literal("adjust_mix_gain"),
+		gainDb: z
+			.number()
+			.min(-60)
+			.max(20)
+			.describe(
+				"Uniform gain adjustment in dB for every audible timeline element and its volume keyframes.",
+			),
+	}),
+	z.object({
 		kind: z.literal("upsert_keyframe"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),

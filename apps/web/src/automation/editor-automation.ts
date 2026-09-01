@@ -41,7 +41,9 @@ import type { TProjectSettings } from "@/project/types";
 import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-element";
 import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
 import { getElementKeyframes } from "@/animation";
+import { analyzeAutomationAudio } from "./audio-analysis";
 import { buildAudioControlPatch } from "./audio-control";
+import { buildAudioMixGainCommand } from "./audio-mix-gain";
 import { buildKeyframeCommand } from "./keyframe-control";
 import { buildTransitionCommand } from "./transition-control";
 import {
@@ -50,6 +52,8 @@ import {
 	validateTrackCreationPlan,
 } from "./timeline-surgery";
 import type {
+	AutomationAudioAnalysisRequest,
+	AutomationAudioAnalysisResult,
 	AutomationEditOperation,
 	AutomationEditPlan,
 	AutomationElementSnapshot,
@@ -104,6 +108,19 @@ export class EditorAutomation {
 	readProject(): AutomationProjectSnapshot {
 		this.reconcileExternalChanges();
 		return this.buildSnapshot();
+	}
+
+	analyzeAudio(
+		request: AutomationAudioAnalysisRequest,
+	): Promise<AutomationAudioAnalysisResult> {
+		return this.enqueue(() => {
+			this.reconcileExternalChanges();
+			return analyzeAutomationAudio({
+				editor: this.editor,
+				request,
+				revision: this.revision,
+			});
+		});
 	}
 
 	listProjects(): Promise<AutomationProjectListResult> {
@@ -580,6 +597,13 @@ export class EditorAutomation {
 	}
 
 	private validateAndBuildCommand(operation: AutomationEditOperation): Command {
+		if (operation.kind === "adjust_mix_gain") {
+			return buildAudioMixGainCommand({
+				tracks: this.editor.scenes.getActiveScene().tracks,
+				mediaAssets: this.editor.media.getAssets(),
+				gainDb: operation.gainDb,
+			});
+		}
 		if (operation.kind === "insert_text") {
 			assertMediaTime(operation.startTime, "startTime", true);
 			assertMediaTime(operation.duration, "duration", false);

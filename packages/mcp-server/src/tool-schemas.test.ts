@@ -73,6 +73,18 @@ describe("OpenCut edit-plan MCP contract", () => {
 		expect(result.success).toBe(false);
 	});
 
+	test("accepts a uniform mix-gain adjustment", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "mix-gain-1",
+			expectedRevision: 2,
+			description: "Raise the complete mix",
+			operations: [{ kind: "adjust_mix_gain", gainDb: 3.5 }],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
 	test("accepts create, retime, and remove keyframe operation shapes", () => {
 		const result = editPlanInputSchema.safeParse({
 			projectId: "project-1",

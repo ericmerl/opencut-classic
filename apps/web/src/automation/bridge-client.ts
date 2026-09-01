@@ -1,5 +1,6 @@
 import type { EditorAutomation } from "./editor-automation";
 import type {
+	AutomationAudioAnalysisRequest,
 	AutomationCreateProjectRequest,
 	AutomationEditPlan,
 	AutomationExportRequest,
@@ -9,6 +10,12 @@ import type {
 
 type BridgeRequest =
 	| { kind: "request"; id: string; method: "read_project"; params: object }
+	| {
+			kind: "request";
+			id: string;
+			method: "analyze_audio";
+			params: AutomationAudioAnalysisRequest;
+	  }
 	| { kind: "request"; id: string; method: "list_projects"; params: object }
 	| {
 			kind: "request";
@@ -147,6 +154,8 @@ export class AutomationBridgeClient {
 		switch (message.method) {
 			case "read_project":
 				return this.automation.readProject();
+			case "analyze_audio":
+				return this.automation.analyzeAudio(message.params);
 			case "list_projects":
 				return this.automation.listProjects();
 			case "create_project":
