@@ -92,6 +92,15 @@ function createServer(): McpServer {
 	);
 
 	server.registerTool(
+		"opencut_list_effects",
+		{
+			description:
+				"List the clip effects registered by the connected OpenCut editor, including validated parameter types, ranges, defaults, and keyframe support.",
+		},
+		async () => toolResult(await bridge.request("list_effects", {})),
+	);
+
+	server.registerTool(
 		"opencut_analyze_audio",
 		{
 			description:
@@ -126,7 +135,7 @@ function createServer(): McpServer {
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Atomically update project settings, create or configure tracks, set per-clip audio gain, mute, linear fades, or uniform mix gain, create, update, retime, or remove keyframes, create, update, or remove clip transitions, insert text or timed caption batches, delete, move, retime, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
+				"Atomically update project settings, create or configure tracks, set per-clip audio gain, mute, linear fades, or uniform mix gain, create, update, reorder, enable, or remove clip effects, create, update, retime, or remove keyframes, create, update, or remove clip transitions, insert text or timed caption batches, delete, move, retime, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
 			inputSchema: editPlanInputSchema,
 		},
 		async (plan) => toolResult(await bridge.request("apply_edit_plan", plan)),

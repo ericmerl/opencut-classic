@@ -44,6 +44,7 @@ import { getElementKeyframes } from "@/animation";
 import { analyzeAutomationAudio } from "./audio-analysis";
 import { buildAudioControlPatch } from "./audio-control";
 import { buildAudioMixGainCommand } from "./audio-mix-gain";
+import { buildEffectControlCommand, listEffectCatalog } from "./effect-control";
 import { buildKeyframeCommand } from "./keyframe-control";
 import { buildTransitionCommand } from "./transition-control";
 import {
@@ -57,6 +58,7 @@ import type {
 	AutomationEditOperation,
 	AutomationEditPlan,
 	AutomationElementSnapshot,
+	AutomationEffectCatalogEntry,
 	AutomationCreateProjectRequest,
 	AutomationCreateProjectResult,
 	AutomationExportCompletedResult,
@@ -108,6 +110,10 @@ export class EditorAutomation {
 	readProject(): AutomationProjectSnapshot {
 		this.reconcileExternalChanges();
 		return this.buildSnapshot();
+	}
+
+	listEffects(): AutomationEffectCatalogEntry[] {
+		return listEffectCatalog();
 	}
 
 	analyzeAudio(
@@ -834,6 +840,13 @@ export class EditorAutomation {
 			});
 		}
 		if (
+			operation.kind === "upsert_effect" ||
+			operation.kind === "remove_effect" ||
+			operation.kind === "reorder_effects"
+		) {
+			return buildEffectControlCommand({ element, operation });
+		}
+		if (
 			operation.kind === "upsert_keyframe" ||
 			operation.kind === "remove_keyframe" ||
 			operation.kind === "retime_keyframe"
@@ -1007,6 +1020,16 @@ export class EditorAutomation {
 				? { retime: element.retime }
 				: {}),
 			...(keyframes.length > 0 ? { keyframes } : {}),
+			...("effects" in element && element.effects?.length
+				? {
+						effects: element.effects.map((effect) => ({
+							effectId: effect.id,
+							effectType: effect.type,
+							enabled: effect.enabled,
+							params: effect.params,
+						})),
+					}
+				: {}),
 		};
 	}
 

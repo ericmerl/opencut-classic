@@ -85,6 +85,40 @@ describe("OpenCut edit-plan MCP contract", () => {
 		expect(result.success).toBe(true);
 	});
 
+	test("accepts effect creation, updates, ordering, and removal", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "effects-1",
+			expectedRevision: 2,
+			description: "Build and order the clip effect stack",
+			operations: [
+				{
+					kind: "upsert_effect",
+					trackId: "track-1",
+					elementId: "clip-1",
+					effectId: "blur-1",
+					effectType: "blur",
+					params: { intensity: 30 },
+					enabled: true,
+				},
+				{
+					kind: "reorder_effects",
+					trackId: "track-1",
+					elementId: "clip-1",
+					effectIds: ["blur-1"],
+				},
+				{
+					kind: "remove_effect",
+					trackId: "track-1",
+					elementId: "clip-1",
+					effectId: "blur-1",
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
 	test("accepts create, retime, and remove keyframe operation shapes", () => {
 		const result = editPlanInputSchema.safeParse({
 			projectId: "project-1",

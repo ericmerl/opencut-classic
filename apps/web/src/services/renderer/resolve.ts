@@ -126,7 +126,8 @@ function resolveEffectPassGroups({
 				width,
 				height,
 			});
-		});
+		})
+		.filter((passes) => passes.length > 0);
 }
 
 function getVisualSampleClipTime({

@@ -10,6 +10,7 @@ import type {
 
 type BridgeRequest =
 	| { kind: "request"; id: string; method: "read_project"; params: object }
+	| { kind: "request"; id: string; method: "list_effects"; params: object }
 	| {
 			kind: "request";
 			id: string;
@@ -154,6 +155,8 @@ export class AutomationBridgeClient {
 		switch (message.method) {
 			case "read_project":
 				return this.automation.readProject();
+			case "list_effects":
+				return this.automation.listEffects();
 			case "analyze_audio":
 				return this.automation.analyzeAudio(message.params);
 			case "list_projects":

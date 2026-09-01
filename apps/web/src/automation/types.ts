@@ -26,6 +26,31 @@ export interface AutomationElementSnapshot {
 	hidden?: boolean;
 	retime?: RetimeConfig;
 	keyframes?: ElementKeyframe[];
+	effects?: AutomationEffectSnapshot[];
+}
+
+export interface AutomationEffectSnapshot {
+	effectId: string;
+	effectType: string;
+	enabled: boolean;
+	params: Record<string, string | number | boolean>;
+}
+
+export interface AutomationEffectCatalogEntry {
+	effectType: string;
+	name: string;
+	keywords: string[];
+	params: Array<{
+		key: string;
+		label: string;
+		type: string;
+		default: string | number | boolean;
+		keyframable: boolean;
+		min?: number;
+		max?: number;
+		step?: number;
+		options?: Array<{ value: string; label: string }>;
+	}>;
 }
 
 export interface AutomationTrackSnapshot {
@@ -215,6 +240,27 @@ export type AutomationEditOperation =
 	| {
 			kind: "adjust_mix_gain";
 			gainDb: number;
+	  }
+	| {
+			kind: "upsert_effect";
+			trackId: string;
+			elementId: string;
+			effectId: string;
+			effectType: string;
+			params?: Record<string, string | number | boolean>;
+			enabled?: boolean;
+	  }
+	| {
+			kind: "remove_effect";
+			trackId: string;
+			elementId: string;
+			effectId: string;
+	  }
+	| {
+			kind: "reorder_effects";
+			trackId: string;
+			elementId: string;
+			effectIds: string[];
 	  }
 	| {
 			kind: "upsert_keyframe";

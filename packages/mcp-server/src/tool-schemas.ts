@@ -208,6 +208,29 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			),
 	}),
 	z.object({
+		kind: z.literal("upsert_effect"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		effectId: z.string().trim().min(1),
+		effectType: z.string().trim().min(1),
+		params: z
+			.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+			.optional(),
+		enabled: z.boolean().optional(),
+	}),
+	z.object({
+		kind: z.literal("remove_effect"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		effectId: z.string().trim().min(1),
+	}),
+	z.object({
+		kind: z.literal("reorder_effects"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		effectIds: z.array(z.string().trim().min(1)),
+	}),
+	z.object({
 		kind: z.literal("upsert_keyframe"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
