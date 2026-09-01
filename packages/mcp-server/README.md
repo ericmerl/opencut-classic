@@ -15,12 +15,15 @@ The bridge defaults to `127.0.0.1:32191`. Override both sides with `OPENCUT_BRID
 Available tools:
 
 - `opencut_connection_status`
+- `opencut_list_projects`, returning saved-project metadata and the active project ID
+- `opencut_create_project`, creating and activating a named project with an idempotent operation ID
+- `opencut_open_project`, opening a saved project with an idempotent operation ID
 - `opencut_get_project`, including project and canvas settings, track roles, media assets, and element parameters
 - `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, deterministic track mute and visibility, text and styled caption-batch insertion, delete, move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and trim operations
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track
 - `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path
 
-The editor must be open with a project loaded. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.
+The editor must be open with a project loaded. Creating or opening a project automatically updates the connected editor route. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.
 
 Exports never overwrite an existing file. A completed export operation can be retried with the same operation ID and identical arguments without rendering or writing it again. Export retries are remembered for the lifetime of the MCP process.

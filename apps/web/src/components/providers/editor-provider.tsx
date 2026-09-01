@@ -156,6 +156,13 @@ function EditorRuntimeBindings() {
 		const bridge = new AutomationBridgeClient(new EditorAutomation(editor), {
 			url: `ws://127.0.0.1:${port}/editor`,
 			token,
+			onActiveProjectChange: (projectId) => {
+				window.history.replaceState(
+					window.history.state,
+					"",
+					`/editor/${projectId}`,
+				);
+			},
 		});
 		bridge.start();
 		return () => bridge.stop();

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { editPlanInputSchema, importMediaInputSchema } from "./tool-schemas";
+import {
+	createProjectInputSchema,
+	editPlanInputSchema,
+	importMediaInputSchema,
+	openProjectInputSchema,
+} from "./tool-schemas";
 
 describe("OpenCut edit-plan MCP contract", () => {
 	test("accepts constant retiming with optional pitch preservation", () => {
@@ -165,6 +170,31 @@ describe("OpenCut edit-plan MCP contract", () => {
 			expectedRevision: 6,
 			description: "Make no track change",
 			operations: [{ kind: "set_track_state", trackId: "source-track" }],
+		});
+
+		expect(result.success).toBe(false);
+	});
+});
+
+describe("OpenCut project-lifecycle MCP contract", () => {
+	test("accepts idempotent create and open requests", () => {
+		const createResult = createProjectInputSchema.safeParse({
+			operationId: "create-project-1",
+			name: "September product short",
+		});
+		const openResult = openProjectInputSchema.safeParse({
+			operationId: "open-project-1",
+			projectId: "project-1",
+		});
+
+		expect(createResult.success).toBe(true);
+		expect(openResult.success).toBe(true);
+	});
+
+	test("rejects a blank project name", () => {
+		const result = createProjectInputSchema.safeParse({
+			operationId: "create-project-blank-1",
+			name: "   ",
 		});
 
 		expect(result.success).toBe(false);

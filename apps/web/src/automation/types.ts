@@ -60,6 +60,46 @@ export interface AutomationProjectSnapshot {
 	elements: AutomationElementSnapshot[];
 }
 
+export interface AutomationProjectSummary {
+	projectId: string;
+	name: string;
+	duration: MediaTime;
+	createdAt: string;
+	updatedAt: string;
+	isActive: boolean;
+}
+
+export interface AutomationProjectListResult {
+	activeProjectId: string | null;
+	projects: AutomationProjectSummary[];
+}
+
+export interface AutomationCreateProjectRequest {
+	operationId: string;
+	name: string;
+}
+
+export interface AutomationOpenProjectRequest {
+	operationId: string;
+	projectId: string;
+}
+
+export interface AutomationProjectActivatedResult {
+	operationId: string;
+	projectId: string;
+	editorPath: string;
+	revision: number;
+	snapshot: AutomationProjectSnapshot;
+}
+
+export type AutomationCreateProjectResult =
+	| (AutomationProjectActivatedResult & { status: "created" | "replayed" })
+	| { status: "rejected"; operationId: string; reason: string };
+
+export type AutomationOpenProjectResult =
+	| (AutomationProjectActivatedResult & { status: "opened" | "replayed" })
+	| { status: "rejected"; operationId: string; reason: string };
+
 export type AutomationEditOperation =
 	| {
 			kind: "insert_text";

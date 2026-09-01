@@ -1,12 +1,27 @@
 import type { EditorAutomation } from "./editor-automation";
 import type {
+	AutomationCreateProjectRequest,
 	AutomationEditPlan,
 	AutomationExportRequest,
 	AutomationImportRequest,
+	AutomationOpenProjectRequest,
 } from "./types";
 
 type BridgeRequest =
 	| { kind: "request"; id: string; method: "read_project"; params: object }
+	| { kind: "request"; id: string; method: "list_projects"; params: object }
+	| {
+			kind: "request";
+			id: string;
+			method: "create_project";
+			params: AutomationCreateProjectRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "open_project";
+			params: AutomationOpenProjectRequest;
+	  }
 	| {
 			kind: "request";
 			id: string;
@@ -41,7 +56,11 @@ export class AutomationBridgeClient {
 
 	constructor(
 		private automation: EditorAutomation,
-		private options: { url: string; token: string },
+		private options: {
+			url: string;
+			token: string;
+			onActiveProjectChange?: (projectId: string) => void;
+		},
 	) {}
 
 	start(): void {
@@ -104,6 +123,16 @@ export class AutomationBridgeClient {
 				ok: true,
 				result,
 			});
+			const activatedProjectId = getActivatedProjectId(result);
+			if (
+				activatedProjectId &&
+				(message.method === "create_project" ||
+					message.method === "open_project")
+			) {
+				queueMicrotask(() =>
+					this.options.onActiveProjectChange?.(activatedProjectId),
+				);
+			}
 		} catch (error) {
 			this.sendResponse(socket, {
 				kind: "response",
@@ -118,6 +147,12 @@ export class AutomationBridgeClient {
 		switch (message.method) {
 			case "read_project":
 				return this.automation.readProject();
+			case "list_projects":
+				return this.automation.listProjects();
+			case "create_project":
+				return this.automation.createProject(message.params);
+			case "open_project":
+				return this.automation.openProject(message.params);
 			case "apply_edit_plan":
 				return this.automation.applyEditPlan(message.params);
 			case "export_project":
@@ -133,4 +168,19 @@ export class AutomationBridgeClient {
 		if (socket.readyState === WebSocket.OPEN)
 			socket.send(JSON.stringify(response));
 	}
+}
+
+function getActivatedProjectId(value: unknown): string | null {
+	if (!value || typeof value !== "object") return null;
+	if (
+		!("status" in value) ||
+		(value.status !== "created" &&
+			value.status !== "opened" &&
+			value.status !== "replayed")
+	) {
+		return null;
+	}
+	return "projectId" in value && typeof value.projectId === "string"
+		? value.projectId
+		: null;
 }

@@ -42,6 +42,8 @@ import type {
 	AutomationEditOperation,
 	AutomationEditPlan,
 	AutomationElementSnapshot,
+	AutomationCreateProjectRequest,
+	AutomationCreateProjectResult,
 	AutomationExportCompletedResult,
 	AutomationExportRequest,
 	AutomationExportResult,
@@ -50,6 +52,10 @@ import type {
 	AutomationImportResult,
 	AutomationAppliedResult,
 	AutomationMutationResult,
+	AutomationOpenProjectRequest,
+	AutomationOpenProjectResult,
+	AutomationProjectActivatedResult,
+	AutomationProjectListResult,
 	AutomationProjectSnapshot,
 	AutomationUndoResult,
 } from "./types";
@@ -71,6 +77,15 @@ export class EditorAutomation {
 		string,
 		{ fingerprint: string; result: AutomationExportCompletedResult }
 	>();
+	private projectOperations = new Map<
+		string,
+		{
+			fingerprint: string;
+			result: AutomationProjectActivatedResult & {
+				status: "created" | "opened";
+			};
+		}
+	>();
 	private writer: Promise<void> = Promise.resolve();
 
 	constructor(private editor: EditorCore) {}
@@ -78,6 +93,22 @@ export class EditorAutomation {
 	readProject(): AutomationProjectSnapshot {
 		this.reconcileExternalChanges();
 		return this.buildSnapshot();
+	}
+
+	listProjects(): Promise<AutomationProjectListResult> {
+		return this.enqueue(() => this.listProjectsNow());
+	}
+
+	createProject(
+		request: AutomationCreateProjectRequest,
+	): Promise<AutomationCreateProjectResult> {
+		return this.enqueue(() => this.createProjectNow(request));
+	}
+
+	openProject(
+		request: AutomationOpenProjectRequest,
+	): Promise<AutomationOpenProjectResult> {
+		return this.enqueue(() => this.openProjectNow(request));
 	}
 
 	applyEditPlan(plan: AutomationEditPlan): Promise<AutomationMutationResult> {
@@ -112,6 +143,137 @@ export class EditorAutomation {
 			() => undefined,
 			() => undefined,
 		);
+		return result;
+	}
+
+	private async listProjectsNow(): Promise<AutomationProjectListResult> {
+		await this.editor.project.loadAllProjects();
+		const activeProjectId =
+			this.editor.project.getActiveOrNull()?.metadata.id ?? null;
+		const projects = this.editor.project
+			.getSavedProjects()
+			.map((project) => ({
+				projectId: project.id,
+				name: project.name,
+				duration: project.duration,
+				createdAt: project.createdAt.toISOString(),
+				updatedAt: project.updatedAt.toISOString(),
+				isActive: project.id === activeProjectId,
+			}))
+			.sort(
+				(left, right) =>
+					right.updatedAt.localeCompare(left.updatedAt) ||
+					left.projectId.localeCompare(right.projectId),
+			);
+		return { activeProjectId, projects };
+	}
+
+	private async createProjectNow(
+		request: AutomationCreateProjectRequest,
+	): Promise<AutomationCreateProjectResult> {
+		const fingerprint = stableSerialize({ method: "create_project", request });
+		const prior = this.projectOperations.get(request.operationId);
+		if (prior) {
+			if (prior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: "operationId was already used for a different project create",
+				};
+			}
+			return { ...prior.result, status: "replayed" };
+		}
+		const name = request.name.trim();
+		if (!request.operationId.trim()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "operationId is required",
+			};
+		}
+		if (!name) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "project name is required",
+			};
+		}
+
+		await this.editor.save.flush();
+		const projectId = await this.editor.project.createNewProject({ name });
+		this.resetProjectSession();
+		const result: AutomationProjectActivatedResult & { status: "created" } = {
+			status: "created",
+			operationId: request.operationId,
+			projectId,
+			editorPath: `/editor/${projectId}`,
+			revision: this.revision,
+			snapshot: this.buildSnapshot(),
+		};
+		this.projectOperations.set(request.operationId, { fingerprint, result });
+		return result;
+	}
+
+	private async openProjectNow(
+		request: AutomationOpenProjectRequest,
+	): Promise<AutomationOpenProjectResult> {
+		const fingerprint = stableSerialize({ method: "open_project", request });
+		const prior = this.projectOperations.get(request.operationId);
+		if (prior) {
+			if (prior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: "operationId was already used for a different project open",
+				};
+			}
+			return { ...prior.result, status: "replayed" };
+		}
+		if (!request.operationId.trim()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "operationId is required",
+			};
+		}
+		if (!request.projectId.trim()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "projectId is required",
+			};
+		}
+
+		const activeProjectId =
+			this.editor.project.getActiveOrNull()?.metadata.id ?? null;
+		if (activeProjectId !== request.projectId) {
+			await this.editor.project.loadAllProjects();
+			const projectExists = this.editor.project
+				.getSavedProjects()
+				.some((project) => project.id === request.projectId);
+			if (!projectExists) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: `project not found: ${request.projectId}`,
+				};
+			}
+			await this.editor.save.flush();
+			await this.editor.project.loadProject({ id: request.projectId });
+			this.resetProjectSession();
+		} else {
+			this.reconcileExternalChanges();
+		}
+
+		const result: AutomationProjectActivatedResult & { status: "opened" } = {
+			status: "opened",
+			operationId: request.operationId,
+			projectId: request.projectId,
+			editorPath: `/editor/${request.projectId}`,
+			revision: this.revision,
+			snapshot: this.buildSnapshot(),
+		};
+		this.projectOperations.set(request.operationId, { fingerprint, result });
 		return result;
 	}
 
@@ -776,6 +938,16 @@ export class EditorAutomation {
 
 	private recordCommittedState(): void {
 		this.revision += 1;
+		this.stateFingerprint = stableSerialize(this.buildTimelineProjection());
+	}
+
+	private resetProjectSession(): void {
+		this.revision = 0;
+		this.appliedOperations.clear();
+		this.importedOperations.clear();
+		this.exportedOperations.clear();
+		this.editor.command.clear();
+		this.editor.selection.clearSelection();
 		this.stateFingerprint = stableSerialize(this.buildTimelineProjection());
 	}
 

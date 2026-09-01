@@ -160,3 +160,13 @@ export const importMediaInputSchema = z.object({
 	startTime: z.number().int().nonnegative(),
 	trackId: z.string().min(1).optional(),
 });
+
+export const createProjectInputSchema = z.object({
+	operationId: z.string().min(1),
+	name: z.string().trim().min(1),
+});
+
+export const openProjectInputSchema = z.object({
+	operationId: z.string().min(1),
+	projectId: z.string().min(1),
+});

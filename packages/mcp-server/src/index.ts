@@ -2,7 +2,12 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
-import { editPlanInputSchema, importMediaInputSchema } from "./tool-schemas";
+import {
+	createProjectInputSchema,
+	editPlanInputSchema,
+	importMediaInputSchema,
+	openProjectInputSchema,
+} from "./tool-schemas";
 
 const token = process.env.OPENCUT_BRIDGE_TOKEN;
 if (!token || token.length < 32) {
@@ -14,13 +19,17 @@ const completedExports = new Map<
 	string,
 	{ fingerprint: string; result: Record<string, unknown> }
 >();
+const completedProjectOperations = new Map<
+	string,
+	{ fingerprint: string; result: Record<string, unknown> }
+>();
 
 function createServer(): McpServer {
 	const server = new McpServer(
 		{ name: "opencut-classic", version: "0.1.0" },
 		{
 			instructions:
-				"Call opencut_connection_status first. Read the project before editing and pass its exact projectId and revision into every mutation.",
+				"Call opencut_connection_status first. List, create, or open a project as needed. Read the active project before editing and pass its exact projectId and revision into every mutation.",
 		},
 	);
 
@@ -31,6 +40,41 @@ function createServer(): McpServer {
 				"Report whether an authenticated OpenCut editor is connected.",
 		},
 		async () => toolResult(bridge.getStatus()),
+	);
+
+	server.registerTool(
+		"opencut_list_projects",
+		{
+			description:
+				"List saved OpenCut projects in descending update order and identify the active project.",
+		},
+		async () => toolResult(await bridge.request("list_projects", {})),
+	);
+
+	server.registerTool(
+		"opencut_create_project",
+		{
+			description:
+				"Create and activate a new OpenCut project, then navigate the connected editor to it.",
+			inputSchema: createProjectInputSchema,
+		},
+		async (params) =>
+			toolResult(
+				await runProjectOperation({ method: "create_project", input: params }),
+			),
+	);
+
+	server.registerTool(
+		"opencut_open_project",
+		{
+			description:
+				"Open an existing OpenCut project and navigate the connected editor to it.",
+			inputSchema: openProjectInputSchema,
+		},
+		async (params) =>
+			toolResult(
+				await runProjectOperation({ method: "open_project", input: params }),
+			),
 	);
 
 	server.registerTool(
@@ -160,6 +204,34 @@ function toolResult(value: unknown) {
 	};
 }
 
+async function runProjectOperation({
+	method,
+	input,
+}: {
+	method: "create_project" | "open_project";
+	input: { operationId: string } & Record<string, unknown>;
+}): Promise<unknown> {
+	const fingerprint = JSON.stringify([method, input]);
+	const prior = completedProjectOperations.get(input.operationId);
+	if (prior) {
+		if (prior.fingerprint !== fingerprint) {
+			throw new Error(
+				"operationId was already used for a different project operation",
+			);
+		}
+		return { ...prior.result, status: "replayed" };
+	}
+
+	const result = await bridge.request(method, input);
+	if (isActivatedProject(result)) {
+		completedProjectOperations.set(input.operationId, {
+			fingerprint,
+			result: { ...result },
+		});
+	}
+	return result;
+}
+
 function parsePort(value: string): number {
 	const parsed = Number(value);
 	if (!Number.isInteger(parsed) || parsed < 1024 || parsed > 65535) {
@@ -199,4 +271,12 @@ function isCompletedExport(
 	if (!value || typeof value !== "object") return false;
 	const status = (value as Record<string, unknown>).status;
 	return status === "exported" || status === "replayed";
+}
+
+function isActivatedProject(
+	value: unknown,
+): value is Record<string, unknown> & { status: "created" | "opened" } {
+	if (!value || typeof value !== "object") return false;
+	const status = (value as Record<string, unknown>).status;
+	return status === "created" || status === "opened";
 }
