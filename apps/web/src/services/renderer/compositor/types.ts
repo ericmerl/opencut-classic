@@ -18,7 +18,7 @@ export type FrameItemDescriptor =
 			opacity: number;
 			blendMode: BlendMode;
 			effectPassGroups: EffectPass[][];
-			mask: LayerMaskDescriptor | null;
+			masks: LayerMaskDescriptor[];
 	  }
 	| {
 			type: "sceneEffect";
@@ -39,6 +39,7 @@ export type LayerMaskDescriptor = {
 	textureId: string;
 	feather: number;
 	inverted: boolean;
+	channel: "alpha" | "red";
 };
 
 export type TextureCanvasDrawFn = (

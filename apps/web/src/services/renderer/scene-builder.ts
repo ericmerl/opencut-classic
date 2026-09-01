@@ -79,6 +79,27 @@ function buildTrackNodes({
 				}
 
 				if (element.type === "video" && mediaAsset.type === "video") {
+					const matteAsset = element.matte?.enabled
+						? mediaMap.get(element.matte.assetId)
+						: undefined;
+					const sourceFingerprintMatches =
+						!mediaAsset.sourceFingerprint ||
+						mediaAsset.sourceFingerprint === element.matte?.sourceFingerprint;
+					const matte =
+						element.matte &&
+						element.matte.sourceMediaId === mediaAsset.id &&
+						sourceFingerprintMatches &&
+						matteAsset?.file &&
+						matteAsset.url &&
+						(matteAsset.type === "image" || matteAsset.type === "video")
+							? {
+									mediaId: matteAsset.id,
+									url: matteAsset.url,
+									file: matteAsset.file,
+									type: matteAsset.type,
+									channel: element.matte.channel,
+								}
+							: undefined;
 					nodes.push(
 						new VideoNode({
 							mediaId: mediaAsset.id,
@@ -97,6 +118,7 @@ function buildTrackNodes({
 							masks: element.masks ?? [],
 							transitionIn,
 							transitionOut,
+							matte,
 						}),
 					);
 				}

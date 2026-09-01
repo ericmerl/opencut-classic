@@ -61,7 +61,9 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
 export function MediaView() {
 	const editor = useEditor();
-	const mediaFiles = useEditor((e) => e.media.getAssets());
+	const mediaFiles = useEditor((e) =>
+		e.media.getAssets().filter((asset) => asset.role !== "matte"),
+	);
 	const activeProject = useEditor((e) => e.project.getActive());
 
 	const {

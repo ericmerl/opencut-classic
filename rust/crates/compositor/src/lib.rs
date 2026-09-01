@@ -8,5 +8,6 @@ pub use blend_mode::BlendMode;
 pub use compositor::{Compositor, CompositorError, RenderFrameOptions};
 pub use frame::{
     CanvasClearDescriptor, CanvasTextureDescriptor, EffectPassDescriptor, FrameDescriptor,
-    FrameItemDescriptor, LayerDescriptor, LayerMaskDescriptor, QuadTransformDescriptor,
+    FrameItemDescriptor, LayerDescriptor, LayerMaskDescriptor, MaskChannel,
+    QuadTransformDescriptor,
 };

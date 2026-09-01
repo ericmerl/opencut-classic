@@ -115,7 +115,7 @@ async function collectNode({
 			opacity: 1,
 			blendMode: "normal",
 			effectPassGroups: [],
-			mask: null,
+			masks: [],
 		});
 		return;
 	}
@@ -173,7 +173,7 @@ async function collectNode({
 			opacity: 1,
 			blendMode: "normal",
 			effectPassGroups: [passes],
-			mask: null,
+			masks: [],
 		});
 		return;
 	}
@@ -254,7 +254,7 @@ async function collectVisualSourceNode({
 		sourceWidth,
 		sourceHeight,
 	});
-	const { mask, strokeLayer } = buildMaskArtifacts({
+	const { masks, strokeLayer } = buildMaskArtifacts({
 		node,
 		renderer,
 		path,
@@ -269,7 +269,7 @@ async function collectVisualSourceNode({
 		opacity: node.resolved.opacity,
 		blendMode: node.params.blendMode ?? "normal",
 		effectPassGroups: node.resolved.effectPasses,
-		mask,
+		masks,
 	});
 	if (strokeLayer) {
 		items.push(strokeLayer);
@@ -320,7 +320,7 @@ function collectTextNode({
 		opacity: node.resolved.opacity,
 		blendMode: node.params.blendMode ?? "normal",
 		effectPassGroups: node.resolved.effectPasses,
-		mask: null,
+		masks: [],
 	});
 }
 
@@ -382,9 +382,32 @@ function buildMaskArtifacts({
 	transform: QuadTransformDescriptor;
 	textures: Map<string, TextureUploadDescriptor>;
 }): {
-	mask: LayerMaskDescriptor | null;
+	masks: LayerMaskDescriptor[];
 	strokeLayer: FrameItemDescriptor | null;
 } {
+	const masks: LayerMaskDescriptor[] = [];
+	if (node instanceof VideoNode && node.resolved?.matteSource) {
+		const textureId = `${path}:background-matte`;
+		const { width, height } = renderer;
+		const matteSource = node.resolved.matteSource;
+		textures.set(textureId, {
+			kind: "rendered",
+			id: textureId,
+			contentHash: `background-matte:${identityKey(matteSource)}:${transformHash(transform)}:${width}x${height}`,
+			width,
+			height,
+			draw: (ctx) => {
+				drawTransformedCanvas({ ctx, source: matteSource, transform });
+			},
+		});
+		masks.push({
+			textureId,
+			feather: 0,
+			inverted: false,
+			channel: node.resolved.matteChannel ?? "red",
+		});
+	}
+
 	const wipeProgress = node.resolved?.wipeProgress;
 	if (wipeProgress !== undefined) {
 		const textureId = `${path}:transition-wipe`;
@@ -400,21 +423,23 @@ function buildMaskArtifacts({
 				ctx.fillRect(0, 0, width * wipeProgress, height);
 			},
 		});
-		return {
-			mask: { textureId, feather: 0, inverted: false },
-			strokeLayer: null,
-		};
+		masks.push({
+			textureId,
+			feather: 0,
+			inverted: false,
+			channel: "alpha",
+		});
 	}
 
 	const mask = node.params.masks?.[0];
 	if (!mask) {
-		return { mask: null, strokeLayer: null };
+		return { masks, strokeLayer: null };
 	}
 
 	const definition = getMaskDefinition(mask.type);
 
 	if (definition.isActive?.(mask.params) === false) {
-		return { mask: null, strokeLayer: null };
+		return { masks, strokeLayer: null };
 	}
 
 	const { body } = definition.renderer;
@@ -540,18 +565,17 @@ function buildMaskArtifacts({
 			opacity: 1,
 			blendMode: "normal",
 			effectPassGroups: [],
-			mask: null,
+			masks: [],
 		};
 	}
 
-	return {
-		mask: {
-			textureId: maskTextureId,
-			feather,
-			inverted: mask.params.inverted,
-		},
-		strokeLayer,
-	};
+	masks.push({
+		textureId: maskTextureId,
+		feather,
+		inverted: mask.params.inverted,
+		channel: "alpha",
+	});
+	return { masks, strokeLayer };
 }
 
 function drawTransformedCanvas({

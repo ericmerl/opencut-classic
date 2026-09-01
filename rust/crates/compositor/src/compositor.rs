@@ -71,7 +71,8 @@ struct BlendUniformBuffer {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct MaskUniformBuffer {
     inverted: f32,
-    _padding: [f32; 3],
+    channel: f32,
+    _padding: [f32; 2],
 }
 
 impl Compositor {
@@ -441,7 +442,7 @@ impl Compositor {
             )?;
         }
 
-        if let Some(mask) = &layer.mask {
+        for mask in &layer.masks {
             let mask_source = self.textures.get(&mask.texture_id).ok_or_else(|| {
                 CompositorError::MissingTexture {
                     texture_id: mask.texture_id.clone(),
@@ -474,6 +475,7 @@ impl Compositor {
                 &current,
                 &mask_texture,
                 mask.inverted,
+                mask.channel,
                 frame.width,
                 frame.height,
             );
@@ -649,6 +651,7 @@ impl Compositor {
         layer_texture: &wgpu::Texture,
         mask_texture: &wgpu::Texture,
         inverted: bool,
+        channel: crate::frame::MaskChannel,
         width: u32,
         height: u32,
     ) -> wgpu::Texture {
@@ -698,7 +701,11 @@ impl Compositor {
                     label: Some("compositor-mask-uniform-buffer"),
                     contents: bytemuck::bytes_of(&MaskUniformBuffer {
                         inverted: if inverted { 1.0 } else { 0.0 },
-                        _padding: [0.0; 3],
+                        channel: match channel {
+                            crate::frame::MaskChannel::Alpha => 0.0,
+                            crate::frame::MaskChannel::Red => 1.0,
+                        },
+                        _padding: [0.0; 2],
                     }),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });

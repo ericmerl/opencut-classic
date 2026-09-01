@@ -38,7 +38,7 @@ import {
 import { ImageNode, loadImageSource } from "./nodes/image-node";
 import { StickerNode, loadStickerSource } from "./nodes/sticker-node";
 import { TextNode, type ResolvedTextNodeState } from "./nodes/text-node";
-import { VideoNode } from "./nodes/video-node";
+import { VideoNode, type ResolvedVideoNodeState } from "./nodes/video-node";
 import type {
 	ResolvedVisualNodeState,
 	ResolvedVisualSourceNodeState,
@@ -269,7 +269,7 @@ async function resolveVideoNode({
 }: {
 	node: VideoNode;
 	context: ResolveContext;
-}): Promise<ResolvedVisualSourceNodeState | null> {
+}): Promise<ResolvedVideoNodeState | null> {
 	const clipTime = context.time - node.params.timeOffset;
 	const sampleClipTime = getVisualSampleClipTime({
 		params: node.params,
@@ -295,6 +295,12 @@ async function resolveVideoNode({
 	if (!frame) {
 		return null;
 	}
+	const matte = await resolveVideoMatte({
+		node,
+		time: mediaTimeToSeconds({
+			time: roundMediaTime({ time: sourceTimeTicks }),
+		}),
+	});
 
 	const visualState = resolveVisualState({
 		params: node.params,
@@ -311,6 +317,39 @@ async function resolveVideoNode({
 		source: frame.canvas,
 		sourceWidth: frame.canvas.width,
 		sourceHeight: frame.canvas.height,
+		...(matte ?? {}),
+	};
+}
+
+async function resolveVideoMatte({
+	node,
+	time,
+}: {
+	node: VideoNode;
+	time: number;
+}): Promise<Partial<ResolvedVideoNodeState> | null> {
+	const matte = node.params.matte;
+	if (!matte) return null;
+	if (matte.type === "video") {
+		const frame = await videoCache.getFrameAt({
+			mediaId: matte.mediaId,
+			file: matte.file,
+			time,
+		});
+		if (!frame) return null;
+		return {
+			matteSource: frame.canvas,
+			matteSourceWidth: frame.canvas.width,
+			matteSourceHeight: frame.canvas.height,
+			matteChannel: matte.channel,
+		};
+	}
+	const image = await loadImageSource({ url: matte.url });
+	return {
+		matteSource: image.source,
+		matteSourceWidth: image.width,
+		matteSourceHeight: image.height,
+		matteChannel: matte.channel,
 	};
 }
 
