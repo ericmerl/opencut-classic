@@ -14,6 +14,7 @@ import {
 	initializeGpuRenderer,
 	isGpuAvailable,
 } from "@/services/renderer/gpu-renderer";
+import { AutomationBridgeClient, EditorAutomation } from "@/automation";
 
 interface EditorProviderProps {
 	projectId: string;
@@ -146,6 +147,18 @@ function EditorRuntimeBindings() {
 
 		window.addEventListener("beforeunload", handleBeforeUnload);
 		return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+	}, [editor]);
+
+	useEffect(() => {
+		const token = process.env.NEXT_PUBLIC_OPENCUT_BRIDGE_TOKEN;
+		if (!token) return;
+		const port = process.env.NEXT_PUBLIC_OPENCUT_BRIDGE_PORT ?? "32191";
+		const bridge = new AutomationBridgeClient(new EditorAutomation(editor), {
+			url: `ws://127.0.0.1:${port}/editor`,
+			token,
+		});
+		bridge.start();
+		return () => bridge.stop();
 	}, [editor]);
 
 	useEditorActions();

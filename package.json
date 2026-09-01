@@ -17,6 +17,7 @@
     "generate:fonts": "npx tsx apps/web/scripts/generate-font-sprites.ts",
     "lint:web": "eslint apps/web/src --ext .ts,.tsx",
     "lint:web:fix": "eslint apps/web/src --ext .ts,.tsx --fix",
+    "mcp": "bun run packages/mcp-server/src/index.ts",
     "preview:web": "turbo run preview --filter=@opencut/web",
     "publish:wasm": "bun run build:wasm && npm publish rust/wasm/pkg --access public",
     "start:tools": "turbo run start --filter=@opencut/tools",
