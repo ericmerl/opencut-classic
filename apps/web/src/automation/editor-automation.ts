@@ -17,6 +17,9 @@ import { mediaTimeFromSeconds } from "@/wasm";
 import type {
 	AutomationEditOperation,
 	AutomationEditPlan,
+	AutomationExportCompletedResult,
+	AutomationExportRequest,
+	AutomationExportResult,
 	AutomationImportAppliedResult,
 	AutomationImportRequest,
 	AutomationImportResult,
@@ -39,6 +42,10 @@ export class EditorAutomation {
 		string,
 		{ fingerprint: string; result: AutomationImportAppliedResult }
 	>();
+	private exportedOperations = new Map<
+		string,
+		{ fingerprint: string; result: AutomationExportCompletedResult }
+	>();
 	private writer: Promise<void> = Promise.resolve();
 
 	constructor(private editor: EditorCore) {}
@@ -56,6 +63,12 @@ export class EditorAutomation {
 		request: AutomationImportRequest,
 	): Promise<AutomationImportResult> {
 		return this.enqueue(() => this.importMediaNow(request));
+	}
+
+	exportProject(
+		request: AutomationExportRequest,
+	): Promise<AutomationExportResult> {
+		return this.enqueue(() => this.exportProjectNow(request));
 	}
 
 	undo({
@@ -269,6 +282,79 @@ export class EditorAutomation {
 			snapshot: this.buildSnapshot(),
 		};
 		this.importedOperations.set(request.operationId, { fingerprint, result });
+		return result;
+	}
+
+	private async exportProjectNow(
+		request: AutomationExportRequest,
+	): Promise<AutomationExportResult> {
+		this.reconcileExternalChanges();
+		const { url: _transferUrl, ...stableRequest } = request;
+		const fingerprint = stableSerialize(stableRequest);
+		const prior = this.exportedOperations.get(request.operationId);
+		if (prior) {
+			if (prior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: "operationId was already used for a different export",
+				};
+			}
+			return { ...prior.result, status: "replayed" };
+		}
+		if (request.projectId !== this.getProjectId()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `active project is ${this.getProjectId()}`,
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				operationId: request.operationId,
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+
+		const exported = await this.editor.renderer.exportProject({
+			options: {
+				format: request.format,
+				quality: request.quality,
+				fps: request.fps,
+				includeAudio: request.includeAudio,
+			},
+		});
+		if (!exported.success || !exported.buffer) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: exported.cancelled
+					? "export was cancelled"
+					: (exported.error ?? "OpenCut did not produce an export buffer"),
+			};
+		}
+		const upload = await fetch(request.url, {
+			method: "PUT",
+			headers: { "Content-Type": "application/octet-stream" },
+			body: exported.buffer,
+		});
+		if (!upload.ok) {
+			throw new Error(`export transfer failed with HTTP ${upload.status}`);
+		}
+		const receipt = (await upload.json()) as {
+			outputPath: string;
+			bytesWritten: number;
+		};
+		const result: AutomationExportCompletedResult = {
+			status: "exported",
+			operationId: request.operationId,
+			revision: this.revision,
+			outputPath: receipt.outputPath,
+			bytesWritten: receipt.bytesWritten,
+		};
+		this.exportedOperations.set(request.operationId, { fingerprint, result });
 		return result;
 	}
 

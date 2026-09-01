@@ -1,4 +1,6 @@
 import type { MediaTime } from "@/wasm";
+import type { ExportFormat, ExportQuality } from "@/export";
+import type { FrameRate } from "opencut-wasm";
 
 export interface AutomationElementSnapshot {
 	trackId: string;
@@ -108,6 +110,37 @@ export interface AutomationImportAppliedResult {
 export type AutomationImportResult =
 	| AutomationImportAppliedResult
 	| (Omit<AutomationImportAppliedResult, "status"> & { status: "replayed" })
+	| {
+			status: "conflict";
+			operationId: string;
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; operationId: string; reason: string };
+
+export interface AutomationExportRequest {
+	projectId: string;
+	operationId: string;
+	expectedRevision: number;
+	url: string;
+	outputPath: string;
+	format: ExportFormat;
+	quality: ExportQuality;
+	fps?: FrameRate;
+	includeAudio: boolean;
+}
+
+export interface AutomationExportCompletedResult {
+	status: "exported";
+	operationId: string;
+	revision: number;
+	outputPath: string;
+	bytesWritten: number;
+}
+
+export type AutomationExportResult =
+	| AutomationExportCompletedResult
+	| (Omit<AutomationExportCompletedResult, "status"> & { status: "replayed" })
 	| {
 			status: "conflict";
 			operationId: string;

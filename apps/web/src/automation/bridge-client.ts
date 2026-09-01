@@ -1,8 +1,18 @@
 import type { EditorAutomation } from "./editor-automation";
-import type { AutomationEditPlan, AutomationImportRequest } from "./types";
+import type {
+	AutomationEditPlan,
+	AutomationExportRequest,
+	AutomationImportRequest,
+} from "./types";
 
 type BridgeRequest =
 	| { kind: "request"; id: string; method: "read_project"; params: object }
+	| {
+			kind: "request";
+			id: string;
+			method: "export_project";
+			params: AutomationExportRequest;
+	  }
 	| {
 			kind: "request";
 			id: string;
@@ -110,6 +120,8 @@ export class AutomationBridgeClient {
 				return this.automation.readProject();
 			case "apply_edit_plan":
 				return this.automation.applyEditPlan(message.params);
+			case "export_project":
+				return this.automation.exportProject(message.params);
 			case "import_media":
 				return this.automation.importMedia(message.params);
 			case "undo":

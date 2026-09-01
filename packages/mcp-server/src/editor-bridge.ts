@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { ExportTickets } from "./export-tickets";
 import { MediaTickets } from "./media-tickets";
 
 interface SocketData {
@@ -18,11 +19,13 @@ export class EditorBridge {
 	private activeSocket: EditorSocket | null = null;
 	private pending = new Map<string, PendingRequest>();
 	private server: Bun.Server<SocketData>;
+	readonly exportTickets: ExportTickets;
 	readonly mediaTickets: MediaTickets;
 
 	constructor(
 		private options: { token: string; port: number; requestTimeoutMs?: number },
 	) {
+		this.exportTickets = new ExportTickets(options.port);
 		this.mediaTickets = new MediaTickets(options.port);
 		this.server = Bun.serve<SocketData>({
 			hostname: "127.0.0.1",
@@ -44,7 +47,11 @@ export class EditorBridge {
 		};
 	}
 
-	request(method: string, params: unknown): Promise<unknown> {
+	request(
+		method: string,
+		params: unknown,
+		timeoutMs = this.options.requestTimeoutMs ?? 30_000,
+	): Promise<unknown> {
 		const socket = this.activeSocket;
 		if (!socket)
 			throw new Error("No authenticated OpenCut editor is connected");
@@ -53,7 +60,7 @@ export class EditorBridge {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
 				reject(new Error(`Editor request timed out: ${method}`));
-			}, this.options.requestTimeoutMs ?? 30_000);
+			}, timeoutMs);
 			this.pending.set(id, { resolve, reject, timer });
 			socket.send(JSON.stringify({ kind: "request", id, method, params }));
 		});
@@ -65,14 +72,17 @@ export class EditorBridge {
 		this.server.stop(true);
 	}
 
-	private handleUpgrade(
+	private async handleUpgrade(
 		request: Request,
 		server: Bun.Server<SocketData>,
-	): Response | undefined {
+	): Promise<Response | undefined> {
 		const url = new URL(request.url);
 		const origin = request.headers.get("origin");
 		if (origin && !isAllowedOrigin(origin)) {
 			return new Response("Forbidden origin", { status: 403 });
+		}
+		if (url.pathname.startsWith("/export/")) {
+			return this.handleExportRequest(request, url, origin);
 		}
 		if (url.pathname.startsWith("/media/")) {
 			const ticket = this.mediaTickets.take(
@@ -97,6 +107,38 @@ export class EditorBridge {
 		})
 			? undefined
 			: new Response("WebSocket upgrade failed", { status: 400 });
+	}
+
+	private async handleExportRequest(
+		request: Request,
+		url: URL,
+		origin: string | null,
+	): Promise<Response> {
+		const id = url.pathname.slice("/export/".length);
+		const headers = exportCorsHeaders(origin);
+		if (request.method === "OPTIONS") {
+			return this.exportTickets.has(id)
+				? new Response(null, { status: 204, headers })
+				: new Response("Expired or invalid export ticket", {
+						status: 404,
+						headers,
+					});
+		}
+		if (request.method !== "PUT") {
+			return new Response("Method not allowed", {
+				status: 405,
+				headers: { ...headers, Allow: "PUT, OPTIONS" },
+			});
+		}
+		try {
+			const result = await this.exportTickets.receive(id, request);
+			return Response.json(result, { headers });
+		} catch (error) {
+			return new Response(
+				error instanceof Error ? error.message : "Export upload failed",
+				{ status: 409, headers },
+			);
+		}
 	}
 
 	private handleOpen(socket: EditorSocket): void {
@@ -170,6 +212,15 @@ export class EditorBridge {
 		}
 		this.pending.clear();
 	}
+}
+
+function exportCorsHeaders(origin: string | null): Record<string, string> {
+	return {
+		"Access-Control-Allow-Origin": origin ?? "http://127.0.0.1",
+		"Access-Control-Allow-Methods": "PUT, OPTIONS",
+		"Access-Control-Allow-Headers": "Content-Type",
+		"Cache-Control": "no-store",
+	};
 }
 
 function isAllowedOrigin(origin: string): boolean {

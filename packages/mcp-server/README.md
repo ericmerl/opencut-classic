@@ -19,5 +19,8 @@ Available tools:
 - `opencut_apply_edit_plan`, supporting text insertion, move, and trim operations
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket
+- `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path
 
 The editor must be open with a project loaded. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.
+
+Exports never overwrite an existing file. A completed export operation can be retried with the same operation ID and identical arguments without rendering or writing it again. Export retries are remembered for the lifetime of the MCP process.
