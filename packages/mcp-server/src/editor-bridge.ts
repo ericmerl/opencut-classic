@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { MediaTickets } from "./media-tickets";
 
 interface SocketData {
 	authenticated: boolean;
@@ -17,10 +18,12 @@ export class EditorBridge {
 	private activeSocket: EditorSocket | null = null;
 	private pending = new Map<string, PendingRequest>();
 	private server: Bun.Server<SocketData>;
+	readonly mediaTickets: MediaTickets;
 
 	constructor(
 		private options: { token: string; port: number; requestTimeoutMs?: number },
 	) {
+		this.mediaTickets = new MediaTickets(options.port);
 		this.server = Bun.serve<SocketData>({
 			hostname: "127.0.0.1",
 			port: options.port,
@@ -67,11 +70,27 @@ export class EditorBridge {
 		server: Bun.Server<SocketData>,
 	): Response | undefined {
 		const url = new URL(request.url);
-		if (url.pathname !== "/editor")
-			return new Response("Not found", { status: 404 });
 		const origin = request.headers.get("origin");
 		if (origin && !isAllowedOrigin(origin)) {
 			return new Response("Forbidden origin", { status: 403 });
+		}
+		if (url.pathname.startsWith("/media/")) {
+			const ticket = this.mediaTickets.take(
+				url.pathname.slice("/media/".length),
+			);
+			if (!ticket) {
+				return new Response("Expired or invalid media ticket", { status: 404 });
+			}
+			return new Response(ticket.file, {
+				headers: {
+					"Content-Type": ticket.mimeType,
+					"Access-Control-Allow-Origin": origin ?? "http://127.0.0.1",
+					"Cache-Control": "no-store",
+				},
+			});
+		}
+		if (url.pathname !== "/editor") {
+			return new Response("Not found", { status: 404 });
 		}
 		return server.upgrade(request, {
 			data: { authenticated: false, authTimer: null },

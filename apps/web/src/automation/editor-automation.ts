@@ -1,15 +1,25 @@
 import { BatchCommand, type Command } from "@/commands";
+import { AddMediaAssetCommand } from "@/commands/media";
 import {
 	InsertElementCommand,
 	UpdateElementsCommand,
 } from "@/commands/timeline";
 import type { EditorCore } from "@/core";
+import { processMediaAssets } from "@/media/processing";
 import type { TimelineElement, TimelineTrack } from "@/timeline";
+import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import { DEFAULTS } from "@/timeline/defaults";
-import { buildTextElement } from "@/timeline/element-utils";
+import {
+	buildElementFromMedia,
+	buildTextElement,
+} from "@/timeline/element-utils";
+import { mediaTimeFromSeconds } from "@/wasm";
 import type {
 	AutomationEditOperation,
 	AutomationEditPlan,
+	AutomationImportAppliedResult,
+	AutomationImportRequest,
+	AutomationImportResult,
 	AutomationAppliedResult,
 	AutomationMutationResult,
 	AutomationProjectSnapshot,
@@ -25,6 +35,10 @@ export class EditorAutomation {
 	private revision = 0;
 	private stateFingerprint = "";
 	private appliedOperations = new Map<string, AppliedOperation>();
+	private importedOperations = new Map<
+		string,
+		{ fingerprint: string; result: AutomationImportAppliedResult }
+	>();
 	private writer: Promise<void> = Promise.resolve();
 
 	constructor(private editor: EditorCore) {}
@@ -36,6 +50,12 @@ export class EditorAutomation {
 
 	applyEditPlan(plan: AutomationEditPlan): Promise<AutomationMutationResult> {
 		return this.enqueue(() => this.applyEditPlanNow(plan));
+	}
+
+	importMedia(
+		request: AutomationImportRequest,
+	): Promise<AutomationImportResult> {
+		return this.enqueue(() => this.importMediaNow(request));
 	}
 
 	undo({
@@ -158,6 +178,98 @@ export class EditorAutomation {
 			revision: this.revision,
 			snapshot: this.buildSnapshot(),
 		};
+	}
+
+	private async importMediaNow(
+		request: AutomationImportRequest,
+	): Promise<AutomationImportResult> {
+		this.reconcileExternalChanges();
+		const { url: _transferUrl, ...stableRequest } = request;
+		const fingerprint = stableSerialize(stableRequest);
+		const prior = this.importedOperations.get(request.operationId);
+		if (prior) {
+			if (prior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: "operationId was already used for a different import",
+				};
+			}
+			return { ...prior.result, status: "replayed" };
+		}
+		if (request.projectId !== this.getProjectId()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `active project is ${this.getProjectId()}`,
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				operationId: request.operationId,
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+		assertMediaTime(request.startTime, "startTime", true);
+
+		const response = await fetch(request.url);
+		if (!response.ok)
+			throw new Error(`media transfer failed with HTTP ${response.status}`);
+		const blob = await response.blob();
+		const file = new File([blob], request.name, { type: request.mimeType });
+		const [asset] = await processMediaAssets({ files: [file] });
+		if (!asset) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "OpenCut could not process the media file",
+			};
+		}
+
+		const addMedia = new AddMediaAssetCommand({
+			projectId: request.projectId,
+			asset,
+		});
+		const duration =
+			asset.duration == null
+				? DEFAULT_NEW_ELEMENT_DURATION
+				: mediaTimeFromSeconds({ seconds: asset.duration });
+		const insert = new InsertElementCommand({
+			element: buildElementFromMedia({
+				mediaId: addMedia.getAssetId(),
+				mediaType: asset.type,
+				name: asset.name,
+				duration,
+				startTime: request.startTime,
+				buffer:
+					asset.type === "audio"
+						? new AudioBuffer({ length: 1, sampleRate: 44100 })
+						: undefined,
+			}),
+			placement: {
+				mode: "auto",
+				trackType: asset.type === "audio" ? "audio" : "video",
+			},
+		});
+		this.editor.command.execute({
+			command: new BatchCommand([addMedia, insert]),
+		});
+		await addMedia.waitForPersistence();
+		await this.editor.save.flush();
+		this.recordCommittedState();
+
+		const result: AutomationImportAppliedResult = {
+			status: "applied",
+			operationId: request.operationId,
+			revision: this.revision,
+			assetId: addMedia.getAssetId(),
+			elementId: insert.getElementId(),
+			snapshot: this.buildSnapshot(),
+		};
+		this.importedOperations.set(request.operationId, { fingerprint, result });
+		return result;
 	}
 
 	private validateAndBuildCommand(operation: AutomationEditOperation): Command {

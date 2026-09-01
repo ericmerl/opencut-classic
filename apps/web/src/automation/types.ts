@@ -84,3 +84,34 @@ export type AutomationUndoResult =
 			actualRevision: number;
 	  }
 	| { status: "nothing-to-undo"; revision: number };
+
+export interface AutomationImportRequest {
+	projectId: string;
+	operationId: string;
+	expectedRevision: number;
+	url: string;
+	name: string;
+	mimeType: string;
+	sourceFingerprint: string;
+	startTime: MediaTime;
+}
+
+export interface AutomationImportAppliedResult {
+	status: "applied";
+	operationId: string;
+	revision: number;
+	assetId: string;
+	elementId: string;
+	snapshot: AutomationProjectSnapshot;
+}
+
+export type AutomationImportResult =
+	| AutomationImportAppliedResult
+	| (Omit<AutomationImportAppliedResult, "status"> & { status: "replayed" })
+	| {
+			status: "conflict";
+			operationId: string;
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; operationId: string; reason: string };

@@ -15,6 +15,8 @@ export class AddMediaAssetCommand extends Command {
 	private createdAsset: MediaAsset | null = null;
 	private previousProjectFps: FrameRate | null = null;
 	private appliedProjectFps: FrameRate | null = null;
+	private persistencePromise: Promise<void> = Promise.resolve();
+	private persistenceError: unknown = null;
 
 	constructor({
 		projectId,
@@ -44,17 +46,19 @@ export class AddMediaAssetCommand extends Command {
 		editor.media.setAssets({
 			assets: [...this.savedAssets, this.createdAsset],
 		});
-		this.previousProjectFps = editor.project.getActiveOrNull()?.settings.fps ?? null;
+		this.previousProjectFps =
+			editor.project.getActiveOrNull()?.settings.fps ?? null;
 		this.appliedProjectFps = editor.project.ratchetFpsForImportedMedia({
 			importedAssets: [this.createdAsset],
 		});
 
-		storageService
+		this.persistencePromise = storageService
 			.saveMediaAsset({
 				projectId: this.projectId,
 				mediaAsset: this.createdAsset,
 			})
 			.catch((error) => {
+				this.persistenceError = error;
 				console.error("Failed to save media item:", error);
 
 				const currentAssets = editor.media.getAssets();
@@ -116,12 +120,20 @@ export class AddMediaAssetCommand extends Command {
 		return this.assetId;
 	}
 
+	async waitForPersistence(): Promise<void> {
+		await this.persistencePromise;
+		if (this.persistenceError) {
+			throw this.persistenceError;
+		}
+	}
+
 	private restoreProjectFpsAfterFailedSave({
 		editor,
 	}: {
 		editor: EditorCore;
 	}): void {
-		if (this.previousProjectFps === null || this.appliedProjectFps === null) return;
+		if (this.previousProjectFps === null || this.appliedProjectFps === null)
+			return;
 
 		const activeProject = editor.project.getActiveOrNull();
 		if (!activeProject) return;
@@ -137,7 +149,8 @@ export class AddMediaAssetCommand extends Command {
 		const highestRemainingVideoFps = getHighestImportedVideoFps({
 			mediaAssets: editor.media.getAssets(),
 		});
-		const appliedFpsFloat = this.appliedProjectFps.numerator / this.appliedProjectFps.denominator;
+		const appliedFpsFloat =
+			this.appliedProjectFps.numerator / this.appliedProjectFps.denominator;
 		if (
 			highestRemainingVideoFps !== null &&
 			highestRemainingVideoFps >= appliedFpsFloat
@@ -145,6 +158,8 @@ export class AddMediaAssetCommand extends Command {
 			return;
 		}
 
-		new UpdateProjectSettingsCommand({ fps: this.previousProjectFps }).execute();
+		new UpdateProjectSettingsCommand({
+			fps: this.previousProjectFps,
+		}).execute();
 	}
 }

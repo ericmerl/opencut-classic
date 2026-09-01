@@ -92,6 +92,33 @@ function createServer(): McpServer {
 		async (params) => toolResult(await bridge.request("undo", params)),
 	);
 
+	server.registerTool(
+		"opencut_import_media",
+		{
+			description:
+				"Import an image, audio file, or video from an absolute local path and place it on the timeline without a browser file picker.",
+			inputSchema: z.object({
+				projectId: z.string().min(1),
+				operationId: z.string().min(1),
+				expectedRevision: z.number().int().nonnegative(),
+				path: z.string().min(1),
+				startTime: z.number().int().nonnegative(),
+			}),
+		},
+		async ({ path, ...params }) => {
+			const ticket = await bridge.mediaTickets.create(path);
+			return toolResult(
+				await bridge.request("import_media", {
+					...params,
+					url: ticket.url,
+					name: ticket.name,
+					mimeType: ticket.mimeType,
+					sourceFingerprint: ticket.sourceFingerprint,
+				}),
+			);
+		},
+	);
+
 	return server;
 }
 

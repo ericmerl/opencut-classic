@@ -11,5 +11,6 @@ The first slice provides:
 - atomic text insertion, move, and trim plans through one `BatchCommand`
 - one-step undo
 - explicit `SaveManager.flush()` before mutation success
+- local media processing and OPFS persistence through one-time loopback transfer tickets
 
 The next slice should add an authenticated loopback browser bridge and a local MCP stdio sidecar. Transport handlers should call this facade and return its structured results without reaching into `EditorCore` directly.

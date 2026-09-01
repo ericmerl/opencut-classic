@@ -18,5 +18,6 @@ Available tools:
 - `opencut_get_project`
 - `opencut_apply_edit_plan`, supporting text insertion, move, and trim operations
 - `opencut_undo`
+- `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket
 
 The editor must be open with a project loaded. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.
