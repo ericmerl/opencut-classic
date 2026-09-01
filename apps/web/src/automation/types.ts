@@ -71,6 +71,12 @@ export type AutomationEditOperation =
 			trackType: TrackType;
 	  }
 	| {
+			kind: "set_project_settings";
+			fps?: FrameRate;
+			canvasSize?: TCanvasSize;
+			background?: TBackground;
+	  }
+	| {
 			kind: "delete";
 			trackId: string;
 			elementId: string;

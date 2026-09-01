@@ -80,4 +80,35 @@ describe("OpenCut edit-plan MCP contract", () => {
 
 		expect(result.success).toBe(true);
 	});
+
+	test("accepts setting the project canvas, frame rate, and background", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "vertical-project-settings-1",
+			expectedRevision: 4,
+			description: "Configure a vertical short",
+			operations: [
+				{
+					kind: "set_project_settings",
+					canvasSize: { width: 1080, height: 1920 },
+					fps: { numerator: 30, denominator: 1 },
+					background: { type: "color", color: "#000000" },
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects an empty project-settings operation", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "empty-project-settings-1",
+			expectedRevision: 4,
+			description: "Make no changes",
+			operations: [{ kind: "set_project_settings" }],
+		});
+
+		expect(result.success).toBe(false);
+	});
 });

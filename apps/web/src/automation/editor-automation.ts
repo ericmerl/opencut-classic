@@ -1,5 +1,6 @@
 import { BatchCommand, type Command } from "@/commands";
 import { AddMediaAssetCommand } from "@/commands/media";
+import { UpdateProjectSettingsCommand } from "@/commands/project";
 import {
 	AddTrackCommand,
 	DeleteElementsCommand,
@@ -31,6 +32,8 @@ import {
 	MAX_RETIME_RATE,
 	MIN_RETIME_RATE,
 } from "@/retime";
+import { DEFAULT_CANVAS_PRESETS } from "@/canvas/sizes";
+import type { TProjectSettings } from "@/project/types";
 import { mediaTimeFromSeconds } from "@/wasm";
 import type {
 	AutomationEditOperation,
@@ -421,6 +424,58 @@ export class EditorAutomation {
 		if (operation.kind === "add_track") {
 			return new AddTrackCommand({ type: operation.trackType });
 		}
+		if (operation.kind === "set_project_settings") {
+			if (!operation.fps && !operation.canvasSize && !operation.background) {
+				throw new Error("at least one project setting is required");
+			}
+			const settings: Partial<TProjectSettings> = {};
+			if (operation.fps) {
+				if (
+					!Number.isSafeInteger(operation.fps.numerator) ||
+					operation.fps.numerator <= 0 ||
+					!Number.isSafeInteger(operation.fps.denominator) ||
+					operation.fps.denominator <= 0
+				) {
+					throw new Error("frame-rate values must be positive safe integers");
+				}
+				settings.fps = operation.fps;
+			}
+			if (operation.canvasSize) {
+				if (
+					!Number.isSafeInteger(operation.canvasSize.width) ||
+					operation.canvasSize.width <= 0 ||
+					!Number.isSafeInteger(operation.canvasSize.height) ||
+					operation.canvasSize.height <= 0
+				) {
+					throw new Error("canvas dimensions must be positive safe integers");
+				}
+				const isPreset = DEFAULT_CANVAS_PRESETS.some(
+					(size) =>
+						size.width === operation.canvasSize?.width &&
+						size.height === operation.canvasSize?.height,
+				);
+				settings.canvasSize = operation.canvasSize;
+				settings.canvasSizeMode = isPreset ? "preset" : "custom";
+				if (!isPreset) settings.lastCustomCanvasSize = operation.canvasSize;
+			}
+			if (operation.background) {
+				if (
+					operation.background.type === "color" &&
+					!operation.background.color.trim()
+				) {
+					throw new Error("background color is required");
+				}
+				if (
+					operation.background.type === "blur" &&
+					(!Number.isFinite(operation.background.blurIntensity) ||
+						operation.background.blurIntensity < 0)
+				) {
+					throw new Error("background blur intensity must be non-negative");
+				}
+				settings.background = operation.background;
+			}
+			return new UpdateProjectSettingsCommand(settings);
+		}
 
 		const element = this.findElement(operation.trackId, operation.elementId);
 		if (!element) {
@@ -668,9 +723,12 @@ export class EditorAutomation {
 
 	private buildTimelineProjection(): unknown {
 		const scene = this.editor.scenes.getActiveScene();
+		const project = this.editor.project.getActive();
+		if (!project) throw new Error("No active project");
 		return {
-			projectId: this.getProjectId(),
+			projectId: project.metadata.id,
 			sceneId: scene.id,
+			settings: project.settings,
 			tracks: scene.tracks,
 		};
 	}

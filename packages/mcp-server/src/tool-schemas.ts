@@ -1,5 +1,23 @@
 import * as z from "zod/v4";
 
+const frameRateSchema = z.object({
+	numerator: z.number().int().positive(),
+	denominator: z.number().int().positive(),
+});
+
+const canvasSizeSchema = z.object({
+	width: z.number().int().positive(),
+	height: z.number().int().positive(),
+});
+
+const backgroundSchema = z.discriminatedUnion("type", [
+	z.object({ type: z.literal("color"), color: z.string().min(1) }),
+	z.object({
+		type: z.literal("blur"),
+		blurIntensity: z.number().nonnegative(),
+	}),
+]);
+
 const editOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("insert_text"),
@@ -11,6 +29,20 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		kind: z.literal("add_track"),
 		trackType: z.enum(["video", "text", "audio", "graphic", "effect"]),
 	}),
+	z
+		.object({
+			kind: z.literal("set_project_settings"),
+			fps: frameRateSchema.optional(),
+			canvasSize: canvasSizeSchema.optional(),
+			background: backgroundSchema.optional(),
+		})
+		.refine(
+			(value) =>
+				value.fps !== undefined ||
+				value.canvasSize !== undefined ||
+				value.background !== undefined,
+			{ message: "at least one project setting is required" },
+		),
 	z.object({
 		kind: z.literal("delete"),
 		trackId: z.string().min(1),
