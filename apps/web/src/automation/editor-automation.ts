@@ -6,6 +6,8 @@ import {
 	DeleteElementsCommand,
 	InsertElementCommand,
 	SplitElementsCommand,
+	ToggleTrackMuteCommand,
+	ToggleTrackVisibilityCommand,
 	UpdateElementsCommand,
 } from "@/commands/timeline";
 import type { EditorCore } from "@/core";
@@ -424,6 +426,33 @@ export class EditorAutomation {
 		}
 		if (operation.kind === "add_track") {
 			return new AddTrackCommand({ type: operation.trackType });
+		}
+		if (operation.kind === "set_track_state") {
+			if (operation.muted === undefined && operation.hidden === undefined) {
+				throw new Error("at least one track state is required");
+			}
+			const track = this.getTracks().find(
+				(candidate) => candidate.id === operation.trackId,
+			);
+			if (!track) throw new Error(`track not found: ${operation.trackId}`);
+			const commands: Command[] = [];
+			if (operation.muted !== undefined) {
+				if (!("muted" in track)) {
+					throw new Error(`${track.type} tracks cannot be muted`);
+				}
+				if (track.muted !== operation.muted) {
+					commands.push(new ToggleTrackMuteCommand(operation.trackId));
+				}
+			}
+			if (operation.hidden !== undefined) {
+				if (!("hidden" in track)) {
+					throw new Error(`${track.type} tracks cannot be hidden`);
+				}
+				if (track.hidden !== operation.hidden) {
+					commands.push(new ToggleTrackVisibilityCommand(operation.trackId));
+				}
+			}
+			return new BatchCommand(commands);
 		}
 		if (operation.kind === "set_project_settings") {
 			if (!operation.fps && !operation.canvasSize && !operation.background) {

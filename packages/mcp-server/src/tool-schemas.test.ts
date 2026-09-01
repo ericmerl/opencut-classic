@@ -138,4 +138,35 @@ describe("OpenCut edit-plan MCP contract", () => {
 
 		expect(result.success).toBe(true);
 	});
+
+	test("accepts deterministic track visibility and mute state", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "track-state-1",
+			expectedRevision: 6,
+			description: "Mute the source layer",
+			operations: [
+				{
+					kind: "set_track_state",
+					trackId: "source-track",
+					muted: true,
+					hidden: false,
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects a track-state operation without a requested state", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "track-state-empty-1",
+			expectedRevision: 6,
+			description: "Make no track change",
+			operations: [{ kind: "set_track_state", trackId: "source-track" }],
+		});
+
+		expect(result.success).toBe(false);
+	});
 });

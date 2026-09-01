@@ -72,6 +72,12 @@ export type AutomationEditOperation =
 			trackType: TrackType;
 	  }
 	| {
+			kind: "set_track_state";
+			trackId: string;
+			muted?: boolean;
+			hidden?: boolean;
+	  }
+	| {
 			kind: "set_project_settings";
 			fps?: FrameRate;
 			canvasSize?: TCanvasSize;

@@ -62,6 +62,17 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 	}),
 	z
 		.object({
+			kind: z.literal("set_track_state"),
+			trackId: z.string().min(1),
+			muted: z.boolean().optional(),
+			hidden: z.boolean().optional(),
+		})
+		.refine(
+			(value) => value.muted !== undefined || value.hidden !== undefined,
+			{ message: "at least one track state is required" },
+		),
+	z
+		.object({
 			kind: z.literal("set_project_settings"),
 			fps: frameRateSchema.optional(),
 			canvasSize: canvasSizeSchema.optional(),
