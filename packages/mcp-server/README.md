@@ -12,6 +12,8 @@ bun run mcp
 
 The bridge defaults to `127.0.0.1:32191`. Override both sides with `OPENCUT_BRIDGE_PORT` and `NEXT_PUBLIC_OPENCUT_BRIDGE_PORT`.
 
+Background removal is intentionally staged separately. See [BACKGROUND_REMOVAL_SCOPE.md](./BACKGROUND_REMOVAL_SCOPE.md) for the model-independent matte foundation, browser prototype boundary, production inference requirements, and acceptance criteria.
+
 Available tools:
 
 - `opencut_connection_status`
