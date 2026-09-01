@@ -1,7 +1,7 @@
 import type { MediaTime } from "@/wasm";
 import type { ExportFormat, ExportQuality } from "@/export";
 import type { TBackground, TCanvasSize } from "@/project/types";
-import type { RetimeConfig } from "@/timeline";
+import type { RetimeConfig, TrackType } from "@/timeline";
 import type { FrameRate } from "opencut-wasm";
 
 export interface AutomationElementSnapshot {
@@ -65,6 +65,10 @@ export type AutomationEditOperation =
 			content: string;
 			startTime: MediaTime;
 			duration: MediaTime;
+	  }
+	| {
+			kind: "add_track";
+			trackType: TrackType;
 	  }
 	| {
 			kind: "delete";
@@ -160,6 +164,7 @@ export interface AutomationImportRequest {
 	mimeType: string;
 	sourceFingerprint: string;
 	startTime: MediaTime;
+	trackId?: string;
 }
 
 export interface AutomationImportAppliedResult {

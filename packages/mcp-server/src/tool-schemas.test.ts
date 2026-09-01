@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { editPlanInputSchema } from "./tool-schemas";
+import { editPlanInputSchema, importMediaInputSchema } from "./tool-schemas";
 
 describe("OpenCut edit-plan MCP contract", () => {
 	test("accepts constant retiming with optional pitch preservation", () => {
@@ -54,5 +54,30 @@ describe("OpenCut edit-plan MCP contract", () => {
 
 		expect(tooSlow.success).toBe(false);
 		expect(tooFast.success).toBe(false);
+	});
+
+	test("accepts creating a typed timeline track", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "add-track-1",
+			expectedRevision: 3,
+			description: "Create a B-roll layer",
+			operations: [{ kind: "add_track", trackType: "video" }],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("accepts importing media onto an explicit track", () => {
+		const result = importMediaInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "import-b-roll-1",
+			expectedRevision: 4,
+			path: "C:\\media\\b-roll.mp4",
+			startTime: 0,
+			trackId: "b-roll-track",
+		});
+
+		expect(result.success).toBe(true);
 	});
 });

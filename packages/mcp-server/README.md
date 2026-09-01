@@ -16,9 +16,9 @@ Available tools:
 
 - `opencut_connection_status`
 - `opencut_get_project`, including project and canvas settings, track roles, media assets, and element parameters
-- `opencut_apply_edit_plan`, supporting text insertion, delete, move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and trim operations
+- `opencut_apply_edit_plan`, supporting track creation, text insertion, delete, move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and trim operations
 - `opencut_undo`
-- `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket
+- `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track
 - `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path
 
 The editor must be open with a project loaded. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.

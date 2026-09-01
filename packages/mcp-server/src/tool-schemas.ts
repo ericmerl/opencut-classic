@@ -8,6 +8,10 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		duration: z.number().int().positive(),
 	}),
 	z.object({
+		kind: z.literal("add_track"),
+		trackType: z.enum(["video", "text", "audio", "graphic", "effect"]),
+	}),
+	z.object({
 		kind: z.literal("delete"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
@@ -59,4 +63,13 @@ export const editPlanInputSchema = z.object({
 	expectedRevision: z.number().int().nonnegative(),
 	description: z.string().min(1),
 	operations: z.array(editOperationSchema).min(1),
+});
+
+export const importMediaInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	path: z.string().min(1),
+	startTime: z.number().int().nonnegative(),
+	trackId: z.string().min(1).optional(),
 });

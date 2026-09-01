@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
-import { editPlanInputSchema } from "./tool-schemas";
+import { editPlanInputSchema, importMediaInputSchema } from "./tool-schemas";
 
 const token = process.env.OPENCUT_BRIDGE_TOKEN;
 if (!token || token.length < 32) {
@@ -69,14 +69,8 @@ function createServer(): McpServer {
 		"opencut_import_media",
 		{
 			description:
-				"Import an image, audio file, or video from an absolute local path and place it on the timeline without a browser file picker.",
-			inputSchema: z.object({
-				projectId: z.string().min(1),
-				operationId: z.string().min(1),
-				expectedRevision: z.number().int().nonnegative(),
-				path: z.string().min(1),
-				startTime: z.number().int().nonnegative(),
-			}),
+				"Import an image, audio file, or video from an absolute local path and place it automatically or on an explicit compatible track without a browser file picker.",
+			inputSchema: importMediaInputSchema,
 		},
 		async ({ path, ...params }) => {
 			const ticket = await bridge.mediaTickets.create(path);

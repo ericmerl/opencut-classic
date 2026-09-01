@@ -1,6 +1,7 @@
 import { BatchCommand, type Command } from "@/commands";
 import { AddMediaAssetCommand } from "@/commands/media";
 import {
+	AddTrackCommand,
 	DeleteElementsCommand,
 	InsertElementCommand,
 	SplitElementsCommand,
@@ -244,6 +245,16 @@ export class EditorAutomation {
 			};
 		}
 		assertMediaTime(request.startTime, "startTime", true);
+		const requestedTrack = request.trackId
+			? this.getTracks().find((track) => track.id === request.trackId)
+			: undefined;
+		if (request.trackId && !requestedTrack) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `track not found: ${request.trackId}`,
+			};
+		}
 
 		const response = await fetch(request.url);
 		if (!response.ok)
@@ -256,6 +267,14 @@ export class EditorAutomation {
 				status: "rejected",
 				operationId: request.operationId,
 				reason: "OpenCut could not process the media file",
+			};
+		}
+		const requiredTrackType = asset.type === "audio" ? "audio" : "video";
+		if (requestedTrack && requestedTrack.type !== requiredTrackType) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `${asset.type} media cannot be placed on ${requestedTrack.type} tracks`,
 			};
 		}
 
@@ -279,10 +298,12 @@ export class EditorAutomation {
 						? new AudioBuffer({ length: 1, sampleRate: 44100 })
 						: undefined,
 			}),
-			placement: {
-				mode: "auto",
-				trackType: asset.type === "audio" ? "audio" : "video",
-			},
+			placement: request.trackId
+				? { mode: "explicit", trackId: request.trackId }
+				: {
+						mode: "auto",
+						trackType: asset.type === "audio" ? "audio" : "video",
+					},
 		});
 		this.editor.command.execute({
 			command: new BatchCommand([addMedia, insert]),
@@ -396,6 +417,9 @@ export class EditorAutomation {
 				}),
 				placement: { mode: "auto" },
 			});
+		}
+		if (operation.kind === "add_track") {
+			return new AddTrackCommand({ type: operation.trackType });
 		}
 
 		const element = this.findElement(operation.trackId, operation.elementId);
