@@ -1,5 +1,6 @@
 import type { MediaTime } from "@/wasm";
 import type { ExportFormat, ExportQuality } from "@/export";
+import type { TBackground, TCanvasSize } from "@/project/types";
 import type { FrameRate } from "opencut-wasm";
 
 export interface AutomationElementSnapshot {
@@ -11,12 +12,48 @@ export interface AutomationElementSnapshot {
 	duration: MediaTime;
 	trimStart: MediaTime;
 	trimEnd: MediaTime;
+	params: Record<string, string | number | boolean>;
+	mediaId?: string;
+	sourceType?: "upload" | "library";
+	sourceUrl?: string;
+	hidden?: boolean;
+}
+
+export interface AutomationTrackSnapshot {
+	trackId: string;
+	name: string;
+	type: string;
+	role: "main" | "overlay" | "audio";
+	muted?: boolean;
+	hidden?: boolean;
+}
+
+export interface AutomationMediaAssetSnapshot {
+	assetId: string;
+	name: string;
+	type: "image" | "video" | "audio";
+	size: number;
+	width?: number;
+	height?: number;
+	duration?: number;
+	fps?: number;
+	hasAudio?: boolean;
 }
 
 export interface AutomationProjectSnapshot {
 	projectId: string;
+	projectName: string;
+	projectVersion: number;
 	sceneId: string;
+	sceneName: string;
 	revision: number;
+	settings: {
+		fps: FrameRate;
+		canvasSize: TCanvasSize;
+		background: TBackground;
+	};
+	tracks: AutomationTrackSnapshot[];
+	mediaAssets: AutomationMediaAssetSnapshot[];
 	elements: AutomationElementSnapshot[];
 }
 

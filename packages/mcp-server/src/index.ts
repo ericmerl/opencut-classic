@@ -36,7 +36,7 @@ function createServer(): McpServer {
 		"opencut_get_project",
 		{
 			description:
-				"Read the active project, scene, revision, tracks, and timeline elements in canonical media ticks.",
+				"Read the active project, canvas settings, scene, revision, track roles, media assets, and parameterized timeline elements in canonical media ticks.",
 		},
 		async () => toolResult(await bridge.request("read_project", {})),
 	);

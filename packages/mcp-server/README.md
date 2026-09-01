@@ -15,7 +15,7 @@ The bridge defaults to `127.0.0.1:32191`. Override both sides with `OPENCUT_BRID
 Available tools:
 
 - `opencut_connection_status`
-- `opencut_get_project`
+- `opencut_get_project`, including project and canvas settings, track roles, media assets, and element parameters
 - `opencut_apply_edit_plan`, supporting text insertion, delete, move, split, and trim operations
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket

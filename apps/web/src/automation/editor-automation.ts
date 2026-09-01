@@ -19,6 +19,7 @@ import { mediaTimeFromSeconds } from "@/wasm";
 import type {
 	AutomationEditOperation,
 	AutomationEditPlan,
+	AutomationElementSnapshot,
 	AutomationExportCompletedResult,
 	AutomationExportRequest,
 	AutomationExportResult,
@@ -477,22 +478,73 @@ export class EditorAutomation {
 
 	private buildSnapshot(): AutomationProjectSnapshot {
 		const scene = this.editor.scenes.getActiveScene();
+		const project = this.editor.project.getActive();
+		if (!project) throw new Error("No active project");
+		const tracks = this.getTracks();
 		return {
-			projectId: this.getProjectId(),
+			projectId: project.metadata.id,
+			projectName: project.metadata.name,
+			projectVersion: project.version,
 			sceneId: scene.id,
+			sceneName: scene.name,
 			revision: this.revision,
-			elements: this.getTracks().flatMap((track) =>
-				track.elements.map((element) => ({
-					trackId: track.id,
-					elementId: element.id,
-					type: element.type,
-					name: element.name,
-					startTime: element.startTime,
-					duration: element.duration,
-					trimStart: element.trimStart,
-					trimEnd: element.trimEnd,
-				})),
+			settings: {
+				fps: project.settings.fps,
+				canvasSize: project.settings.canvasSize,
+				background: project.settings.background,
+			},
+			tracks: tracks.map((track) => ({
+				trackId: track.id,
+				name: track.name,
+				type: track.type,
+				role:
+					track.id === scene.tracks.main.id
+						? "main"
+						: track.type === "audio"
+							? "audio"
+							: "overlay",
+				...("muted" in track ? { muted: track.muted } : {}),
+				...("hidden" in track ? { hidden: track.hidden } : {}),
+			})),
+			mediaAssets: this.editor.media.getAssets().map((asset) => ({
+				assetId: asset.id,
+				name: asset.name,
+				type: asset.type,
+				size: asset.file.size,
+				...(asset.width == null ? {} : { width: asset.width }),
+				...(asset.height == null ? {} : { height: asset.height }),
+				...(asset.duration == null ? {} : { duration: asset.duration }),
+				...(asset.fps == null ? {} : { fps: asset.fps }),
+				...(asset.hasAudio == null ? {} : { hasAudio: asset.hasAudio }),
+			})),
+			elements: tracks.flatMap((track) =>
+				track.elements.map((element) =>
+					this.buildElementSnapshot(track.id, element),
+				),
 			),
+		};
+	}
+
+	private buildElementSnapshot(
+		trackId: string,
+		element: TimelineElement,
+	): AutomationElementSnapshot {
+		return {
+			trackId,
+			elementId: element.id,
+			type: element.type,
+			name: element.name,
+			startTime: element.startTime,
+			duration: element.duration,
+			trimStart: element.trimStart,
+			trimEnd: element.trimEnd,
+			params: { ...element.params },
+			...("mediaId" in element ? { mediaId: element.mediaId } : {}),
+			...("sourceType" in element ? { sourceType: element.sourceType } : {}),
+			...("sourceUrl" in element ? { sourceUrl: element.sourceUrl } : {}),
+			...("hidden" in element && element.hidden != null
+				? { hidden: element.hidden }
+				: {}),
 		};
 	}
 
