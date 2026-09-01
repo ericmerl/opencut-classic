@@ -52,6 +52,11 @@ import {
 	getElementSourceDuration,
 	validateTrackCreationPlan,
 } from "./timeline-surgery";
+import {
+	queryTimelineSnapshot,
+	type AutomationTimelineQueryRequest,
+	type AutomationTimelineQueryResult,
+} from "./timeline-query";
 import type {
 	AutomationAudioAnalysisRequest,
 	AutomationAudioAnalysisResult,
@@ -110,6 +115,13 @@ export class EditorAutomation {
 	readProject(): AutomationProjectSnapshot {
 		this.reconcileExternalChanges();
 		return this.buildSnapshot();
+	}
+
+	queryTimeline(
+		request: AutomationTimelineQueryRequest,
+	): AutomationTimelineQueryResult {
+		this.reconcileExternalChanges();
+		return queryTimelineSnapshot({ snapshot: this.buildSnapshot(), request });
 	}
 
 	listEffects(): AutomationEffectCatalogEntry[] {

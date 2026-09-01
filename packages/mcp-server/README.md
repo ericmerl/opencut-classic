@@ -19,6 +19,7 @@ Available tools:
 - `opencut_create_project`, creating and activating a named project with an idempotent operation ID
 - `opencut_open_project`, opening a saved project with an idempotent operation ID
 - `opencut_get_project`, including project and canvas settings, track roles, media assets, and element parameters
+- `opencut_query_timeline`, returning compact ordered elements, uncovered gaps, pairwise overlaps, and cut, gap, or overlap relationships for a revision-stable time range
 - `opencut_list_effects`, returning the connected editor's supported effect catalog and validated parameter metadata
 - `opencut_analyze_audio`, measuring integrated LUFS, sample peak, estimated true peak, and available uniform mix-gain range before export mastering
 - `opencut_normalize_audio`, applying revision-safe loudness normalization with a target LUFS value, true-peak ceiling, and maximum boost
@@ -36,6 +37,8 @@ Keyframe times are relative to the element start and use canonical media ticks. 
 Audio analysis measures the unmastered timeline mix. Normalization shifts every audible clip base level and volume keyframe by the same dB value, preserving the relative mix. The applied gain is limited by the requested true-peak ceiling, maximum boost, and OpenCut's volume-control range. The normalization response includes measurements from before and after the mutation.
 
 Effect instances use caller-selected stable IDs. The project snapshot returns each instance, its type, enabled state, and current parameters. Effect parameters use the general keyframe path `effects.<effectId>.params.<paramKey>`, so they can be created, updated, retimed, and removed through the same keyframe operations as transforms and opacity. Removing an effect also removes its parameter keyframes.
+
+Timeline queries accept optional track IDs, element types, and start and end ticks. Results include elements that intersect the requested range. Gap coverage is clipped to that range, and relationships are computed between consecutive returned elements. Omitting the range queries the complete project duration.
 
 Transitions link two consecutive, edge-adjacent video or image clips on one video track. Their duration cannot exceed either clip. The transition occupies the beginning of the incoming clip while the outgoing clip remains available for compositing. Wipe transitions currently reject masked incoming clips instead of replacing their authored mask.
 

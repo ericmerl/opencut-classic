@@ -18,6 +18,23 @@ const backgroundSchema = z.discriminatedUnion("type", [
 	}),
 ]);
 
+export const timelineQueryInputSchema = z
+	.object({
+		projectId: z.string().min(1),
+		expectedRevision: z.number().int().nonnegative(),
+		startTime: z.number().int().nonnegative().optional(),
+		endTime: z.number().int().nonnegative().optional(),
+		trackIds: z.array(z.string().min(1)).min(1).optional(),
+		elementTypes: z.array(z.string().min(1)).min(1).optional(),
+	})
+	.refine(
+		(value) =>
+			value.startTime === undefined ||
+			value.endTime === undefined ||
+			value.endTime >= value.startTime,
+		{ message: "endTime must not precede startTime" },
+	);
+
 const captionStyleSchema = z.object({
 	fontFamily: z.string().min(1).optional(),
 	fontSize: z

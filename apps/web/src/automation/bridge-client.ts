@@ -7,9 +7,16 @@ import type {
 	AutomationImportRequest,
 	AutomationOpenProjectRequest,
 } from "./types";
+import type { AutomationTimelineQueryRequest } from "./timeline-query";
 
 type BridgeRequest =
 	| { kind: "request"; id: string; method: "read_project"; params: object }
+	| {
+			kind: "request";
+			id: string;
+			method: "query_timeline";
+			params: AutomationTimelineQueryRequest;
+	  }
 	| { kind: "request"; id: string; method: "list_effects"; params: object }
 	| {
 			kind: "request";
@@ -155,6 +162,8 @@ export class AutomationBridgeClient {
 		switch (message.method) {
 			case "read_project":
 				return this.automation.readProject();
+			case "query_timeline":
+				return this.automation.queryTimeline(message.params);
 			case "list_effects":
 				return this.automation.listEffects();
 			case "analyze_audio":

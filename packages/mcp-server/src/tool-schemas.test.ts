@@ -4,7 +4,34 @@ import {
 	editPlanInputSchema,
 	importMediaInputSchema,
 	openProjectInputSchema,
+	timelineQueryInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut timeline-query MCP contract", () => {
+	test("accepts bounded track and element filters", () => {
+		const result = timelineQueryInputSchema.safeParse({
+			projectId: "project-1",
+			expectedRevision: 4,
+			startTime: 120000,
+			endTime: 360000,
+			trackIds: ["main"],
+			elementTypes: ["video", "image"],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects a reversed range", () => {
+		const result = timelineQueryInputSchema.safeParse({
+			projectId: "project-1",
+			expectedRevision: 4,
+			startTime: 360000,
+			endTime: 120000,
+		});
+
+		expect(result.success).toBe(false);
+	});
+});
 
 describe("OpenCut edit-plan MCP contract", () => {
 	test("accepts constant retiming with optional pitch preservation", () => {

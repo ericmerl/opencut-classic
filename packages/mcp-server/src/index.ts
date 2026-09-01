@@ -8,6 +8,7 @@ import {
 	editPlanInputSchema,
 	importMediaInputSchema,
 	openProjectInputSchema,
+	timelineQueryInputSchema,
 } from "./tool-schemas";
 
 const token = process.env.OPENCUT_BRIDGE_TOKEN;
@@ -89,6 +90,17 @@ function createServer(): McpServer {
 				"Read the active project, canvas settings, scene, revision, track roles, media assets, and parameterized timeline elements in canonical media ticks.",
 		},
 		async () => toolResult(await bridge.request("read_project", {})),
+	);
+
+	server.registerTool(
+		"opencut_query_timeline",
+		{
+			description:
+				"Query a revision-stable time range of the active timeline and return compact ordered elements, uncovered gaps, pairwise overlaps, and cut, gap, or overlap relationships per track.",
+			inputSchema: timelineQueryInputSchema,
+		},
+		async (params) =>
+			toolResult(await bridge.request("query_timeline", params)),
 	);
 
 	server.registerTool(
