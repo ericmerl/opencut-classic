@@ -1,6 +1,7 @@
 import type { EditorAutomation } from "./editor-automation";
 import type {
 	AutomationAudioAnalysisRequest,
+	AutomationAttachMatteRequest,
 	AutomationCreateProjectRequest,
 	AutomationEditPlan,
 	AutomationExportRequest,
@@ -42,6 +43,12 @@ type BridgeRequest =
 			id: string;
 			method: "export_project";
 			params: AutomationExportRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "attach_matte";
+			params: AutomationAttachMatteRequest;
 	  }
 	| {
 			kind: "request";
@@ -180,6 +187,8 @@ export class AutomationBridgeClient {
 				return this.automation.exportProject(message.params);
 			case "import_media":
 				return this.automation.importMedia(message.params);
+			case "attach_matte":
+				return this.automation.attachMatte(message.params);
 			case "undo":
 				return this.automation.undo(message.params);
 		}

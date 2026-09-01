@@ -2,7 +2,12 @@ import type { MediaTime } from "@/wasm";
 import type { ExportFormat, ExportQuality } from "@/export";
 import type { TBackground, TCanvasSize } from "@/project/types";
 import type { SubtitleStyleOverrides } from "@/subtitles/types";
-import type { ClipTransitionType, RetimeConfig, TrackType } from "@/timeline";
+import type {
+	ClipMatteAttachment,
+	ClipTransitionType,
+	RetimeConfig,
+	TrackType,
+} from "@/timeline";
 import type { FrameRate } from "opencut-wasm";
 import type {
 	AnimationInterpolation,
@@ -27,6 +32,16 @@ export interface AutomationElementSnapshot {
 	retime?: RetimeConfig;
 	keyframes?: ElementKeyframe[];
 	effects?: AutomationEffectSnapshot[];
+	matte?: AutomationMatteSnapshot;
+}
+
+export interface AutomationMatteSnapshot extends ClipMatteAttachment {
+	assetType: "image" | "video" | null;
+	width: number | null;
+	height: number | null;
+	duration: number | null;
+	fps: number | null;
+	stale: boolean | null;
 }
 
 export interface AutomationEffectSnapshot {
@@ -82,6 +97,8 @@ export interface AutomationMediaAssetSnapshot {
 	duration?: number;
 	fps?: number;
 	hasAudio?: boolean;
+	sourceFingerprint?: string;
+	role?: "timeline" | "matte";
 }
 
 export interface AutomationProjectSnapshot {
@@ -323,6 +340,17 @@ export type AutomationEditOperation =
 			elementId: string;
 			splitTime: MediaTime;
 			retainSide?: "both" | "left" | "right";
+	  }
+	| {
+			kind: "set_matte_state";
+			trackId: string;
+			elementId: string;
+			enabled: boolean;
+	  }
+	| {
+			kind: "remove_matte";
+			trackId: string;
+			elementId: string;
 	  };
 
 export interface AutomationEditPlan {
@@ -394,6 +422,43 @@ export interface AutomationImportAppliedResult {
 export type AutomationImportResult =
 	| AutomationImportAppliedResult
 	| (Omit<AutomationImportAppliedResult, "status"> & { status: "replayed" })
+	| {
+			status: "conflict";
+			operationId: string;
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; operationId: string; reason: string };
+
+export interface AutomationAttachMatteRequest {
+	projectId: string;
+	operationId: string;
+	expectedRevision: number;
+	trackId: string;
+	elementId: string;
+	url: string;
+	name: string;
+	mimeType: string;
+	artifactHash: string;
+	artifactFingerprint: string;
+	channel: "alpha" | "red";
+	modelId: string;
+	modelVersion: string;
+}
+
+export interface AutomationAttachMatteAppliedResult {
+	status: "applied";
+	operationId: string;
+	revision: number;
+	assetId: string;
+	snapshot: AutomationProjectSnapshot;
+}
+
+export type AutomationAttachMatteResult =
+	| AutomationAttachMatteAppliedResult
+	| (Omit<AutomationAttachMatteAppliedResult, "status"> & {
+			status: "replayed";
+	  })
 	| {
 			status: "conflict";
 			operationId: string;

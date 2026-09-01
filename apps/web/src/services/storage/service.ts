@@ -303,8 +303,12 @@ class StorageService {
 			width: mediaAsset.width,
 			height: mediaAsset.height,
 			duration: mediaAsset.duration,
+			fps: mediaAsset.fps,
+			hasAudio: mediaAsset.hasAudio,
 			thumbnailUrl: mediaAsset.thumbnailUrl,
 			ephemeral: mediaAsset.ephemeral,
+			sourceFingerprint: mediaAsset.sourceFingerprint,
+			role: mediaAsset.role,
 		};
 
 		try {
@@ -376,8 +380,12 @@ class StorageService {
 			width: metadata.width,
 			height: metadata.height,
 			duration: metadata.duration,
+			fps: metadata.fps,
+			hasAudio: metadata.hasAudio,
 			thumbnailUrl: metadata.thumbnailUrl,
 			ephemeral: metadata.ephemeral,
+			sourceFingerprint: metadata.sourceFingerprint,
+			role: metadata.role,
 		};
 	}
 

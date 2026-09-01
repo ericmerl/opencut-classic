@@ -4,6 +4,7 @@ import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
 import { calculateNormalizationGain } from "./audio-normalization";
 import {
+	attachMatteInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
 	importMediaInputSchema,
@@ -182,6 +183,28 @@ function createServer(): McpServer {
 					name: ticket.name,
 					mimeType: ticket.mimeType,
 					sourceFingerprint: ticket.sourceFingerprint,
+				}),
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_attach_matte",
+		{
+			description:
+				"Attach a precomputed image or video foreground matte to a video clip. The artifact must match the source aspect ratio; video mattes must cover the full source duration. Use apply_edit_plan to enable, disable, or detach it.",
+			inputSchema: attachMatteInputSchema,
+		},
+		async ({ path, ...params }) => {
+			const ticket = await bridge.mediaTickets.create(path);
+			return toolResult(
+				await bridge.request("attach_matte", {
+					...params,
+					url: ticket.url,
+					name: ticket.name,
+					mimeType: ticket.mimeType,
+					artifactHash: ticket.contentHash,
+					artifactFingerprint: ticket.sourceFingerprint,
 				}),
 			);
 		},

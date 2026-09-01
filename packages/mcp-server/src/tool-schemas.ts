@@ -358,6 +358,17 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			.describe("Absolute timeline split position in canonical media ticks."),
 		retainSide: z.enum(["both", "left", "right"]).optional(),
 	}),
+	z.object({
+		kind: z.literal("set_matte_state"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		enabled: z.boolean(),
+	}),
+	z.object({
+		kind: z.literal("remove_matte"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+	}),
 ]);
 
 export const editPlanInputSchema = z
@@ -401,6 +412,23 @@ export const importMediaInputSchema = z.object({
 		.describe(
 			"When true, the first visual import adopts the media dimensions and frame rate. Defaults to false so imports preserve explicit project settings.",
 		),
+});
+
+export const attachMatteInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	trackId: z.string().min(1),
+	elementId: z.string().min(1),
+	path: z.string().min(1),
+	channel: z
+		.enum(["alpha", "red"])
+		.default("red")
+		.describe(
+			"Channel containing foreground opacity. Use red for grayscale mattes and alpha for RGBA mattes.",
+		),
+	modelId: z.string().trim().min(1),
+	modelVersion: z.string().trim().min(1),
 });
 
 export const createProjectInputSchema = z.object({

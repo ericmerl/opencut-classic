@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, isAbsolute, resolve } from "node:path";
 
@@ -18,6 +19,7 @@ export class MediaTickets {
 		mimeType: string;
 		size: number;
 		sourceFingerprint: string;
+		contentHash: string;
 	}> {
 		if (!isAbsolute(path)) throw new Error("Media path must be absolute");
 		const info = await stat(path);
@@ -37,6 +39,7 @@ export class MediaTickets {
 			sourceFingerprint: createHash("sha256")
 				.update(`${resolve(path)}\0${info.size}\0${info.mtimeMs}`)
 				.digest("hex"),
+			contentHash: await hashFile(path),
 		};
 	}
 
@@ -55,6 +58,12 @@ export class MediaTickets {
 			if (ticket.expiresAt <= now) this.tickets.delete(id);
 		}
 	}
+}
+
+async function hashFile(path: string): Promise<string> {
+	const hash = createHash("sha256");
+	for await (const chunk of createReadStream(path)) hash.update(chunk);
+	return hash.digest("hex");
 }
 
 function isSupportedMediaType(type: string): boolean {

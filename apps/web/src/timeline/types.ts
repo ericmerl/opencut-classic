@@ -101,6 +101,20 @@ export interface ClipTransition {
 	fromElementId: string;
 }
 
+export type ClipMatteChannel = "alpha" | "red";
+
+export interface ClipMatteAttachment {
+	assetId: string;
+	sourceMediaId: string;
+	sourceFingerprint: string | null;
+	artifactHash: string;
+	artifactFingerprint: string;
+	channel: ClipMatteChannel;
+	modelId: string;
+	modelVersion: string;
+	enabled: boolean;
+}
+
 interface BaseAudioElement extends BaseTimelineElement {
 	type: "audio";
 	buffer?: AudioBuffer;
@@ -140,6 +154,7 @@ export interface VideoElement extends BaseTimelineElement {
 	retime?: RetimeConfig;
 	effects?: Effect[];
 	masks?: Mask[];
+	matte?: ClipMatteAttachment;
 }
 
 export interface ImageElement extends BaseTimelineElement {

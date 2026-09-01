@@ -27,6 +27,8 @@ export interface MediaAssetData {
 	hasAudio?: boolean;
 	ephemeral?: boolean;
 	thumbnailUrl?: string;
+	sourceFingerprint?: string;
+	role?: "timeline" | "matte";
 }
 
 export type SerializedScene = Omit<TScene, "createdAt" | "updatedAt"> & {

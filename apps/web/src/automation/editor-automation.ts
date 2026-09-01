@@ -42,10 +42,12 @@ import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-elemen
 import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
 import { getElementKeyframes } from "@/animation";
 import { analyzeAutomationAudio } from "./audio-analysis";
+import { prepareMatteAttachment } from "./attach-matte";
 import { buildAudioControlPatch } from "./audio-control";
 import { buildAudioMixGainCommand } from "./audio-mix-gain";
 import { buildEffectControlCommand, listEffectCatalog } from "./effect-control";
 import { buildKeyframeCommand } from "./keyframe-control";
+import { buildMatteControlCommand, buildMatteSnapshot } from "./matte-control";
 import { buildTransitionCommand } from "./transition-control";
 import {
 	buildTrimPatch,
@@ -60,6 +62,9 @@ import {
 import type {
 	AutomationAudioAnalysisRequest,
 	AutomationAudioAnalysisResult,
+	AutomationAttachMatteAppliedResult,
+	AutomationAttachMatteRequest,
+	AutomationAttachMatteResult,
 	AutomationEditOperation,
 	AutomationEditPlan,
 	AutomationElementSnapshot,
@@ -98,6 +103,10 @@ export class EditorAutomation {
 	private exportedOperations = new Map<
 		string,
 		{ fingerprint: string; result: AutomationExportCompletedResult }
+	>();
+	private attachedMatteOperations = new Map<
+		string,
+		{ fingerprint: string; result: AutomationAttachMatteAppliedResult }
 	>();
 	private projectOperations = new Map<
 		string,
@@ -165,6 +174,12 @@ export class EditorAutomation {
 		request: AutomationImportRequest,
 	): Promise<AutomationImportResult> {
 		return this.enqueue(() => this.importMediaNow(request));
+	}
+
+	attachMatte(
+		request: AutomationAttachMatteRequest,
+	): Promise<AutomationAttachMatteResult> {
+		return this.enqueue(() => this.attachMatteNow(request));
 	}
 
 	exportProject(
@@ -495,7 +510,7 @@ export class EditorAutomation {
 
 		const addMedia = new AddMediaAssetCommand({
 			projectId: request.projectId,
-			asset,
+			asset: { ...asset, sourceFingerprint: request.sourceFingerprint },
 			ratchetProjectFps: request.adoptMediaSettings ?? false,
 		});
 		const duration =
@@ -539,6 +554,71 @@ export class EditorAutomation {
 		};
 		this.importedOperations.set(request.operationId, { fingerprint, result });
 		return result;
+	}
+
+	private async attachMatteNow(
+		request: AutomationAttachMatteRequest,
+	): Promise<AutomationAttachMatteResult> {
+		this.reconcileExternalChanges();
+		const { url: _transferUrl, ...stableRequest } = request;
+		const fingerprint = stableSerialize(stableRequest);
+		const prior = this.attachedMatteOperations.get(request.operationId);
+		if (prior) {
+			if (prior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason:
+						"operationId was already used for a different matte attachment",
+				};
+			}
+			return { ...prior.result, status: "replayed" };
+		}
+		if (request.projectId !== this.getProjectId()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `active project is ${this.getProjectId()}`,
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				operationId: request.operationId,
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+
+		try {
+			const prepared = await prepareMatteAttachment({
+				editor: this.editor,
+				request,
+			});
+			this.editor.command.execute({ command: prepared.command });
+			await prepared.addMedia.waitForPersistence();
+			await this.editor.save.flush();
+			this.recordCommittedState();
+			const result: AutomationAttachMatteAppliedResult = {
+				status: "applied",
+				operationId: request.operationId,
+				revision: this.revision,
+				assetId: prepared.addMedia.getAssetId(),
+				snapshot: this.buildSnapshot(),
+			};
+			this.attachedMatteOperations.set(request.operationId, {
+				fingerprint,
+				result,
+			});
+			return result;
+		} catch (error) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason:
+					error instanceof Error ? error.message : "matte attachment failed",
+			};
+		}
 	}
 
 	private async exportProjectNow(
@@ -615,6 +695,16 @@ export class EditorAutomation {
 	}
 
 	private validateAndBuildCommand(operation: AutomationEditOperation): Command {
+		if (
+			operation.kind === "set_matte_state" ||
+			operation.kind === "remove_matte"
+		) {
+			return buildMatteControlCommand({
+				operation,
+				projectId: this.getProjectId(),
+				tracks: this.editor.scenes.getActiveScene().tracks,
+			});
+		}
 		if (operation.kind === "adjust_mix_gain") {
 			return buildAudioMixGainCommand({
 				tracks: this.editor.scenes.getActiveScene().tracks,
@@ -997,6 +1087,10 @@ export class EditorAutomation {
 				...(asset.duration == null ? {} : { duration: asset.duration }),
 				...(asset.fps == null ? {} : { fps: asset.fps }),
 				...(asset.hasAudio == null ? {} : { hasAudio: asset.hasAudio }),
+				...(asset.sourceFingerprint == null
+					? {}
+					: { sourceFingerprint: asset.sourceFingerprint }),
+				...(asset.role == null ? {} : { role: asset.role }),
 			})),
 			elements: tracks.flatMap((track) =>
 				track.elements.map((element) =>
@@ -1011,6 +1105,7 @@ export class EditorAutomation {
 		element: TimelineElement,
 	): AutomationElementSnapshot {
 		const keyframes = getElementKeyframes({ animations: element.animations });
+		const assets = this.editor.media.getAssets();
 		return {
 			trackId,
 			elementId: element.id,
@@ -1030,6 +1125,17 @@ export class EditorAutomation {
 				: {}),
 			...(isRetimableElement(element) && element.retime
 				? { retime: element.retime }
+				: {}),
+			...(element.type === "video" && element.matte
+				? {
+						matte: buildMatteSnapshot({
+							matte: element.matte,
+							assets,
+							source: assets.find(
+								(asset) => asset.id === element.matte?.sourceMediaId,
+							),
+						}),
+					}
 				: {}),
 			...(keyframes.length > 0 ? { keyframes } : {}),
 			...("effects" in element && element.effects?.length
@@ -1067,6 +1173,7 @@ export class EditorAutomation {
 		this.appliedOperations.clear();
 		this.importedOperations.clear();
 		this.exportedOperations.clear();
+		this.attachedMatteOperations.clear();
 		this.editor.command.clear();
 		this.editor.selection.clearSelection();
 		this.stateFingerprint = stableSerialize(this.buildTimelineProjection());

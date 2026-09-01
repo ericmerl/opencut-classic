@@ -1,11 +1,52 @@
 import { describe, expect, test } from "bun:test";
 import {
+	attachMatteInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
 	importMediaInputSchema,
 	openProjectInputSchema,
 	timelineQueryInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut matte MCP contract", () => {
+	test("accepts a precomputed red-channel video matte", () => {
+		const result = attachMatteInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "matte-1",
+			expectedRevision: 4,
+			trackId: "main",
+			elementId: "clip-1",
+			path: "C:\\media\\clip-matte.webm",
+			channel: "red",
+			modelId: "background-matting-v2",
+			modelVersion: "2.1",
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("accepts matte state changes and detachment", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "matte-controls-1",
+			expectedRevision: 5,
+			description: "Disable and remove the clip matte",
+			operations: [
+				{
+					kind: "set_matte_state",
+					trackId: "main",
+					elementId: "clip-1",
+					enabled: false,
+				},
+				{
+					kind: "remove_matte",
+					trackId: "main",
+					elementId: "clip-1",
+				},
+			],
+		});
+		expect(result.success).toBe(true);
+	});
+});
 
 describe("OpenCut timeline-query MCP contract", () => {
 	test("accepts bounded track and element filters", () => {
