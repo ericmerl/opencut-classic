@@ -231,6 +231,7 @@ function EditableProjectName() {
 
 	return (
 		<input
+			key={activeProject?.metadata.id}
 			ref={inputRef}
 			type="text"
 			defaultValue={projectName}

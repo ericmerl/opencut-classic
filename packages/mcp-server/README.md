@@ -26,4 +26,6 @@ Available tools:
 
 The editor must be open with a project loaded. Creating or opening a project automatically updates the connected editor route. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.
 
+Caption `fontSize` values use OpenCut app units rather than output pixels. Typical captions use values from `4` through `8`; the default is `5`.
+
 Exports never overwrite an existing file. A completed export operation can be retried with the same operation ID and identical arguments without rendering or writing it again. Export retries are remembered for the lifetime of the MCP process.

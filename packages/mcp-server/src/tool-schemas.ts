@@ -20,7 +20,13 @@ const backgroundSchema = z.discriminatedUnion("type", [
 
 const captionStyleSchema = z.object({
 	fontFamily: z.string().min(1).optional(),
-	fontSize: z.number().positive().optional(),
+	fontSize: z
+		.number()
+		.positive()
+		.describe(
+			"Font size in OpenCut app units. Typical captions use 4 through 8; the default is 5.",
+		)
+		.optional(),
 	color: z.string().min(1).optional(),
 	textAlign: z.enum(["left", "center", "right"]).optional(),
 	fontWeight: z.enum(["normal", "bold"]).optional(),

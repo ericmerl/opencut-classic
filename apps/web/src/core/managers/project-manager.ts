@@ -134,7 +134,8 @@ export class ProjectManager {
 		this.editor.save.pause();
 		await this.ensureStorageMigrations();
 		this.editor.media.clearAllAssets();
-		this.editor.scenes.clearScenes();
+		// Keep the current scene active until its replacement is ready because
+		// mounted editor subscribers require an active scene during project swaps.
 
 		try {
 			const result = await storageService.loadProject({ id });
@@ -152,6 +153,8 @@ export class ProjectManager {
 					scenes: project.scenes,
 					currentSceneId: project.currentSceneId,
 				});
+			} else {
+				this.editor.scenes.clearScenes();
 			}
 
 			await this.editor.media.loadProjectMedia({ projectId: id });
