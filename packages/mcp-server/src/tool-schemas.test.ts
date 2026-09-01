@@ -73,6 +73,65 @@ describe("OpenCut edit-plan MCP contract", () => {
 		expect(result.success).toBe(false);
 	});
 
+	test("accepts create, retime, and remove keyframe operation shapes", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "keyframes-1",
+			expectedRevision: 2,
+			description: "Animate and revise clip opacity",
+			operations: [
+				{
+					kind: "upsert_keyframe",
+					trackId: "track-1",
+					elementId: "element-1",
+					propertyPath: "opacity",
+					time: 0,
+					value: 0,
+					interpolation: "linear",
+					keyframeId: "opacity-start",
+				},
+				{
+					kind: "retime_keyframe",
+					trackId: "track-1",
+					elementId: "element-1",
+					propertyPath: "opacity",
+					keyframeId: "opacity-start",
+					time: 12000,
+				},
+				{
+					kind: "remove_keyframe",
+					trackId: "track-1",
+					elementId: "element-1",
+					propertyPath: "opacity",
+					keyframeId: "opacity-start",
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects malformed keyframe fields", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "keyframes-invalid-1",
+			expectedRevision: 2,
+			description: "Invalid keyframe",
+			operations: [
+				{
+					kind: "upsert_keyframe",
+					trackId: "track-1",
+					elementId: "element-1",
+					propertyPath: "   ",
+					time: -1,
+					value: 0,
+				},
+			],
+		});
+
+		expect(result.success).toBe(false);
+	});
+
 	test("rejects retiming outside OpenCut's supported range", () => {
 		const tooSlow = editPlanInputSchema.safeParse({
 			projectId: "project-1",

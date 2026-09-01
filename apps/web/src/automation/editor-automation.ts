@@ -41,6 +41,7 @@ import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-elemen
 import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
 import { getElementKeyframes } from "@/animation";
 import { buildAudioControlPatch } from "./audio-control";
+import { buildKeyframeCommand } from "./keyframe-control";
 import {
 	buildTrimPatch,
 	getElementSourceDuration,
@@ -795,6 +796,13 @@ export class EditorAutomation {
 					},
 				],
 			});
+		}
+		if (
+			operation.kind === "upsert_keyframe" ||
+			operation.kind === "remove_keyframe" ||
+			operation.kind === "retime_keyframe"
+		) {
+			return buildKeyframeCommand({ element, operation });
 		}
 		if (operation.kind === "set_retime") {
 			if (!isRetimableElement(element)) {

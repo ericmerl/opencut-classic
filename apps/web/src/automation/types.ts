@@ -4,7 +4,10 @@ import type { TBackground, TCanvasSize } from "@/project/types";
 import type { SubtitleStyleOverrides } from "@/subtitles/types";
 import type { RetimeConfig, TrackType } from "@/timeline";
 import type { FrameRate } from "opencut-wasm";
-import type { ElementKeyframe } from "@/animation/types";
+import type {
+	AnimationInterpolation,
+	ElementKeyframe,
+} from "@/animation/types";
 
 export interface AutomationElementSnapshot {
 	trackId: string;
@@ -165,6 +168,31 @@ export type AutomationEditOperation =
 				outDuration: MediaTime;
 				floorDb: number;
 			};
+	  }
+	| {
+			kind: "upsert_keyframe";
+			trackId: string;
+			elementId: string;
+			propertyPath: string;
+			time: MediaTime;
+			value: string | number | boolean;
+			interpolation?: AnimationInterpolation;
+			keyframeId?: string;
+	  }
+	| {
+			kind: "remove_keyframe";
+			trackId: string;
+			elementId: string;
+			propertyPath: string;
+			keyframeId: string;
+	  }
+	| {
+			kind: "retime_keyframe";
+			trackId: string;
+			elementId: string;
+			propertyPath: string;
+			keyframeId: string;
+			time: MediaTime;
 	  }
 	| {
 			kind: "set_retime";

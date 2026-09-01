@@ -190,6 +190,50 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			{ message: "at least one audio control is required" },
 		),
 	z.object({
+		kind: z.literal("upsert_keyframe"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		propertyPath: z.string().trim().min(1),
+		time: z
+			.number()
+			.int()
+			.nonnegative()
+			.describe(
+				"Time relative to the element start, in canonical media ticks.",
+			),
+		value: z.union([z.string(), z.number(), z.boolean()]),
+		interpolation: z.enum(["linear", "hold", "bezier"]).optional(),
+		keyframeId: z
+			.string()
+			.trim()
+			.min(1)
+			.describe(
+				"Stable caller-selected ID for creation, or an existing ID to update.",
+			)
+			.optional(),
+	}),
+	z.object({
+		kind: z.literal("remove_keyframe"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		propertyPath: z.string().trim().min(1),
+		keyframeId: z.string().trim().min(1),
+	}),
+	z.object({
+		kind: z.literal("retime_keyframe"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		propertyPath: z.string().trim().min(1),
+		keyframeId: z.string().trim().min(1),
+		time: z
+			.number()
+			.int()
+			.nonnegative()
+			.describe(
+				"New time relative to the element start, in canonical media ticks.",
+			),
+	}),
+	z.object({
 		kind: z.literal("set_retime"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
