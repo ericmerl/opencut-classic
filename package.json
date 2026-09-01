@@ -18,6 +18,7 @@
     "lint:web": "eslint apps/web/src --ext .ts,.tsx",
     "lint:web:fix": "eslint apps/web/src --ext .ts,.tsx --fix",
     "preview:web": "turbo run preview --filter=@opencut/web",
+    "prototype:mcp": "bun run packages/mcp-command-gateway-prototype/src/tui.ts",
     "publish:wasm": "bun run build:wasm && npm publish rust/wasm/pkg --access public",
     "start:tools": "turbo run start --filter=@opencut/tools",
     "test": "bun test"
@@ -26,7 +27,7 @@
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "better-auth": "^1.4.15",
-    "next": "^16.1.3",
+    "next": "16.1.3",
     "opencut": ".",
     "opencut-wasm": "^0.2.10"
   },
