@@ -38,6 +38,8 @@ import { DEFAULT_CANVAS_PRESETS } from "@/canvas/sizes";
 import type { TProjectSettings } from "@/project/types";
 import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-element";
 import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
+import { getElementKeyframes } from "@/animation";
+import { buildAudioControlPatch } from "./audio-control";
 import type {
 	AutomationEditOperation,
 	AutomationEditPlan,
@@ -766,6 +768,24 @@ export class EditorAutomation {
 				],
 			});
 		}
+		if (operation.kind === "set_audio") {
+			return new UpdateElementsCommand({
+				updates: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+						patch: buildAudioControlPatch({
+							element,
+							control: {
+								volumeDb: operation.volumeDb,
+								muted: operation.muted,
+								fade: operation.fade,
+							},
+						}),
+					},
+				],
+			});
+		}
 		if (operation.kind === "set_retime") {
 			if (!isRetimableElement(element)) {
 				throw new Error("only video and audio elements can be retimed");
@@ -904,6 +924,7 @@ export class EditorAutomation {
 		trackId: string,
 		element: TimelineElement,
 	): AutomationElementSnapshot {
+		const keyframes = getElementKeyframes({ animations: element.animations });
 		return {
 			trackId,
 			elementId: element.id,
@@ -923,6 +944,7 @@ export class EditorAutomation {
 			...(isRetimableElement(element) && element.retime
 				? { retime: element.retime }
 				: {}),
+			...(keyframes.length > 0 ? { keyframes } : {}),
 		};
 	}
 

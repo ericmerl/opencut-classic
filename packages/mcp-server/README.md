@@ -19,7 +19,7 @@ Available tools:
 - `opencut_create_project`, creating and activating a named project with an idempotent operation ID
 - `opencut_open_project`, opening a saved project with an idempotent operation ID
 - `opencut_get_project`, including project and canvas settings, track roles, media assets, and element parameters
-- `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, deterministic track mute and visibility, text and styled caption-batch insertion, delete, move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and trim operations
+- `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, deterministic track mute and visibility, per-clip audio gain, mute, and linear fades, text and styled caption-batch insertion, delete, move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and trim operations
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track. Imports preserve project canvas and frame rate by default; set `adoptMediaSettings` to `true` to adopt them from the first visual asset.
 - `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path

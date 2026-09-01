@@ -4,6 +4,7 @@ import type { TBackground, TCanvasSize } from "@/project/types";
 import type { SubtitleStyleOverrides } from "@/subtitles/types";
 import type { RetimeConfig, TrackType } from "@/timeline";
 import type { FrameRate } from "opencut-wasm";
+import type { ElementKeyframe } from "@/animation/types";
 
 export interface AutomationElementSnapshot {
 	trackId: string;
@@ -20,6 +21,7 @@ export interface AutomationElementSnapshot {
 	sourceUrl?: string;
 	hidden?: boolean;
 	retime?: RetimeConfig;
+	keyframes?: ElementKeyframe[];
 }
 
 export interface AutomationTrackSnapshot {
@@ -148,6 +150,18 @@ export type AutomationEditOperation =
 			trackId: string;
 			elementId: string;
 			params: Record<string, string | number | boolean>;
+	  }
+	| {
+			kind: "set_audio";
+			trackId: string;
+			elementId: string;
+			volumeDb?: number;
+			muted?: boolean;
+			fade?: {
+				inDuration: MediaTime;
+				outDuration: MediaTime;
+				floorDb: number;
+			};
 	  }
 	| {
 			kind: "set_retime";

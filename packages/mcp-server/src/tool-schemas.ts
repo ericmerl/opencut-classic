@@ -55,6 +55,31 @@ const captionStyleSchema = z.object({
 		.optional(),
 });
 
+const audioFadeSchema = z
+	.object({
+		inDuration: z
+			.number()
+			.int()
+			.nonnegative()
+			.default(0)
+			.describe("Fade-in duration in canonical media ticks."),
+		outDuration: z
+			.number()
+			.int()
+			.nonnegative()
+			.default(0)
+			.describe("Fade-out duration in canonical media ticks."),
+		floorDb: z
+			.number()
+			.min(-60)
+			.max(20)
+			.default(-60)
+			.describe("Gain at the silent ends of the fades, in dB."),
+	})
+	.describe(
+		"Replace the clip's volume envelope with linear fades. Omitted durations default to zero; setting both to zero clears existing volume keyframes.",
+	);
+
 const editOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("insert_text"),
@@ -125,6 +150,27 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 				message: "params cannot be empty",
 			}),
 	}),
+	z
+		.object({
+			kind: z.literal("set_audio"),
+			trackId: z.string().min(1),
+			elementId: z.string().min(1),
+			volumeDb: z
+				.number()
+				.min(-60)
+				.max(20)
+				.describe("Base clip gain in dB.")
+				.optional(),
+			muted: z.boolean().optional(),
+			fade: audioFadeSchema.optional(),
+		})
+		.refine(
+			(value) =>
+				value.volumeDb !== undefined ||
+				value.muted !== undefined ||
+				value.fade !== undefined,
+			{ message: "at least one audio control is required" },
+		),
 	z.object({
 		kind: z.literal("set_retime"),
 		trackId: z.string().min(1),

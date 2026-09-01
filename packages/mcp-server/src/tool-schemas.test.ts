@@ -27,6 +27,52 @@ describe("OpenCut edit-plan MCP contract", () => {
 		expect(result.success).toBe(true);
 	});
 
+	test("accepts deterministic audio gain, mute, and fades", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "audio-control-1",
+			expectedRevision: 2,
+			description: "Set dialogue level and fades",
+			operations: [
+				{
+					kind: "set_audio",
+					trackId: "track-1",
+					elementId: "element-1",
+					volumeDb: -6,
+					muted: false,
+					fade: { inDuration: 12000, outDuration: 24000 },
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+		if (result.success) {
+			const [operation] = result.data.operations;
+			expect(operation?.kind).toBe("set_audio");
+			if (operation?.kind === "set_audio") {
+				expect(operation.fade?.floorDb).toBe(-60);
+			}
+		}
+	});
+
+	test("rejects an empty audio-control operation", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "audio-control-empty-1",
+			expectedRevision: 2,
+			description: "No audio changes",
+			operations: [
+				{
+					kind: "set_audio",
+					trackId: "track-1",
+					elementId: "element-1",
+				},
+			],
+		});
+
+		expect(result.success).toBe(false);
+	});
+
 	test("rejects retiming outside OpenCut's supported range", () => {
 		const tooSlow = editPlanInputSchema.safeParse({
 			projectId: "project-1",
