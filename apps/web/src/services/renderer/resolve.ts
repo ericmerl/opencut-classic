@@ -44,6 +44,7 @@ import type {
 	ResolvedVisualSourceNodeState,
 	VisualNodeParams,
 } from "./nodes/visual-node";
+import { applyClipTransition } from "./transitions";
 
 type ResolveContext = {
 	renderer: CanvasRenderer;
@@ -128,6 +129,69 @@ function resolveEffectPassGroups({
 		});
 }
 
+function getVisualSampleClipTime({
+	params,
+	clipTime,
+}: {
+	params: VisualNodeParams;
+	clipTime: number;
+}): number | null {
+	if (clipTime < 0) return null;
+	if (clipTime < params.duration) return clipTime;
+	if (
+		params.transitionOut &&
+		params.transitionOut.duration > 0 &&
+		clipTime < params.duration + params.transitionOut.duration
+	) {
+		return Math.max(0, params.duration - 1);
+	}
+	return null;
+}
+
+function resolveTransitionVisual({
+	params,
+	clipTime,
+	canvasWidth,
+	transform,
+	opacity,
+}: {
+	params: VisualNodeParams;
+	clipTime: number;
+	canvasWidth: number;
+	transform: ResolvedVisualNodeState["transform"];
+	opacity: number;
+}): ReturnType<typeof applyClipTransition> | null {
+	if (
+		params.transitionOut &&
+		clipTime >= params.duration &&
+		params.transitionOut.duration > 0
+	) {
+		return applyClipTransition({
+			type: params.transitionOut.type,
+			phase: "out",
+			progress: (clipTime - params.duration) / params.transitionOut.duration,
+			canvasWidth,
+			transform,
+			opacity,
+		});
+	}
+	if (
+		params.transitionIn &&
+		clipTime < params.transitionIn.duration &&
+		params.transitionIn.duration > 0
+	) {
+		return applyClipTransition({
+			type: params.transitionIn.type,
+			phase: "in",
+			progress: clipTime / params.transitionIn.duration,
+			canvasWidth,
+			transform,
+			opacity,
+		});
+	}
+	return null;
+}
+
 function resolveVisualState({
 	params,
 	context,
@@ -140,7 +204,7 @@ function resolveVisualState({
 	sourceHeight: number;
 }): ResolvedVisualNodeState | null {
 	const clipTime = context.time - params.timeOffset;
-	if (clipTime < 0 || clipTime >= params.duration) {
+	if (getVisualSampleClipTime({ params, clipTime }) === null) {
 		return null;
 	}
 
@@ -149,16 +213,29 @@ function resolveVisualState({
 		elementStartTime: params.timeOffset,
 		elementDuration: params.duration,
 	});
-	const transform = resolveTransformAtTime({
+	let transform = resolveTransformAtTime({
 		baseTransform: params.transform,
 		animations: params.animations,
 		localTime,
 	});
-	const opacity = resolveOpacityAtTime({
+	let opacity = resolveOpacityAtTime({
 		baseOpacity: params.opacity,
 		animations: params.animations,
 		localTime,
 	});
+	let wipeProgress: number | undefined;
+	const transition = resolveTransitionVisual({
+		params,
+		clipTime,
+		canvasWidth: context.renderer.width,
+		transform,
+		opacity,
+	});
+	if (transition) {
+		transform = transition.transform;
+		opacity = transition.opacity;
+		wipeProgress = transition.wipeProgress;
+	}
 	const containScale = Math.min(
 		context.renderer.width / sourceWidth,
 		context.renderer.height / sourceHeight,
@@ -174,6 +251,7 @@ function resolveVisualState({
 		localTime,
 		transform,
 		opacity,
+		...(wipeProgress === undefined ? {} : { wipeProgress }),
 		effectPasses: resolveEffectPassGroups({
 			effects: params.effects,
 			animations: params.animations,
@@ -192,20 +270,26 @@ async function resolveVideoNode({
 	context: ResolveContext;
 }): Promise<ResolvedVisualSourceNodeState | null> {
 	const clipTime = context.time - node.params.timeOffset;
-	if (clipTime < 0 || clipTime >= node.params.duration) {
+	const sampleClipTime = getVisualSampleClipTime({
+		params: node.params,
+		clipTime,
+	});
+	if (sampleClipTime === null) {
 		return null;
 	}
 
 	const sourceTimeTicks =
 		node.params.trimStart +
 		getSourceTimeAtClipTime({
-			clipTime,
+			clipTime: sampleClipTime,
 			retime: node.params.retime,
 		});
 	const frame = await videoCache.getFrameAt({
 		mediaId: node.params.mediaId,
 		file: node.params.file,
-		time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
+		time: mediaTimeToSeconds({
+			time: roundMediaTime({ time: sourceTimeTicks }),
+		}),
 	});
 	if (!frame) {
 		return null;
@@ -426,7 +510,9 @@ async function resolveBackdropSource({
 		const frame = await videoCache.getFrameAt({
 			mediaId: node.params.mediaId,
 			file: node.params.file,
-			time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
+			time: mediaTimeToSeconds({
+				time: roundMediaTime({ time: sourceTimeTicks }),
+			}),
 		});
 		if (!frame) {
 			return null;

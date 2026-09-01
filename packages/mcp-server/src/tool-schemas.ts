@@ -80,6 +80,14 @@ const audioFadeSchema = z
 		"Replace the clip's volume envelope with linear fades. Omitted durations default to zero; setting both to zero clears existing volume keyframes.",
 	);
 
+const transitionTypeSchema = z.enum([
+	"crossfade",
+	"fade-through-black",
+	"slide",
+	"wipe",
+	"zoom",
+]);
+
 const editOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("insert_text"),
@@ -232,6 +240,24 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			.describe(
 				"New time relative to the element start, in canonical media ticks.",
 			),
+	}),
+	z.object({
+		kind: z.literal("upsert_transition"),
+		trackId: z.string().min(1),
+		transitionId: z.string().trim().min(1),
+		fromElementId: z.string().min(1),
+		toElementId: z.string().min(1),
+		transitionType: transitionTypeSchema,
+		duration: z
+			.number()
+			.int()
+			.positive()
+			.describe("Transition duration in canonical media ticks."),
+	}),
+	z.object({
+		kind: z.literal("remove_transition"),
+		trackId: z.string().min(1),
+		transitionId: z.string().trim().min(1),
 	}),
 	z.object({
 		kind: z.literal("set_retime"),

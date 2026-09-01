@@ -385,6 +385,27 @@ function buildMaskArtifacts({
 	mask: LayerMaskDescriptor | null;
 	strokeLayer: FrameItemDescriptor | null;
 } {
+	const wipeProgress = node.resolved?.wipeProgress;
+	if (wipeProgress !== undefined) {
+		const textureId = `${path}:transition-wipe`;
+		const { width, height } = renderer;
+		textures.set(textureId, {
+			kind: "rendered",
+			id: textureId,
+			contentHash: `transition-wipe:${wipeProgress}:${width}x${height}`,
+			width,
+			height,
+			draw: (ctx) => {
+				ctx.fillStyle = "white";
+				ctx.fillRect(0, 0, width * wipeProgress, height);
+			},
+		});
+		return {
+			mask: { textureId, feather: 0, inverted: false },
+			strokeLayer: null,
+		};
+	}
+
 	const mask = node.params.masks?.[0];
 	if (!mask) {
 		return { mask: null, strokeLayer: null };

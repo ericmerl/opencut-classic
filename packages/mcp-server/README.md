@@ -19,7 +19,7 @@ Available tools:
 - `opencut_create_project`, creating and activating a named project with an idempotent operation ID
 - `opencut_open_project`, opening a saved project with an idempotent operation ID
 - `opencut_get_project`, including project and canvas settings, track roles, media assets, and element parameters
-- `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, deterministic track mute and visibility, per-clip audio gain, mute, and linear fades, general keyframe creation, update, retiming, and removal, text and styled caption-batch insertion, delete, same-track or cross-track move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and source-edge trim operations
+- `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, deterministic track mute and visibility, per-clip audio gain, mute, and linear fades, general keyframe creation, update, retiming, and removal, crossfade, fade-through-black, slide, wipe, and zoom transitions, text and styled caption-batch insertion, delete, same-track or cross-track move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and source-edge trim operations
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track. Imports preserve project canvas and frame rate by default; set `adoptMediaSettings` to `true` to adopt them from the first visual asset.
 - `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path
@@ -29,6 +29,8 @@ The editor must be open with a project loaded. Creating or opening a project aut
 OpenCut removes empty overlay and audio tracks. To create a durable track through MCP, include `add_track` with a caller-selected `trackId` and a later `move` targeting that ID in the same edit plan.
 
 Keyframe times are relative to the element start and use canonical media ticks. Stable caller-selected IDs make later updates deterministic. Built-in keyframe paths include position, scale, rotation, opacity, volume, text color, and text-background geometry and color. Keyframable graphic and effect parameters use their registered parameter paths.
+
+Transitions link two consecutive, edge-adjacent video or image clips on one video track. Their duration cannot exceed either clip. The transition occupies the beginning of the incoming clip while the outgoing clip remains available for compositing. Wipe transitions currently reject masked incoming clips instead of replacing their authored mask.
 
 Caption `fontSize` values use OpenCut app units rather than output pixels. Typical captions use values from `4` through `8`; the default is `5`.
 

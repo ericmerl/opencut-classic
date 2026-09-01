@@ -154,6 +154,7 @@ export class SplitElementsCommand extends Command {
 							trimStart: rightTrimStart,
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
+							transitionIn: undefined,
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
 						},
 					];
@@ -180,6 +181,7 @@ export class SplitElementsCommand extends Command {
 							trimStart: rightTrimStart,
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
+							transitionIn: undefined,
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
 						},
 					];

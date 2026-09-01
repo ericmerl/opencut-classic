@@ -2,7 +2,7 @@ import { BaseNode } from "./base-node";
 import type { Effect, EffectPass } from "@/effects/types";
 import type { Mask } from "@/masks/types";
 import type { BlendMode, Transform } from "@/rendering";
-import type { RetimeConfig, VisualElement } from "@/timeline";
+import type { ClipTransition, RetimeConfig, VisualElement } from "@/timeline";
 
 export interface VisualNodeParams {
 	duration: number;
@@ -16,6 +16,8 @@ export interface VisualNodeParams {
 	blendMode?: BlendMode;
 	effects?: Effect[];
 	masks?: Mask[];
+	transitionIn?: ClipTransition;
+	transitionOut?: ClipTransition;
 }
 
 export interface ResolvedVisualNodeState {
@@ -23,6 +25,7 @@ export interface ResolvedVisualNodeState {
 	transform: Transform;
 	opacity: number;
 	effectPasses: EffectPass[][];
+	wipeProgress?: number;
 }
 
 export interface ResolvedVisualSourceNodeState extends ResolvedVisualNodeState {

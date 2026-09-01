@@ -1,4 +1,8 @@
-import type { SceneTracks, TimelineTrack } from "@/timeline";
+import {
+	getTrackTransitionStates,
+	type SceneTracks,
+	type TimelineTrack,
+} from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { RootNode } from "./nodes/root-node";
 import { VideoNode } from "./nodes/video-node";
@@ -45,8 +49,17 @@ function buildTrackNodes({
 
 	for (const track of tracks) {
 		const elements = getVisibleSortedElements({ track });
+		const transitionStates = getTrackTransitionStates({ track }).filter(
+			(state) => state.isAdjacent,
+		);
 
 		for (const element of elements) {
+			const transitionIn = transitionStates.find(
+				(state) => state.toElement.id === element.id,
+			)?.transition;
+			const transitionOut = transitionStates.find(
+				(state) => state.fromElement?.id === element.id,
+			)?.transition;
 			if (element.type === "effect") {
 				nodes.push(
 					new EffectLayerNode({
@@ -82,6 +95,8 @@ function buildTrackNodes({
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							transitionIn,
+							transitionOut,
 						}),
 					);
 				}
@@ -99,6 +114,8 @@ function buildTrackNodes({
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							transitionIn,
+							transitionOut,
 							...(isPreview && {
 								maxSourceSize: PREVIEW_MAX_IMAGE_SIZE,
 							}),

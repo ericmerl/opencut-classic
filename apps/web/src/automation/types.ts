@@ -2,7 +2,7 @@ import type { MediaTime } from "@/wasm";
 import type { ExportFormat, ExportQuality } from "@/export";
 import type { TBackground, TCanvasSize } from "@/project/types";
 import type { SubtitleStyleOverrides } from "@/subtitles/types";
-import type { RetimeConfig, TrackType } from "@/timeline";
+import type { ClipTransitionType, RetimeConfig, TrackType } from "@/timeline";
 import type { FrameRate } from "opencut-wasm";
 import type {
 	AnimationInterpolation,
@@ -37,6 +37,16 @@ export interface AutomationTrackSnapshot {
 	hidden?: boolean;
 }
 
+export interface AutomationTransitionSnapshot {
+	transitionId: string;
+	trackId: string;
+	fromElementId: string;
+	toElementId: string;
+	type: ClipTransitionType;
+	duration: MediaTime;
+	valid: boolean;
+}
+
 export interface AutomationMediaAssetSnapshot {
 	assetId: string;
 	name: string;
@@ -62,6 +72,7 @@ export interface AutomationProjectSnapshot {
 		background: TBackground;
 	};
 	tracks: AutomationTrackSnapshot[];
+	transitions: AutomationTransitionSnapshot[];
 	mediaAssets: AutomationMediaAssetSnapshot[];
 	elements: AutomationElementSnapshot[];
 }
@@ -193,6 +204,20 @@ export type AutomationEditOperation =
 			propertyPath: string;
 			keyframeId: string;
 			time: MediaTime;
+	  }
+	| {
+			kind: "upsert_transition";
+			trackId: string;
+			transitionId: string;
+			fromElementId: string;
+			toElementId: string;
+			transitionType: ClipTransitionType;
+			duration: MediaTime;
+	  }
+	| {
+			kind: "remove_transition";
+			trackId: string;
+			transitionId: string;
 	  }
 	| {
 			kind: "set_retime";

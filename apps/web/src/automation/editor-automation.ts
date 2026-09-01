@@ -20,6 +20,7 @@ import {
 	writeElementParamValue,
 } from "@/params/registry";
 import {
+	getTrackTransitionStates,
 	isRetimableElement,
 	type TimelineElement,
 	type TimelineTrack,
@@ -42,6 +43,7 @@ import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
 import { getElementKeyframes } from "@/animation";
 import { buildAudioControlPatch } from "./audio-control";
 import { buildKeyframeCommand } from "./keyframe-control";
+import { buildTransitionCommand } from "./transition-control";
 import {
 	buildTrimPatch,
 	getElementSourceDuration,
@@ -711,6 +713,16 @@ export class EditorAutomation {
 			});
 			return new BatchCommand([addTrack, ...insertCommands]);
 		}
+		if (
+			operation.kind === "upsert_transition" ||
+			operation.kind === "remove_transition"
+		) {
+			const track = this.getTracks().find(
+				(candidate) => candidate.id === operation.trackId,
+			);
+			if (!track) throw new Error(`track not found: ${operation.trackId}`);
+			return buildTransitionCommand({ track, operation });
+		}
 
 		const element = this.findElement(operation.trackId, operation.elementId);
 		if (!element) {
@@ -915,6 +927,17 @@ export class EditorAutomation {
 				...("muted" in track ? { muted: track.muted } : {}),
 				...("hidden" in track ? { hidden: track.hidden } : {}),
 			})),
+			transitions: tracks.flatMap((track) =>
+				getTrackTransitionStates({ track }).map((state) => ({
+					transitionId: state.transition.id,
+					trackId: track.id,
+					fromElementId: state.transition.fromElementId,
+					toElementId: state.toElement.id,
+					type: state.transition.type,
+					duration: state.transition.duration,
+					valid: state.isAdjacent,
+				})),
+			),
 			mediaAssets: this.editor.media.getAssets().map((asset) => ({
 				assetId: asset.id,
 				name: asset.name,

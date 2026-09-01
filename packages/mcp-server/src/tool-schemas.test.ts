@@ -132,6 +132,55 @@ describe("OpenCut edit-plan MCP contract", () => {
 		expect(result.success).toBe(false);
 	});
 
+	test("accepts transition creation, updates, and removal", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "transitions-1",
+			expectedRevision: 2,
+			description: "Create and remove a crossfade",
+			operations: [
+				{
+					kind: "upsert_transition",
+					trackId: "track-1",
+					transitionId: "transition-1",
+					fromElementId: "clip-1",
+					toElementId: "clip-2",
+					transitionType: "crossfade",
+					duration: 60000,
+				},
+				{
+					kind: "remove_transition",
+					trackId: "track-1",
+					transitionId: "transition-1",
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects unsupported transition types and non-positive durations", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "transitions-invalid-1",
+			expectedRevision: 2,
+			description: "Invalid transition",
+			operations: [
+				{
+					kind: "upsert_transition",
+					trackId: "track-1",
+					transitionId: "transition-1",
+					fromElementId: "clip-1",
+					toElementId: "clip-2",
+					transitionType: "cube-spin",
+					duration: 0,
+				},
+			],
+		});
+
+		expect(result.success).toBe(false);
+	});
+
 	test("rejects retiming outside OpenCut's supported range", () => {
 		const tooSlow = editPlanInputSchema.safeParse({
 			projectId: "project-1",

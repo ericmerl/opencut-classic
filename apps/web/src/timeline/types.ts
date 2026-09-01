@@ -84,6 +84,23 @@ export interface RetimeConfig {
 	maintainPitch?: boolean;
 }
 
+export const CLIP_TRANSITION_TYPES = [
+	"crossfade",
+	"fade-through-black",
+	"slide",
+	"wipe",
+	"zoom",
+] as const;
+
+export type ClipTransitionType = (typeof CLIP_TRANSITION_TYPES)[number];
+
+export interface ClipTransition {
+	id: string;
+	type: ClipTransitionType;
+	duration: MediaTime;
+	fromElementId: string;
+}
+
 interface BaseAudioElement extends BaseTimelineElement {
 	type: "audio";
 	buffer?: AudioBuffer;
@@ -111,6 +128,7 @@ interface BaseTimelineElement {
 	trimEnd: MediaTime;
 	sourceDuration?: MediaTime;
 	animations?: ElementAnimations;
+	transitionIn?: ClipTransition;
 	params: ParamValues;
 }
 
