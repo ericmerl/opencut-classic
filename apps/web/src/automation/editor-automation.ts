@@ -14,13 +14,22 @@ import {
 	getElementParam,
 	writeElementParamValue,
 } from "@/params/registry";
-import type { TimelineElement, TimelineTrack } from "@/timeline";
+import {
+	isRetimableElement,
+	type TimelineElement,
+	type TimelineTrack,
+} from "@/timeline";
 import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import { DEFAULTS } from "@/timeline/defaults";
 import {
 	buildElementFromMedia,
 	buildTextElement,
 } from "@/timeline/element-utils";
+import {
+	buildConstantRetime,
+	MAX_RETIME_RATE,
+	MIN_RETIME_RATE,
+} from "@/retime";
 import { mediaTimeFromSeconds } from "@/wasm";
 import type {
 	AutomationEditOperation,
@@ -456,6 +465,34 @@ export class EditorAutomation {
 				],
 			});
 		}
+		if (operation.kind === "set_retime") {
+			if (!isRetimableElement(element)) {
+				throw new Error("only video and audio elements can be retimed");
+			}
+			if (
+				!Number.isFinite(operation.rate) ||
+				operation.rate < MIN_RETIME_RATE ||
+				operation.rate > MAX_RETIME_RATE
+			) {
+				throw new Error(
+					`rate must be between ${MIN_RETIME_RATE} and ${MAX_RETIME_RATE}`,
+				);
+			}
+			return new UpdateElementsCommand({
+				updates: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+						patch: {
+							retime: buildConstantRetime({
+								rate: operation.rate,
+								maintainPitch: operation.maintainPitch,
+							}),
+						},
+					},
+				],
+			});
+		}
 		assertMediaTime(operation.startTime, "startTime", true);
 		if (operation.kind === "move") {
 			return new UpdateElementsCommand({
@@ -581,6 +618,9 @@ export class EditorAutomation {
 			...("sourceUrl" in element ? { sourceUrl: element.sourceUrl } : {}),
 			...("hidden" in element && element.hidden != null
 				? { hidden: element.hidden }
+				: {}),
+			...(isRetimableElement(element) && element.retime
+				? { retime: element.retime }
 				: {}),
 		};
 	}
