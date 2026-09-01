@@ -45,7 +45,7 @@ function createServer(): McpServer {
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Atomically move or trim existing timeline elements. Read the project first and use its current revision.",
+				"Atomically insert text, delete, move, split, or trim timeline elements. Read the project first and use its current revision.",
 			inputSchema: z.object({
 				projectId: z.string().min(1),
 				operationId: z.string().min(1),
@@ -61,6 +61,11 @@ function createServer(): McpServer {
 								duration: z.number().int().positive(),
 							}),
 							z.object({
+								kind: z.literal("delete"),
+								trackId: z.string().min(1),
+								elementId: z.string().min(1),
+							}),
+							z.object({
 								kind: z.literal("move"),
 								trackId: z.string().min(1),
 								elementId: z.string().min(1),
@@ -74,6 +79,13 @@ function createServer(): McpServer {
 								duration: z.number().int().positive(),
 								trimStart: z.number().int().nonnegative(),
 								trimEnd: z.number().int().positive(),
+							}),
+							z.object({
+								kind: z.literal("split"),
+								trackId: z.string().min(1),
+								elementId: z.string().min(1),
+								splitTime: z.number().int().positive(),
+								retainSide: z.enum(["both", "left", "right"]).optional(),
 							}),
 						]),
 					)

@@ -1,7 +1,9 @@
 import { BatchCommand, type Command } from "@/commands";
 import { AddMediaAssetCommand } from "@/commands/media";
 import {
+	DeleteElementsCommand,
 	InsertElementCommand,
+	SplitElementsCommand,
 	UpdateElementsCommand,
 } from "@/commands/timeline";
 import type { EditorCore } from "@/core";
@@ -385,6 +387,36 @@ export class EditorAutomation {
 			throw new Error(
 				`element not found: ${operation.trackId}/${operation.elementId}`,
 			);
+		}
+		if (operation.kind === "delete") {
+			return new DeleteElementsCommand({
+				elements: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+					},
+				],
+			});
+		}
+		if (operation.kind === "split") {
+			assertMediaTime(operation.splitTime, "splitTime", false);
+			const endTime = element.startTime + element.duration;
+			if (
+				operation.splitTime <= element.startTime ||
+				operation.splitTime >= endTime
+			) {
+				throw new Error("splitTime must be inside the element");
+			}
+			return new SplitElementsCommand({
+				elements: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+					},
+				],
+				splitTime: operation.splitTime,
+				retainSide: operation.retainSide,
+			});
 		}
 		assertMediaTime(operation.startTime, "startTime", true);
 		if (operation.kind === "move") {

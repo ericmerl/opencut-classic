@@ -16,7 +16,7 @@ Available tools:
 
 - `opencut_connection_status`
 - `opencut_get_project`
-- `opencut_apply_edit_plan`, supporting text insertion, move, and trim operations
+- `opencut_apply_edit_plan`, supporting text insertion, delete, move, split, and trim operations
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket
 - `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path

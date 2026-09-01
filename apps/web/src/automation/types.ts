@@ -28,6 +28,11 @@ export type AutomationEditOperation =
 			duration: MediaTime;
 	  }
 	| {
+			kind: "delete";
+			trackId: string;
+			elementId: string;
+	  }
+	| {
 			kind: "move";
 			trackId: string;
 			elementId: string;
@@ -41,6 +46,13 @@ export type AutomationEditOperation =
 			duration: MediaTime;
 			trimStart: MediaTime;
 			trimEnd: MediaTime;
+	  }
+	| {
+			kind: "split";
+			trackId: string;
+			elementId: string;
+			splitTime: MediaTime;
+			retainSide?: "both" | "left" | "right";
 	  };
 
 export interface AutomationEditPlan {
