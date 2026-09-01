@@ -15,6 +15,7 @@ export interface AutomationElementSnapshot {
 	duration: MediaTime;
 	trimStart: MediaTime;
 	trimEnd: MediaTime;
+	sourceDuration: MediaTime;
 	params: Record<string, string | number | boolean>;
 	mediaId?: string;
 	sourceType?: "upload" | "library";
@@ -112,6 +113,7 @@ export type AutomationEditOperation =
 	| {
 			kind: "add_track";
 			trackType: TrackType;
+			trackId: string;
 	  }
 	| {
 			kind: "set_track_state";
@@ -142,6 +144,7 @@ export type AutomationEditOperation =
 	| {
 			kind: "move";
 			trackId: string;
+			targetTrackId?: string;
 			elementId: string;
 			startTime: MediaTime;
 	  }
@@ -174,8 +177,8 @@ export type AutomationEditOperation =
 			kind: "trim";
 			trackId: string;
 			elementId: string;
-			startTime: MediaTime;
-			duration: MediaTime;
+			startTime?: MediaTime;
+			duration?: MediaTime;
 			trimStart: MediaTime;
 			trimEnd: MediaTime;
 	  }

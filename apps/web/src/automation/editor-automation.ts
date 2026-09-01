@@ -5,6 +5,7 @@ import {
 	AddTrackCommand,
 	DeleteElementsCommand,
 	InsertElementCommand,
+	MoveElementCommand,
 	SplitElementsCommand,
 	ToggleTrackMuteCommand,
 	ToggleTrackVisibilityCommand,
@@ -40,6 +41,11 @@ import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-elemen
 import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
 import { getElementKeyframes } from "@/animation";
 import { buildAudioControlPatch } from "./audio-control";
+import {
+	buildTrimPatch,
+	getElementSourceDuration,
+	validateTrackCreationPlan,
+} from "./timeline-surgery";
 import type {
 	AutomationEditOperation,
 	AutomationEditPlan,
@@ -324,6 +330,7 @@ export class EditorAutomation {
 
 		let commands: Command[];
 		try {
+			validateTrackCreationPlan(plan.operations);
 			commands = plan.operations.map((operation) =>
 				this.validateAndBuildCommand(operation),
 			);
@@ -591,7 +598,10 @@ export class EditorAutomation {
 			});
 		}
 		if (operation.kind === "add_track") {
-			return new AddTrackCommand({ type: operation.trackType });
+			return new AddTrackCommand({
+				type: operation.trackType,
+				trackId: operation.trackId,
+			});
 		}
 		if (operation.kind === "set_track_state") {
 			if (operation.muted === undefined && operation.hidden === undefined) {
@@ -814,36 +824,32 @@ export class EditorAutomation {
 				],
 			});
 		}
-		assertMediaTime(operation.startTime, "startTime", true);
 		if (operation.kind === "move") {
-			return new UpdateElementsCommand({
-				updates: [
+			assertMediaTime(operation.startTime, "startTime", true);
+			return new MoveElementCommand({
+				moves: [
 					{
-						trackId: operation.trackId,
+						sourceTrackId: operation.trackId,
+						targetTrackId: operation.targetTrackId ?? operation.trackId,
 						elementId: operation.elementId,
-						patch: { startTime: operation.startTime },
+						newStartTime: operation.startTime,
 					},
 				],
 			});
 		}
 
-		assertMediaTime(operation.duration, "duration", false);
-		assertMediaTime(operation.trimStart, "trimStart", true);
-		assertMediaTime(operation.trimEnd, "trimEnd", true);
-		if (operation.trimEnd <= operation.trimStart) {
-			throw new Error("trimEnd must be greater than trimStart");
-		}
 		return new UpdateElementsCommand({
 			updates: [
 				{
 					trackId: operation.trackId,
 					elementId: operation.elementId,
-					patch: {
+					patch: buildTrimPatch({
+						element,
 						startTime: operation.startTime,
 						duration: operation.duration,
 						trimStart: operation.trimStart,
 						trimEnd: operation.trimEnd,
-					},
+					}),
 				},
 			],
 		});
@@ -934,6 +940,7 @@ export class EditorAutomation {
 			duration: element.duration,
 			trimStart: element.trimStart,
 			trimEnd: element.trimEnd,
+			sourceDuration: getElementSourceDuration({ element }),
 			params: buildElementParamValues({ element }),
 			...("mediaId" in element ? { mediaId: element.mediaId } : {}),
 			...("sourceType" in element ? { sourceType: element.sourceType } : {}),

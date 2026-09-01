@@ -107,13 +107,63 @@ describe("OpenCut edit-plan MCP contract", () => {
 		expect(tooFast.success).toBe(false);
 	});
 
-	test("accepts creating a typed timeline track", () => {
+	test("accepts creating and populating a typed timeline track", () => {
 		const result = editPlanInputSchema.safeParse({
 			projectId: "project-1",
 			operationId: "add-track-1",
 			expectedRevision: 3,
 			description: "Create a B-roll layer",
-			operations: [{ kind: "add_track", trackType: "video" }],
+			operations: [
+				{ kind: "add_track", trackType: "video", trackId: "b-roll-track" },
+				{
+					kind: "move",
+					trackId: "main-track",
+					targetTrackId: "b-roll-track",
+					elementId: "clip-1",
+					startTime: 0,
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects a new track that would remain empty", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "add-empty-track-1",
+			expectedRevision: 3,
+			description: "Create an empty layer",
+			operations: [
+				{ kind: "add_track", trackType: "video", trackId: "empty-track" },
+			],
+		});
+
+		expect(result.success).toBe(false);
+	});
+
+	test("accepts cross-track moves and source-edge trims", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "timeline-surgery-1",
+			expectedRevision: 4,
+			description: "Move and trim a B-roll clip",
+			operations: [
+				{
+					kind: "move",
+					trackId: "source-track",
+					targetTrackId: "b-roll-track",
+					elementId: "clip-1",
+					startTime: 240000,
+				},
+				{
+					kind: "trim",
+					trackId: "b-roll-track",
+					elementId: "clip-1",
+					trimStart: 210000,
+					trimEnd: 60000,
+				},
+			],
 		});
 
 		expect(result.success).toBe(true);

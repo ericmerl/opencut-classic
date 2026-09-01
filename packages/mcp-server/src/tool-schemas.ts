@@ -90,6 +90,12 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("add_track"),
 		trackType: z.enum(["video", "text", "audio", "graphic", "effect"]),
+		trackId: z
+			.string()
+			.min(1)
+			.describe(
+				"Caller-selected track ID. Use the same ID as targetTrackId in a later move within this edit plan.",
+			),
 	}),
 	z
 		.object({
@@ -136,9 +142,21 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 	}),
 	z.object({
 		kind: z.literal("move"),
-		trackId: z.string().min(1),
+		trackId: z
+			.string()
+			.min(1)
+			.describe("Current source track containing the element."),
+		targetTrackId: z
+			.string()
+			.min(1)
+			.describe("Compatible destination track. Defaults to the source track.")
+			.optional(),
 		elementId: z.string().min(1),
-		startTime: z.number().int().nonnegative(),
+		startTime: z
+			.number()
+			.int()
+			.nonnegative()
+			.describe("New absolute timeline position in canonical media ticks."),
 	}),
 	z.object({
 		kind: z.literal("set_params"),
@@ -182,27 +200,73 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		kind: z.literal("trim"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
-		startTime: z.number().int().nonnegative(),
-		duration: z.number().int().positive(),
-		trimStart: z.number().int().nonnegative(),
-		trimEnd: z.number().int().positive(),
+		startTime: z
+			.number()
+			.int()
+			.nonnegative()
+			.describe(
+				"Optional new absolute timeline position. Omit to preserve the current position.",
+			)
+			.optional(),
+		duration: z
+			.number()
+			.int()
+			.positive()
+			.describe(
+				"Optional visible timeline duration. Omit to derive it from the source trims and retime rate.",
+			)
+			.optional(),
+		trimStart: z
+			.number()
+			.int()
+			.nonnegative()
+			.describe("Amount removed from the beginning of the source, in ticks."),
+		trimEnd: z
+			.number()
+			.int()
+			.nonnegative()
+			.describe("Amount removed from the end of the source, in ticks."),
 	}),
 	z.object({
 		kind: z.literal("split"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
-		splitTime: z.number().int().positive(),
+		splitTime: z
+			.number()
+			.int()
+			.positive()
+			.describe("Absolute timeline split position in canonical media ticks."),
 		retainSide: z.enum(["both", "left", "right"]).optional(),
 	}),
 ]);
 
-export const editPlanInputSchema = z.object({
-	projectId: z.string().min(1),
-	operationId: z.string().min(1),
-	expectedRevision: z.number().int().nonnegative(),
-	description: z.string().min(1),
-	operations: z.array(editOperationSchema).min(1),
-});
+export const editPlanInputSchema = z
+	.object({
+		projectId: z.string().min(1),
+		operationId: z.string().min(1),
+		expectedRevision: z.number().int().nonnegative(),
+		description: z.string().min(1),
+		operations: z.array(editOperationSchema).min(1),
+	})
+	.superRefine((plan, context) => {
+		for (const [index, operation] of plan.operations.entries()) {
+			if (operation.kind !== "add_track") continue;
+			const isPopulatedByLaterMove = plan.operations
+				.slice(index + 1)
+				.some(
+					(candidate) =>
+						candidate.kind === "move" &&
+						candidate.targetTrackId === operation.trackId,
+				);
+			if (!isPopulatedByLaterMove) {
+				context.addIssue({
+					code: "custom",
+					path: ["operations", index],
+					message: `new track ${operation.trackId} must receive an element from a later move in the same plan`,
+				});
+			}
+		}
+	});
 
 export const importMediaInputSchema = z.object({
 	projectId: z.string().min(1),

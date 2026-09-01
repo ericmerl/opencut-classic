@@ -14,14 +14,16 @@ export class AddTrackCommand extends Command {
 	constructor({
 		type,
 		index,
+		trackId,
 	}: {
 		type: TrackType;
 		index?: number;
+		trackId?: string;
 	}) {
 		super();
 		this.type = type;
 		this.index = index;
-		this.trackId = generateUUID();
+		this.trackId = trackId ?? generateUUID();
 	}
 
 	private type: TrackType;
@@ -30,6 +32,14 @@ export class AddTrackCommand extends Command {
 	execute(): CommandResult | undefined {
 		const editor = EditorCore.getInstance();
 		this.savedState = editor.scenes.getActiveScene().tracks;
+		const existingTrackIds = [
+			...this.savedState.overlay,
+			this.savedState.main,
+			...this.savedState.audio,
+		].map((track) => track.id);
+		if (existingTrackIds.includes(this.trackId)) {
+			throw new Error(`Track already exists: ${this.trackId}`);
+		}
 
 		const insertIndex =
 			this.index ??
