@@ -20,6 +20,12 @@ export interface AutomationProjectSnapshot {
 
 export type AutomationEditOperation =
 	| {
+			kind: "insert_text";
+			content: string;
+			startTime: MediaTime;
+			duration: MediaTime;
+	  }
+	| {
 			kind: "move";
 			trackId: string;
 			elementId: string;

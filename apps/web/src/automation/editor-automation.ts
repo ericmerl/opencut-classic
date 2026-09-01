@@ -1,6 +1,12 @@
-import { UpdateElementsCommand } from "@/commands/timeline";
+import { BatchCommand, type Command } from "@/commands";
+import {
+	InsertElementCommand,
+	UpdateElementsCommand,
+} from "@/commands/timeline";
 import type { EditorCore } from "@/core";
 import type { TimelineElement, TimelineTrack } from "@/timeline";
+import { DEFAULTS } from "@/timeline/defaults";
+import { buildTextElement } from "@/timeline/element-utils";
 import type {
 	AutomationEditOperation,
 	AutomationEditPlan,
@@ -94,14 +100,10 @@ export class EditorAutomation {
 			};
 		}
 
-		let updates: Array<{
-			trackId: string;
-			elementId: string;
-			patch: Partial<TimelineElement>;
-		}>;
+		let commands: Command[];
 		try {
-			updates = plan.operations.map((operation) =>
-				this.validateAndBuildUpdate(operation),
+			commands = plan.operations.map((operation) =>
+				this.validateAndBuildCommand(operation),
 			);
 		} catch (error) {
 			return {
@@ -111,7 +113,7 @@ export class EditorAutomation {
 			};
 		}
 		this.editor.command.execute({
-			command: new UpdateElementsCommand({ updates }),
+			command: new BatchCommand(commands),
 		});
 		await this.editor.save.flush();
 		this.recordCommittedState();
@@ -158,11 +160,28 @@ export class EditorAutomation {
 		};
 	}
 
-	private validateAndBuildUpdate(operation: AutomationEditOperation): {
-		trackId: string;
-		elementId: string;
-		patch: Partial<TimelineElement>;
-	} {
+	private validateAndBuildCommand(operation: AutomationEditOperation): Command {
+		if (operation.kind === "insert_text") {
+			assertMediaTime(operation.startTime, "startTime", true);
+			assertMediaTime(operation.duration, "duration", false);
+			if (!operation.content.trim())
+				throw new Error("text content is required");
+			return new InsertElementCommand({
+				element: buildTextElement({
+					raw: {
+						...DEFAULTS.text.element,
+						duration: operation.duration,
+						params: {
+							...DEFAULTS.text.element.params,
+							content: operation.content,
+						},
+					},
+					startTime: operation.startTime,
+				}),
+				placement: { mode: "auto" },
+			});
+		}
+
 		const element = this.findElement(operation.trackId, operation.elementId);
 		if (!element) {
 			throw new Error(
@@ -171,11 +190,15 @@ export class EditorAutomation {
 		}
 		assertMediaTime(operation.startTime, "startTime", true);
 		if (operation.kind === "move") {
-			return {
-				trackId: operation.trackId,
-				elementId: operation.elementId,
-				patch: { startTime: operation.startTime },
-			};
+			return new UpdateElementsCommand({
+				updates: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+						patch: { startTime: operation.startTime },
+					},
+				],
+			});
 		}
 
 		assertMediaTime(operation.duration, "duration", false);
@@ -184,16 +207,20 @@ export class EditorAutomation {
 		if (operation.trimEnd <= operation.trimStart) {
 			throw new Error("trimEnd must be greater than trimStart");
 		}
-		return {
-			trackId: operation.trackId,
-			elementId: operation.elementId,
-			patch: {
-				startTime: operation.startTime,
-				duration: operation.duration,
-				trimStart: operation.trimStart,
-				trimEnd: operation.trimEnd,
-			},
-		};
+		return new UpdateElementsCommand({
+			updates: [
+				{
+					trackId: operation.trackId,
+					elementId: operation.elementId,
+					patch: {
+						startTime: operation.startTime,
+						duration: operation.duration,
+						trimStart: operation.trimStart,
+						trimEnd: operation.trimEnd,
+					},
+				},
+			],
+		});
 	}
 
 	private findElement(

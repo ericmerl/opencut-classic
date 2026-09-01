@@ -16,7 +16,7 @@ Available tools:
 
 - `opencut_connection_status`
 - `opencut_get_project`
-- `opencut_apply_edit_plan`
+- `opencut_apply_edit_plan`, supporting text insertion, move, and trim operations
 - `opencut_undo`
 
 The editor must be open with a project loaded. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.

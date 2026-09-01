@@ -51,6 +51,12 @@ function createServer(): McpServer {
 					.array(
 						z.discriminatedUnion("kind", [
 							z.object({
+								kind: z.literal("insert_text"),
+								content: z.string().min(1),
+								startTime: z.number().int().nonnegative(),
+								duration: z.number().int().positive(),
+							}),
+							z.object({
 								kind: z.literal("move"),
 								trackId: z.string().min(1),
 								elementId: z.string().min(1),

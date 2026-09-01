@@ -8,7 +8,7 @@ The first slice provides:
 - serialized mutation execution
 - revision conflicts that detect UI edits between agent calls
 - idempotent operation retries
-- atomic move and trim plans through one `UpdateElementsCommand`
+- atomic text insertion, move, and trim plans through one `BatchCommand`
 - one-step undo
 - explicit `SaveManager.flush()` before mutation success
 
