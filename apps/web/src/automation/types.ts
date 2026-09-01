@@ -227,6 +227,7 @@ export interface AutomationImportRequest {
 	sourceFingerprint: string;
 	startTime: MediaTime;
 	trackId?: string;
+	adoptMediaSettings: boolean;
 }
 
 export interface AutomationImportAppliedResult {

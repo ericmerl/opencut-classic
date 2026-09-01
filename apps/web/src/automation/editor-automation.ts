@@ -449,6 +449,7 @@ export class EditorAutomation {
 		const addMedia = new AddMediaAssetCommand({
 			projectId: request.projectId,
 			asset,
+			ratchetProjectFps: request.adoptMediaSettings ?? false,
 		});
 		const duration =
 			asset.duration == null
@@ -466,6 +467,7 @@ export class EditorAutomation {
 						? new AudioBuffer({ length: 1, sampleRate: 44100 })
 						: undefined,
 			}),
+			adoptMediaSettings: request.adoptMediaSettings ?? false,
 			placement: request.trackId
 				? { mode: "explicit", trackId: request.trackId }
 				: {

@@ -84,6 +84,25 @@ describe("OpenCut edit-plan MCP contract", () => {
 		});
 
 		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.adoptMediaSettings).toBe(false);
+		}
+	});
+
+	test("can explicitly adopt canvas and frame rate from first media", () => {
+		const result = importMediaInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "import-first-media-1",
+			expectedRevision: 0,
+			path: "C:\\media\\first-video.mp4",
+			startTime: 0,
+			adoptMediaSettings: true,
+		});
+
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.adoptMediaSettings).toBe(true);
+		}
 	});
 
 	test("accepts setting the project canvas, frame rate, and background", () => {

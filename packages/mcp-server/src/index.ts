@@ -113,7 +113,7 @@ function createServer(): McpServer {
 		"opencut_import_media",
 		{
 			description:
-				"Import an image, audio file, or video from an absolute local path and place it automatically or on an explicit compatible track without a browser file picker.",
+				"Import an image, audio file, or video from an absolute local path and place it automatically or on an explicit compatible track without a browser file picker. Project canvas and frame rate are preserved unless adoptMediaSettings is true.",
 			inputSchema: importMediaInputSchema,
 		},
 		async ({ path, ...params }) => {

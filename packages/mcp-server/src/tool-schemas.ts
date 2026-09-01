@@ -165,6 +165,12 @@ export const importMediaInputSchema = z.object({
 	path: z.string().min(1),
 	startTime: z.number().int().nonnegative(),
 	trackId: z.string().min(1).optional(),
+	adoptMediaSettings: z
+		.boolean()
+		.default(false)
+		.describe(
+			"When true, the first visual import adopts the media dimensions and frame rate. Defaults to false so imports preserve explicit project settings.",
+		),
 });
 
 export const createProjectInputSchema = z.object({

@@ -27,6 +27,7 @@ type InsertElementPlacement =
 export interface InsertElementParams {
 	element: CreateTimelineElement;
 	placement: InsertElementPlacement;
+	adoptMediaSettings?: boolean;
 }
 
 export class InsertElementCommand extends Command {
@@ -34,15 +35,21 @@ export class InsertElementCommand extends Command {
 	private savedState: SceneTracks | null = null;
 	private targetTrackId: string | null = null;
 
-	constructor({ element, placement }: InsertElementParams) {
+	constructor({
+		element,
+		placement,
+		adoptMediaSettings = true,
+	}: InsertElementParams) {
 		super();
 		this.elementId = generateUUID();
 		this.element = element;
 		this.placement = placement;
+		this.adoptMediaSettings = adoptMediaSettings;
 	}
 
 	private element: CreateTimelineElement;
 	private placement: InsertElementPlacement;
+	private adoptMediaSettings: boolean;
 
 	execute(): CommandResult | undefined {
 		const editor = EditorCore.getInstance();
@@ -80,7 +87,7 @@ export class InsertElementCommand extends Command {
 		const isVisualMedia =
 			newElement.type === "video" || newElement.type === "image";
 
-		if (isFirstElement && isVisualMedia) {
+		if (isFirstElement && isVisualMedia && this.adoptMediaSettings) {
 			const mediaAssets = editor.media.getAssets();
 			const activeProject = editor.project.getActive();
 			const asset = mediaAssets.find(

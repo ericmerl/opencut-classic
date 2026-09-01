@@ -21,18 +21,22 @@ export class AddMediaAssetCommand extends Command {
 	constructor({
 		projectId,
 		asset,
+		ratchetProjectFps = true,
 	}: {
 		projectId: string;
 		asset: Omit<MediaAsset, "id">;
+		ratchetProjectFps?: boolean;
 	}) {
 		super();
 		this.projectId = projectId;
 		this.asset = asset;
+		this.ratchetProjectFps = ratchetProjectFps;
 		this.assetId = generateUUID();
 	}
 
 	private projectId: string;
 	private asset: Omit<MediaAsset, "id">;
+	private ratchetProjectFps: boolean;
 
 	execute(): CommandResult | undefined {
 		const editor = EditorCore.getInstance();
@@ -46,11 +50,13 @@ export class AddMediaAssetCommand extends Command {
 		editor.media.setAssets({
 			assets: [...this.savedAssets, this.createdAsset],
 		});
-		this.previousProjectFps =
-			editor.project.getActiveOrNull()?.settings.fps ?? null;
-		this.appliedProjectFps = editor.project.ratchetFpsForImportedMedia({
-			importedAssets: [this.createdAsset],
-		});
+		if (this.ratchetProjectFps) {
+			this.previousProjectFps =
+				editor.project.getActiveOrNull()?.settings.fps ?? null;
+			this.appliedProjectFps = editor.project.ratchetFpsForImportedMedia({
+				importedAssets: [this.createdAsset],
+			});
+		}
 
 		this.persistencePromise = storageService
 			.saveMediaAsset({
