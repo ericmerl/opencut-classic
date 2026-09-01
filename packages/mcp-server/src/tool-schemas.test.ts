@@ -111,4 +111,31 @@ describe("OpenCut edit-plan MCP contract", () => {
 
 		expect(result.success).toBe(false);
 	});
+
+	test("accepts a timed caption batch with shared styling", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "captions-1",
+			expectedRevision: 5,
+			description: "Add presenter captions",
+			operations: [
+				{
+					kind: "insert_captions",
+					captions: [
+						{ text: "This is the hook", startTime: 0, duration: 72_000 },
+					],
+					style: {
+						fontFamily: "Arial",
+						fontSize: 7,
+						color: "#ffffff",
+						fontWeight: "bold",
+						background: { enabled: true, color: "#000000" },
+						placement: { verticalAlign: "bottom", marginVerticalRatio: 0.08 },
+					},
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
 });

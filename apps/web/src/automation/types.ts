@@ -1,6 +1,7 @@
 import type { MediaTime } from "@/wasm";
 import type { ExportFormat, ExportQuality } from "@/export";
 import type { TBackground, TCanvasSize } from "@/project/types";
+import type { SubtitleStyleOverrides } from "@/subtitles/types";
 import type { RetimeConfig, TrackType } from "@/timeline";
 import type { FrameRate } from "opencut-wasm";
 
@@ -75,6 +76,15 @@ export type AutomationEditOperation =
 			fps?: FrameRate;
 			canvasSize?: TCanvasSize;
 			background?: TBackground;
+	  }
+	| {
+			kind: "insert_captions";
+			captions: Array<{
+				text: string;
+				startTime: MediaTime;
+				duration: MediaTime;
+			}>;
+			style?: SubtitleStyleOverrides;
 	  }
 	| {
 			kind: "delete";

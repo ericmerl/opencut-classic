@@ -16,7 +16,7 @@ Available tools:
 
 - `opencut_connection_status`
 - `opencut_get_project`, including project and canvas settings, track roles, media assets, and element parameters
-- `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, text insertion, delete, move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and trim operations
+- `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, text and styled caption-batch insertion, delete, move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and trim operations
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track
 - `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path

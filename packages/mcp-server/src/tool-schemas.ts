@@ -18,6 +18,37 @@ const backgroundSchema = z.discriminatedUnion("type", [
 	}),
 ]);
 
+const captionStyleSchema = z.object({
+	fontFamily: z.string().min(1).optional(),
+	fontSize: z.number().positive().optional(),
+	color: z.string().min(1).optional(),
+	textAlign: z.enum(["left", "center", "right"]).optional(),
+	fontWeight: z.enum(["normal", "bold"]).optional(),
+	fontStyle: z.enum(["normal", "italic"]).optional(),
+	textDecoration: z.enum(["none", "underline", "line-through"]).optional(),
+	letterSpacing: z.number().optional(),
+	lineHeight: z.number().positive().optional(),
+	background: z
+		.object({
+			enabled: z.boolean(),
+			color: z.string().min(1),
+			cornerRadius: z.number().optional(),
+			paddingX: z.number().optional(),
+			paddingY: z.number().optional(),
+			offsetX: z.number().optional(),
+			offsetY: z.number().optional(),
+		})
+		.optional(),
+	placement: z
+		.object({
+			verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
+			marginLeftRatio: z.number().min(0).max(1).optional(),
+			marginRightRatio: z.number().min(0).max(1).optional(),
+			marginVerticalRatio: z.number().min(0).max(1).optional(),
+		})
+		.optional(),
+});
+
 const editOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("insert_text"),
@@ -43,6 +74,19 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 				value.background !== undefined,
 			{ message: "at least one project setting is required" },
 		),
+	z.object({
+		kind: z.literal("insert_captions"),
+		captions: z
+			.array(
+				z.object({
+					text: z.string().trim().min(1),
+					startTime: z.number().int().nonnegative(),
+					duration: z.number().int().positive(),
+				}),
+			)
+			.min(1),
+		style: captionStyleSchema.optional(),
+	}),
 	z.object({
 		kind: z.literal("delete"),
 		trackId: z.string().min(1),

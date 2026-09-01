@@ -34,7 +34,8 @@ import {
 } from "@/retime";
 import { DEFAULT_CANVAS_PRESETS } from "@/canvas/sizes";
 import type { TProjectSettings } from "@/project/types";
-import { mediaTimeFromSeconds } from "@/wasm";
+import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-element";
+import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
 import type {
 	AutomationEditOperation,
 	AutomationEditPlan,
@@ -475,6 +476,34 @@ export class EditorAutomation {
 				settings.background = operation.background;
 			}
 			return new UpdateProjectSettingsCommand(settings);
+		}
+		if (operation.kind === "insert_captions") {
+			if (operation.captions.length === 0) {
+				throw new Error("at least one caption is required");
+			}
+			const project = this.editor.project.getActive();
+			if (!project) throw new Error("No active project");
+			const addTrack = new AddTrackCommand({ type: "text", index: 0 });
+			const trackId = addTrack.getTrackId();
+			const insertCommands = operation.captions.map((caption, index) => {
+				if (!caption.text.trim()) throw new Error("caption text is required");
+				assertMediaTime(caption.startTime, "caption startTime", true);
+				assertMediaTime(caption.duration, "caption duration", false);
+				return new InsertElementCommand({
+					placement: { mode: "explicit", trackId },
+					element: buildSubtitleTextElement({
+						index,
+						caption: {
+							text: caption.text,
+							startTime: mediaTimeToSeconds({ time: caption.startTime }),
+							duration: mediaTimeToSeconds({ time: caption.duration }),
+							style: operation.style,
+						},
+						canvasSize: project.settings.canvasSize,
+					}),
+				});
+			});
+			return new BatchCommand([addTrack, ...insertCommands]);
 		}
 
 		const element = this.findElement(operation.trackId, operation.elementId);
