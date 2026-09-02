@@ -658,6 +658,7 @@ export interface AutomationExportCompletedResult {
 	revision: number;
 	outputPath: string;
 	bytesWritten: number;
+	sha256: string;
 }
 
 export type AutomationExportResult =

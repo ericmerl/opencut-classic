@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { link, stat, unlink, writeFile } from "node:fs/promises";
 import {
 	basename,
@@ -11,6 +11,7 @@ import {
 
 interface ExportTicket {
 	outputPath: string;
+	format: "mp4" | "webm";
 	expiresAt: number;
 }
 
@@ -40,6 +41,7 @@ export class ExportTickets {
 		const id = randomBytes(32).toString("hex");
 		this.tickets.set(id, {
 			outputPath,
+			format,
 			expiresAt: Date.now() + 30 * 60_000,
 		});
 		return {
@@ -59,6 +61,7 @@ export class ExportTickets {
 	): Promise<{
 		outputPath: string;
 		bytesWritten: number;
+		sha256: string;
 	}> {
 		this.removeExpired();
 		const ticket = this.tickets.get(id);
@@ -67,6 +70,8 @@ export class ExportTickets {
 
 		const bytes = await request.arrayBuffer();
 		if (bytes.byteLength === 0) throw new Error("Export upload was empty");
+		const buffer = Buffer.from(bytes);
+		validateContainerSignature({ bytes: buffer, format: ticket.format });
 		const parent = dirname(ticket.outputPath);
 		const tempPath = join(
 			parent,
@@ -74,11 +79,12 @@ export class ExportTickets {
 		);
 
 		try {
-			await writeFile(tempPath, Buffer.from(bytes), { flag: "wx" });
+			await writeFile(tempPath, buffer, { flag: "wx" });
 			await link(tempPath, ticket.outputPath);
 			return {
 				outputPath: ticket.outputPath,
 				bytesWritten: bytes.byteLength,
+				sha256: createHash("sha256").update(buffer).digest("hex"),
 			};
 		} finally {
 			await unlink(tempPath).catch(() => undefined);
@@ -90,5 +96,27 @@ export class ExportTickets {
 		for (const [id, ticket] of this.tickets) {
 			if (ticket.expiresAt <= now) this.tickets.delete(id);
 		}
+	}
+}
+
+function validateContainerSignature({
+	bytes,
+	format,
+}: {
+	bytes: Buffer;
+	format: "mp4" | "webm";
+}): void {
+	const isMp4 =
+		bytes.byteLength >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp";
+	const isWebm =
+		bytes.byteLength >= 4 &&
+		bytes[0] === 0x1a &&
+		bytes[1] === 0x45 &&
+		bytes[2] === 0xdf &&
+		bytes[3] === 0xa3;
+	if ((format === "mp4" && !isMp4) || (format === "webm" && !isWebm)) {
+		throw new Error(
+			`Export bytes do not have a valid ${format} container signature`,
+		);
 	}
 }

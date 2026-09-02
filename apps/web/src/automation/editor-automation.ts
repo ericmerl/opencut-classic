@@ -1047,6 +1047,7 @@ export class EditorAutomation {
 		const receipt = (await upload.json()) as {
 			outputPath: string;
 			bytesWritten: number;
+			sha256: string;
 		};
 		const result: AutomationExportCompletedResult = {
 			status: "exported",
@@ -1054,6 +1055,7 @@ export class EditorAutomation {
 			revision: this.revision,
 			outputPath: receipt.outputPath,
 			bytesWritten: receipt.bytesWritten,
+			sha256: receipt.sha256,
 		};
 		this.exportedOperations.set(request.operationId, { fingerprint, result });
 		return result;

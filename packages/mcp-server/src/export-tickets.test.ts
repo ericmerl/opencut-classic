@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,19 +21,22 @@ describe("ExportTickets", () => {
 		const outputPath = join(directory, "result.webm");
 		const ticket = await tickets.create(outputPath, "webm");
 		const id = new URL(ticket.url).pathname.split("/").at(-1)!;
+		const bytes = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4]);
 
 		const receipt = await tickets.receive(
 			id,
 			new Request(ticket.url, {
 				method: "PUT",
-				body: new Uint8Array([1, 2, 3, 4]),
+				body: bytes,
 			}),
 		);
 
-		expect(receipt).toEqual({ outputPath, bytesWritten: 4 });
-		expect(new Uint8Array(await readFile(outputPath))).toEqual(
-			new Uint8Array([1, 2, 3, 4]),
-		);
+		expect(receipt).toEqual({
+			outputPath,
+			bytesWritten: bytes.byteLength,
+			sha256: createHash("sha256").update(bytes).digest("hex"),
+		});
+		expect(new Uint8Array(await readFile(outputPath))).toEqual(bytes);
 		await expect(
 			tickets.receive(
 				id,
@@ -42,6 +46,24 @@ describe("ExportTickets", () => {
 				}),
 			),
 		).rejects.toThrow("Expired or invalid export ticket");
+	});
+
+	test("rejects an invalid container before writing a destination", async () => {
+		const tickets = new ExportTickets(32191);
+		const outputPath = join(directory, "invalid.mp4");
+		const ticket = await tickets.create(outputPath, "mp4");
+		const id = new URL(ticket.url).pathname.split("/").at(-1)!;
+
+		await expect(
+			tickets.receive(
+				id,
+				new Request(ticket.url, {
+					method: "PUT",
+					body: new Uint8Array([1, 2, 3, 4]),
+				}),
+			),
+		).rejects.toThrow("valid mp4 container signature");
+		await expect(readFile(outputPath)).rejects.toThrow();
 	});
 
 	test("rejects an existing destination before issuing a ticket", async () => {
