@@ -516,6 +516,11 @@ export type AutomationEditOperation =
 			kind: "delete";
 			trackId: string;
 			elementId: string;
+			ripple?: boolean;
+	  }
+	| {
+			kind: "duplicate_elements";
+			elements: Array<{ trackId: string; elementId: string }>;
 	  }
 	| {
 			kind: "move";
@@ -645,6 +650,7 @@ export type AutomationEditOperation =
 			duration?: MediaTime;
 			trimStart: MediaTime;
 			trimEnd: MediaTime;
+			ripple?: boolean;
 	  }
 	| {
 			kind: "split";
@@ -652,6 +658,7 @@ export type AutomationEditOperation =
 			elementId: string;
 			splitTime: MediaTime;
 			retainSide?: "both" | "left" | "right";
+			ripple?: boolean;
 	  }
 	| {
 			kind: "set_matte_state";

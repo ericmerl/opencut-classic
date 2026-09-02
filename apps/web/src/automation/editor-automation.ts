@@ -4,6 +4,7 @@ import { UpdateProjectSettingsCommand } from "@/commands/project";
 import {
 	AddTrackCommand,
 	DeleteElementsCommand,
+	DuplicateElementsCommand,
 	InsertElementCommand,
 	MoveElementCommand,
 	SplitElementsCommand,
@@ -85,6 +86,7 @@ import {
 	buildReframeSnapshot,
 } from "./reframe-control";
 import { buildTransitionCommand } from "./transition-control";
+import { withRipple } from "./ripple-control";
 import { buildAuthoredMaskCommand } from "./authored-mask-control";
 import {
 	buildDefinitionParamPatch,
@@ -1560,6 +1562,19 @@ export class EditorAutomation {
 			});
 			return new BatchCommand([addTrack, ...insertCommands]);
 		}
+		if (operation.kind === "duplicate_elements") {
+			const refs = operation.elements;
+			const refKeys = refs.map((ref) => `${ref.trackId}\u0000${ref.elementId}`);
+			if (new Set(refKeys).size !== refs.length) {
+				throw new Error("duplicate element references are not allowed");
+			}
+			for (const ref of refs) {
+				if (!this.findElement(ref.trackId, ref.elementId)) {
+					throw new Error(`element not found: ${ref.trackId}/${ref.elementId}`);
+				}
+			}
+			return new DuplicateElementsCommand({ elements: refs });
+		}
 		if (
 			operation.kind === "upsert_transition" ||
 			operation.kind === "remove_transition"
@@ -1581,13 +1596,16 @@ export class EditorAutomation {
 			return buildCaptionCorrectionCommand({ element, operation });
 		}
 		if (operation.kind === "delete") {
-			return new DeleteElementsCommand({
-				elements: [
-					{
-						trackId: operation.trackId,
-						elementId: operation.elementId,
-					},
-				],
+			return withRipple({
+				enabled: operation.ripple,
+				command: new DeleteElementsCommand({
+					elements: [
+						{
+							trackId: operation.trackId,
+							elementId: operation.elementId,
+						},
+					],
+				}),
 			});
 		}
 		if (operation.kind === "split") {
@@ -1599,15 +1617,18 @@ export class EditorAutomation {
 			) {
 				throw new Error("splitTime must be inside the element");
 			}
-			return new SplitElementsCommand({
-				elements: [
-					{
-						trackId: operation.trackId,
-						elementId: operation.elementId,
-					},
-				],
-				splitTime: operation.splitTime,
-				retainSide: operation.retainSide,
+			return withRipple({
+				enabled: operation.ripple,
+				command: new SplitElementsCommand({
+					elements: [
+						{
+							trackId: operation.trackId,
+							elementId: operation.elementId,
+						},
+					],
+					splitTime: operation.splitTime,
+					retainSide: operation.retainSide,
+				}),
 			});
 		}
 		if (operation.kind === "set_params") {
@@ -1759,20 +1780,23 @@ export class EditorAutomation {
 			});
 		}
 
-		return new UpdateElementsCommand({
-			updates: [
-				{
-					trackId: operation.trackId,
-					elementId: operation.elementId,
-					patch: buildTrimPatch({
-						element,
-						startTime: operation.startTime,
-						duration: operation.duration,
-						trimStart: operation.trimStart,
-						trimEnd: operation.trimEnd,
-					}),
-				},
-			],
+		return withRipple({
+			enabled: operation.ripple,
+			command: new UpdateElementsCommand({
+				updates: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+						patch: buildTrimPatch({
+							element,
+							startTime: operation.startTime,
+							duration: operation.duration,
+							trimStart: operation.trimStart,
+							trimEnd: operation.trimEnd,
+						}),
+					},
+				],
+			}),
 		});
 	}
 

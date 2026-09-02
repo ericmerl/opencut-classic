@@ -170,6 +170,83 @@ integrationTest(
 					}),
 				],
 			});
+
+			const duplicated = requireRecord(
+				await bridge.request("apply_edit_plan", {
+					projectId,
+					operationId: "timeline-integration-duplicate",
+					expectedRevision: requireNumber(masked.revision, "revision"),
+					description: "Insert a following graphic and duplicate the first",
+					operations: [
+						{
+							kind: "insert_graphic",
+							definitionId: "rectangle",
+							name: "Following graphic",
+							trackId: requireString(graphic.trackId, "trackId"),
+							startTime: 120_000,
+							duration: 120_000,
+							params: { fill: "#00ff00" },
+						},
+						{
+							kind: "duplicate_elements",
+							elements: [
+								{
+									trackId: requireString(graphic.trackId, "trackId"),
+									elementId: requireString(graphic.elementId, "elementId"),
+								},
+							],
+						},
+					],
+				}),
+			);
+			expect(duplicated.status).toBe("applied");
+			const duplicatedElements = requireRecords(
+				requireRecord(duplicated.snapshot).elements,
+				"elements",
+			);
+			expect(
+				duplicatedElements.filter(
+					(element) => element.graphicDefinitionId === "rectangle",
+				),
+			).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						name: "Following graphic",
+						startTime: 120_000,
+					}),
+					expect.objectContaining({ name: expect.stringContaining("(copy)") }),
+				]),
+			);
+
+			const rippled = requireRecord(
+				await bridge.request("apply_edit_plan", {
+					projectId,
+					operationId: "timeline-integration-ripple-delete",
+					expectedRevision: requireNumber(duplicated.revision, "revision"),
+					description: "Ripple-delete the first graphic",
+					operations: [
+						{
+							kind: "delete",
+							trackId: requireString(graphic.trackId, "trackId"),
+							elementId: requireString(graphic.elementId, "elementId"),
+							ripple: true,
+						},
+					],
+				}),
+			);
+			expect(rippled.status).toBe("applied");
+			const rippledElements = requireRecords(
+				requireRecord(rippled.snapshot).elements,
+				"elements",
+			);
+			expect(
+				rippledElements.find((element) => element.name === "Following graphic"),
+			).toMatchObject({ startTime: 0 });
+			expect(
+				rippledElements.some(
+					(element) => element.elementId === graphic.elementId,
+				),
+			).toBe(false);
 		} finally {
 			await worker.stop();
 			bridge.stop();

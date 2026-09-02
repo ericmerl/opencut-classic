@@ -285,7 +285,7 @@ function createServer(): McpServer {
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Atomically update project settings; create or configure tracks; insert native graphics, stickers, adjustment layers, text, or timed captions; author or remove visual masks; crop or reframe clips; separate video source audio; enable or detach a cleaned source; apply dialogue ducking; set audio gain, mute, fades, or uniform mix gain; manage clip effects, keyframes, and transitions; or delete, move, retime, parameterize, split, and trim timeline elements. Read the project first and use its current revision.",
+				"Atomically update project settings; create or configure tracks; insert native graphics, stickers, adjustment layers, text, or timed captions; author or remove visual masks; crop or reframe clips; separate video source audio; enable or detach a cleaned source; apply dialogue ducking; set audio gain, mute, fades, or uniform mix gain; manage clip effects, keyframes, and transitions; duplicate timeline elements; or delete, move, retime, parameterize, split, and trim elements with optional ripple behavior. Read the project first and use its current revision.",
 			inputSchema: editPlanInputSchema,
 		},
 		async (plan) => toolResult(await bridge.request("apply_edit_plan", plan)),

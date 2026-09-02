@@ -261,6 +261,18 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		kind: z.literal("delete"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
+		ripple: z.boolean().default(false),
+	}),
+	z.object({
+		kind: z.literal("duplicate_elements"),
+		elements: z
+			.array(
+				z.object({
+					trackId: z.string().min(1),
+					elementId: z.string().min(1),
+				}),
+			)
+			.min(1),
 	}),
 	z.object({
 		kind: z.literal("move"),
@@ -498,6 +510,7 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			.int()
 			.nonnegative()
 			.describe("Amount removed from the end of the source, in ticks."),
+		ripple: z.boolean().default(false),
 	}),
 	z.object({
 		kind: z.literal("split"),
@@ -509,6 +522,7 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			.positive()
 			.describe("Absolute timeline split position in canonical media ticks."),
 		retainSide: z.enum(["both", "left", "right"]).optional(),
+		ripple: z.boolean().default(false),
 	}),
 	z.object({
 		kind: z.literal("set_matte_state"),

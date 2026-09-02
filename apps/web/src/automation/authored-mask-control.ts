@@ -5,6 +5,7 @@ import {
 	getMaskDefinition,
 	registerDefaultMasks,
 } from "@/masks";
+import type { Mask } from "@/masks/types";
 import type { FreeformPathPoint } from "@/masks/freeform/path";
 import type { MaskableElement, TimelineElement } from "@/timeline";
 import { isMaskableElement } from "@/timeline/element-utils";

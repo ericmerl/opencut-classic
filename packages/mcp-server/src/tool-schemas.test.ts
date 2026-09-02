@@ -1025,6 +1025,62 @@ describe("OpenCut edit-plan MCP contract", () => {
 	});
 });
 
+describe("OpenCut duplication and ripple MCP contract", () => {
+	test("accepts multi-element duplication and explicit ripple edits", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "duplicate-ripple-1",
+			expectedRevision: 8,
+			description: "Duplicate the B-roll and close removed time",
+			operations: [
+				{
+					kind: "duplicate_elements",
+					elements: [
+						{ trackId: "video-1", elementId: "clip-1" },
+						{ trackId: "text-1", elementId: "caption-1" },
+					],
+				},
+				{
+					kind: "delete",
+					trackId: "video-1",
+					elementId: "clip-2",
+					ripple: true,
+				},
+				{
+					kind: "trim",
+					trackId: "video-1",
+					elementId: "clip-3",
+					trimStart: 0,
+					trimEnd: 120_000,
+					ripple: true,
+				},
+				{
+					kind: "split",
+					trackId: "video-1",
+					elementId: "clip-4",
+					splitTime: 480_000,
+					retainSide: "left",
+					ripple: true,
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects an empty duplication set", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "duplicate-empty-1",
+			expectedRevision: 8,
+			description: "Duplicate nothing",
+			operations: [{ kind: "duplicate_elements", elements: [] }],
+		});
+
+		expect(result.success).toBe(false);
+	});
+});
+
 describe("OpenCut project-lifecycle MCP contract", () => {
 	test("accepts idempotent create and open requests", () => {
 		const createResult = createProjectInputSchema.safeParse({
