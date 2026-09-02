@@ -81,6 +81,11 @@ export interface AutomationEffectCatalogEntry {
 	effectType: string;
 	name: string;
 	keywords: string[];
+	presets?: Array<{
+		id: string;
+		name: string;
+		params: Record<string, string | number | boolean>;
+	}>;
 	params: Array<{
 		key: string;
 		label: string;

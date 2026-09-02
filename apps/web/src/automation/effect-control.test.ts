@@ -145,4 +145,37 @@ describe("effect control", () => {
 			],
 		});
 	});
+
+	test("publishes the complete realistic color preset", () => {
+		const colorGrade = listEffectCatalog().find(
+			(effect) => effect.effectType === "color-grade",
+		);
+
+		expect(colorGrade?.presets).toEqual([
+			{
+				id: "simple-media-realistic",
+				name: "Simple Media Realistic",
+				params: {
+					temperature: -3,
+					tint: 2,
+					saturation: -6,
+					exposure: -3,
+					contrast: 12,
+					highlights: -35,
+					shadows: 18,
+					fade: 6,
+				},
+			},
+		]);
+		expect(colorGrade?.params.map((param) => param.key)).toEqual([
+			"temperature",
+			"tint",
+			"saturation",
+			"exposure",
+			"contrast",
+			"highlights",
+			"shadows",
+			"fade",
+		]);
+	});
 });

@@ -183,6 +183,7 @@ export function listEffectCatalog(): AutomationEffectCatalogEntry[] {
 		effectType: definition.type,
 		name: definition.name,
 		keywords: definition.keywords,
+		...(definition.presets ? { presets: definition.presets } : {}),
 		params: definition.params.map((param) => ({
 			key: param.key,
 			label: param.label,

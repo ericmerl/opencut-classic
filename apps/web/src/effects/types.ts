@@ -37,5 +37,10 @@ export interface EffectDefinition {
 	name: string;
 	keywords: string[];
 	params: ParamDefinition[];
+	presets?: Array<{
+		id: string;
+		name: string;
+		params: ParamValues;
+	}>;
 	renderer: EffectRendererConfig;
 }

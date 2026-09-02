@@ -117,7 +117,7 @@ function createServer(): McpServer {
 		"opencut_list_effects",
 		{
 			description:
-				"List the clip effects registered by the connected OpenCut editor, including validated parameter types, ranges, defaults, and keyframe support.",
+				"List the clip effects registered by the connected OpenCut editor, including validated parameter types, ranges, defaults, named presets, and keyframe support.",
 		},
 		async () => toolResult(await bridge.request("list_effects", {})),
 	);
