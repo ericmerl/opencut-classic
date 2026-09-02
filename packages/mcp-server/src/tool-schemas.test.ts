@@ -17,12 +17,96 @@ import {
 	queueExportInputSchema,
 	recordExportInspectionInputSchema,
 	runExportJobsInputSchema,
+	searchStickersInputSchema,
 	startEditorWorkerInputSchema,
 	timelineQueryInputSchema,
 	syncAudioInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut visual asset MCP contract", () => {
+	test("accepts graphic, sticker, adjustment-layer, and authored-mask edits", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "visual-assets-1",
+			expectedRevision: 8,
+			description: "Build the visual treatment",
+			operations: [
+				{
+					kind: "add_track",
+					trackType: "graphic",
+					trackId: "graphics-1",
+				},
+				{
+					kind: "insert_graphic",
+					definitionId: "rectangle",
+					startTime: 0,
+					duration: 240_000,
+					trackId: "graphics-1",
+					params: { fill: "#ff0000", cornerRadius: 20 },
+				},
+				{
+					kind: "insert_sticker",
+					stickerId: "flags:US",
+					startTime: 0,
+					duration: 120_000,
+				},
+				{
+					kind: "insert_adjustment_layer",
+					effectType: "color-grade",
+					startTime: 0,
+					duration: 240_000,
+					params: { contrast: 12, highlights: -35 },
+				},
+				{
+					kind: "set_mask",
+					trackId: "video-1",
+					elementId: "clip-1",
+					maskId: "mask-1",
+					maskType: "freeform",
+					params: {
+						closed: true,
+						path: [
+							{ id: "a", x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 },
+							{ id: "b", x: 1, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 },
+							{ id: "c", x: 0, y: 1, inX: 0, inY: 0, outX: 0, outY: 0 },
+						],
+					},
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects malformed freeform points and accepts bounded sticker search", () => {
+		const search = searchStickersInputSchema.safeParse({
+			query: "circle",
+			category: "shapes",
+			limit: 25,
+		});
+		const invalid = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "invalid-mask-1",
+			expectedRevision: 8,
+			description: "Reject malformed path",
+			operations: [
+				{
+					kind: "set_mask",
+					trackId: "video-1",
+					elementId: "clip-1",
+					maskId: "mask-1",
+					maskType: "freeform",
+					params: { path: [{ id: "a", x: 0 }] },
+				},
+			],
+		});
+
+		expect(search.success).toBe(true);
+		expect(invalid.success).toBe(false);
+	});
+});
 
 describe("OpenCut persistent export job contract", () => {
 	test("accepts queue, lookup, filtering, and bounded drain requests", () => {

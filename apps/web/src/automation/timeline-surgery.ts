@@ -16,16 +16,20 @@ export function validateTrackCreationPlan(
 				"add_track requires trackId so the track can be populated in the same plan",
 			);
 		}
-		const isPopulatedByLaterMove = operations
+		const isPopulatedByLaterOperation = operations
 			.slice(index + 1)
 			.some(
 				(candidate) =>
-					candidate.kind === "move" &&
-					candidate.targetTrackId === operation.trackId,
+					(candidate.kind === "move" &&
+						candidate.targetTrackId === operation.trackId) ||
+					((candidate.kind === "insert_graphic" ||
+						candidate.kind === "insert_sticker" ||
+						candidate.kind === "insert_adjustment_layer") &&
+						candidate.trackId === operation.trackId),
 			);
-		if (!isPopulatedByLaterMove) {
+		if (!isPopulatedByLaterOperation) {
 			throw new Error(
-				`new track ${operation.trackId} must receive an element from a later move in the same plan`,
+				`new track ${operation.trackId} must receive an element from a later operation in the same plan`,
 			);
 		}
 	}

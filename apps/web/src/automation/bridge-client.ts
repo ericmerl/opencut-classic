@@ -11,6 +11,7 @@ import type {
 	AutomationImportSubtitlesRequest,
 	AutomationExportSubtitlesRequest,
 	AutomationOpenProjectRequest,
+	AutomationStickerSearchRequest,
 	AutomationTransferSourceRequest,
 	AutomationTranscriptionRequest,
 } from "./types";
@@ -25,6 +26,18 @@ type BridgeRequest =
 			params: AutomationTimelineQueryRequest;
 	  }
 	| { kind: "request"; id: string; method: "list_effects"; params: object }
+	| {
+			kind: "request";
+			id: string;
+			method: "list_visual_assets";
+			params: object;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "search_stickers";
+			params: AutomationStickerSearchRequest;
+	  }
 	| {
 			kind: "request";
 			id: string;
@@ -215,6 +228,10 @@ export class AutomationBridgeClient {
 				return this.automation.queryTimeline(message.params);
 			case "list_effects":
 				return this.automation.listEffects();
+			case "list_visual_assets":
+				return this.automation.listVisualAssets();
+			case "search_stickers":
+				return this.automation.searchStickers(message.params);
 			case "analyze_audio":
 				return this.automation.analyzeAudio(message.params);
 			case "sync_audio":

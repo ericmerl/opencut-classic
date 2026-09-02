@@ -41,6 +41,34 @@ export interface AutomationElementSnapshot {
 	audioReplacement?: AutomationAudioReplacementSnapshot;
 	reframe?: AutomationReframeSnapshot;
 	sourceAudioSeparated?: boolean;
+	graphicDefinitionId?: string;
+	stickerId?: string;
+	stickerIntrinsicWidth?: number;
+	stickerIntrinsicHeight?: number;
+	effectType?: string;
+	masks?: AutomationMaskSnapshot[];
+}
+
+export interface AutomationFreeformPathPoint {
+	id: string;
+	x: number;
+	y: number;
+	inX: number;
+	inY: number;
+	outX: number;
+	outY: number;
+}
+
+export type AutomationMaskParamValue =
+	| string
+	| number
+	| boolean
+	| AutomationFreeformPathPoint[];
+
+export interface AutomationMaskSnapshot {
+	maskId: string;
+	maskType: string;
+	params: Record<string, AutomationMaskParamValue>;
 }
 
 export interface AutomationNormalizedRect {
@@ -90,6 +118,18 @@ export interface AutomationEffectSnapshot {
 	params: Record<string, string | number | boolean>;
 }
 
+export interface AutomationParamCatalogEntry {
+	key: string;
+	label: string;
+	type: string;
+	default: string | number | boolean;
+	keyframable: boolean;
+	min?: number;
+	max?: number;
+	step?: number;
+	options?: Array<{ value: string; label: string }>;
+}
+
 export interface AutomationEffectCatalogEntry {
 	effectType: string;
 	name: string;
@@ -99,17 +139,55 @@ export interface AutomationEffectCatalogEntry {
 		name: string;
 		params: Record<string, string | number | boolean>;
 	}>;
-	params: Array<{
-		key: string;
-		label: string;
-		type: string;
-		default: string | number | boolean;
-		keyframable: boolean;
-		min?: number;
-		max?: number;
-		step?: number;
-		options?: Array<{ value: string; label: string }>;
+	params: AutomationParamCatalogEntry[];
+}
+
+export interface AutomationGraphicCatalogEntry {
+	definitionId: string;
+	name: string;
+	keywords: string[];
+	params: AutomationParamCatalogEntry[];
+}
+
+export interface AutomationMaskCatalogEntry {
+	maskType: string;
+	name: string;
+	features: {
+		hasPosition: boolean;
+		hasRotation: boolean;
+		sizeMode:
+			| "none"
+			| "uniform"
+			| "width-height"
+			| "height-only"
+			| "width-only";
+	};
+	params: AutomationParamCatalogEntry[];
+	supportsFreeformPath: boolean;
+}
+
+export interface AutomationVisualAssetCatalog {
+	graphics: AutomationGraphicCatalogEntry[];
+	masks: AutomationMaskCatalogEntry[];
+	stickerCategories: Array<{ id: string; name: string }>;
+}
+
+export interface AutomationStickerSearchRequest {
+	query: string;
+	category: "all" | "flags" | "shapes";
+	limit: number;
+}
+
+export interface AutomationStickerSearchResult {
+	items: Array<{
+		stickerId: string;
+		provider: string;
+		name: string;
+		previewUrl: string;
+		metadata: Record<string, unknown>;
 	}>;
+	total: number;
+	hasMore: boolean;
 }
 
 export interface AutomationTrackSnapshot {
@@ -374,6 +452,33 @@ export type AutomationEditOperation =
 			duration: MediaTime;
 	  }
 	| {
+			kind: "insert_graphic";
+			definitionId: string;
+			name?: string;
+			startTime: MediaTime;
+			duration: MediaTime;
+			trackId?: string;
+			params?: Record<string, string | number | boolean>;
+	  }
+	| {
+			kind: "insert_sticker";
+			stickerId: string;
+			name?: string;
+			startTime: MediaTime;
+			duration: MediaTime;
+			trackId?: string;
+			params?: Record<string, string | number | boolean>;
+	  }
+	| {
+			kind: "insert_adjustment_layer";
+			effectType: string;
+			name?: string;
+			startTime: MediaTime;
+			duration: MediaTime;
+			trackId?: string;
+			params?: Record<string, string | number | boolean>;
+	  }
+	| {
 			kind: "add_track";
 			trackType: TrackType;
 			trackId: string;
@@ -558,6 +663,29 @@ export type AutomationEditOperation =
 			kind: "remove_matte";
 			trackId: string;
 			elementId: string;
+	  }
+	| {
+			kind: "set_mask";
+			trackId: string;
+			elementId: string;
+			maskId: string;
+			maskType:
+				| "split"
+				| "cinematic-bars"
+				| "rectangle"
+				| "ellipse"
+				| "heart"
+				| "diamond"
+				| "star"
+				| "text"
+				| "freeform";
+			params?: Record<string, AutomationMaskParamValue>;
+	  }
+	| {
+			kind: "remove_mask";
+			trackId: string;
+			elementId: string;
+			maskId: string;
 	  }
 	| {
 			kind: "set_audio_replacement_state";

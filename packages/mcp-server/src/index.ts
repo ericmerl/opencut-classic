@@ -30,6 +30,7 @@ import {
 	queueExportInputSchema,
 	recordExportInspectionInputSchema,
 	runExportJobsInputSchema,
+	searchStickersInputSchema,
 	startEditorWorkerInputSchema,
 	syncAudioInputSchema,
 	timelineQueryInputSchema,
@@ -181,9 +182,29 @@ function createServer(): McpServer {
 		"opencut_list_effects",
 		{
 			description:
-				"List the clip effects registered by the connected OpenCut editor, including validated parameter types, ranges, defaults, named presets, and keyframe support.",
+				"List effects registered by the connected OpenCut editor for clip-effect stacks and adjustment layers, including validated parameter types, ranges, defaults, named presets, and keyframe support.",
 		},
 		async () => toolResult(await bridge.request("list_effects", {})),
+	);
+
+	server.registerTool(
+		"opencut_list_visual_assets",
+		{
+			description:
+				"List native graphic definitions, authored mask types, their validated parameter schemas, and sticker categories available in the connected editor.",
+		},
+		async () => toolResult(await bridge.request("list_visual_assets", {})),
+	);
+
+	server.registerTool(
+		"opencut_search_stickers",
+		{
+			description:
+				"Search native sticker providers and return stable sticker IDs, provider names, previews, and metadata for insertion through an edit plan.",
+			inputSchema: searchStickersInputSchema,
+		},
+		async (params) =>
+			toolResult(await bridge.request("search_stickers", params)),
 	);
 
 	server.registerTool(
@@ -264,7 +285,7 @@ function createServer(): McpServer {
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Atomically update project settings, create or configure tracks, crop or reframe visual clips, separate video source audio, enable or detach a cleaned source, apply non-destructive dialogue ducking, set per-clip audio gain, mute, linear fades, or uniform mix gain, create, update, reorder, enable, or remove clip effects, create, update, retime, or remove keyframes, create, update, or remove clip transitions, insert text or timed caption batches, delete, move, retime, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
+				"Atomically update project settings; create or configure tracks; insert native graphics, stickers, adjustment layers, text, or timed captions; author or remove visual masks; crop or reframe clips; separate video source audio; enable or detach a cleaned source; apply dialogue ducking; set audio gain, mute, fades, or uniform mix gain; manage clip effects, keyframes, and transitions; or delete, move, retime, parameterize, split, and trim timeline elements. Read the project first and use its current revision.",
 			inputSchema: editPlanInputSchema,
 		},
 		async (plan) => toolResult(await bridge.request("apply_edit_plan", plan)),

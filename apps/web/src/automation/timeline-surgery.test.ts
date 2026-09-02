@@ -40,7 +40,7 @@ describe("timeline surgery", () => {
 				{ kind: "add_track", trackType: "video", trackId: "overlay-1" },
 			]),
 		).toThrow(
-			"new track overlay-1 must receive an element from a later move in the same plan",
+			"new track overlay-1 must receive an element from a later operation in the same plan",
 		);
 
 		expect(() =>
@@ -52,6 +52,19 @@ describe("timeline surgery", () => {
 					targetTrackId: "overlay-1",
 					elementId: "video-1",
 					startTime: mediaTime({ ticks: 300000 }),
+				},
+			]),
+		).not.toThrow();
+
+		expect(() =>
+			validateTrackCreationPlan([
+				{ kind: "add_track", trackType: "graphic", trackId: "graphics-1" },
+				{
+					kind: "insert_graphic",
+					definitionId: "rectangle",
+					startTime: mediaTime({ ticks: 0 }),
+					duration: mediaTime({ ticks: 120000 }),
+					trackId: "graphics-1",
 				},
 			]),
 		).not.toThrow();

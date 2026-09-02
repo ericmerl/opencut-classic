@@ -85,6 +85,15 @@ import {
 	buildReframeSnapshot,
 } from "./reframe-control";
 import { buildTransitionCommand } from "./transition-control";
+import { buildAuthoredMaskCommand } from "./authored-mask-control";
+import {
+	buildDefinitionParamPatch,
+	buildVisualInsertionCommand,
+} from "./visual-element-control";
+import {
+	listVisualAssetCatalog,
+	searchAutomationStickers,
+} from "./visual-asset-catalog";
 import {
 	buildTrimPatch,
 	getElementSourceDuration,
@@ -111,6 +120,9 @@ import type {
 	AutomationEditPlan,
 	AutomationElementSnapshot,
 	AutomationEffectCatalogEntry,
+	AutomationStickerSearchRequest,
+	AutomationStickerSearchResult,
+	AutomationVisualAssetCatalog,
 	AutomationCreateProjectRequest,
 	AutomationCreateProjectResult,
 	AutomationExportCompletedResult,
@@ -203,6 +215,16 @@ export class EditorAutomation {
 
 	listEffects(): AutomationEffectCatalogEntry[] {
 		return listEffectCatalog();
+	}
+
+	listVisualAssets(): AutomationVisualAssetCatalog {
+		return listVisualAssetCatalog();
+	}
+
+	searchStickers(
+		request: AutomationStickerSearchRequest,
+	): Promise<AutomationStickerSearchResult> {
+		return this.enqueue(() => searchAutomationStickers(request));
 	}
 
 	analyzeAudio(
@@ -1372,6 +1394,13 @@ export class EditorAutomation {
 
 	private validateAndBuildCommand(operation: AutomationEditOperation): Command {
 		if (
+			operation.kind === "insert_graphic" ||
+			operation.kind === "insert_sticker" ||
+			operation.kind === "insert_adjustment_layer"
+		) {
+			return buildVisualInsertionCommand({ operation });
+		}
+		if (
 			operation.kind === "set_matte_state" ||
 			operation.kind === "remove_matte"
 		) {
@@ -1584,6 +1613,21 @@ export class EditorAutomation {
 		if (operation.kind === "set_params") {
 			const entries = Object.entries(operation.params);
 			if (entries.length === 0) throw new Error("params cannot be empty");
+			const definitionPatch = buildDefinitionParamPatch({
+				element,
+				requested: operation.params,
+			});
+			if (definitionPatch) {
+				return new UpdateElementsCommand({
+					updates: [
+						{
+							trackId: operation.trackId,
+							elementId: operation.elementId,
+							patch: definitionPatch,
+						},
+					],
+				});
+			}
 			let updatedElement = element;
 			for (const [key, requestedValue] of entries) {
 				const param = getElementParam({ element: updatedElement, key });
@@ -1614,6 +1658,9 @@ export class EditorAutomation {
 		}
 		if (operation.kind === "set_reframe") {
 			return buildReframeControlCommand({ element, operation });
+		}
+		if (operation.kind === "set_mask" || operation.kind === "remove_mask") {
+			return buildAuthoredMaskCommand({ element, operation });
 		}
 		if (operation.kind === "set_audio") {
 			return new UpdateElementsCommand({
@@ -1822,6 +1869,10 @@ export class EditorAutomation {
 		const keyframes = getElementKeyframes({ animations: element.animations });
 		const assets = this.editor.media.getAssets();
 		const reframe = buildReframeSnapshot({ element });
+		const params =
+			element.type === "graphic" || element.type === "effect"
+				? { ...element.params }
+				: buildElementParamValues({ element });
 		return {
 			trackId,
 			elementId: element.id,
@@ -1832,7 +1883,7 @@ export class EditorAutomation {
 			trimStart: element.trimStart,
 			trimEnd: element.trimEnd,
 			sourceDuration: getElementSourceDuration({ element }),
-			params: buildElementParamValues({ element }),
+			params,
 			...(reframe ? { reframe } : {}),
 			...("mediaId" in element ? { mediaId: element.mediaId } : {}),
 			...("sourceType" in element ? { sourceType: element.sourceType } : {}),
@@ -1868,6 +1919,30 @@ export class EditorAutomation {
 				: {}),
 			...(element.type === "video"
 				? { sourceAudioSeparated: element.isSourceAudioEnabled === false }
+				: {}),
+			...(element.type === "graphic"
+				? { graphicDefinitionId: element.definitionId }
+				: {}),
+			...(element.type === "sticker"
+				? {
+						stickerId: element.stickerId,
+						...(element.intrinsicWidth === undefined
+							? {}
+							: { stickerIntrinsicWidth: element.intrinsicWidth }),
+						...(element.intrinsicHeight === undefined
+							? {}
+							: { stickerIntrinsicHeight: element.intrinsicHeight }),
+					}
+				: {}),
+			...(element.type === "effect" ? { effectType: element.effectType } : {}),
+			...("masks" in element && element.masks?.length
+				? {
+						masks: element.masks.map((mask) => ({
+							maskId: mask.id,
+							maskType: mask.type,
+							params: { ...mask.params },
+						})),
+					}
 				: {}),
 			...(keyframes.length > 0 ? { keyframes } : {}),
 			...("effects" in element && element.effects?.length

@@ -1,7 +1,7 @@
 # OpenCut Classic MCP capability gap audit
 
 Date: 2026-09-01
-Branch audited: `codex/issue-1-mcp-editor-bridge`
+Branch audited: `codex/issue-1-mcp-editor-bridge` at `54d3c088`
 
 ## Scope and method
 

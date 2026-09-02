@@ -35,6 +35,12 @@ export const timelineQueryInputSchema = z
 		{ message: "endTime must not precede startTime" },
 	);
 
+export const searchStickersInputSchema = z.object({
+	query: z.string().trim(),
+	category: z.enum(["all", "flags", "shapes"]).default("all"),
+	limit: z.number().int().min(1).max(200).default(50),
+});
+
 const captionStyleSchema = z.object({
 	fontFamily: z.string().min(1).optional(),
 	fontSize: z
@@ -119,6 +125,28 @@ const normalizedRectSchema = z
 		message: "y + height must be at most 1",
 	});
 
+const freeformPathPointSchema = z.object({
+	id: z.string().trim().min(1),
+	x: z.number().finite(),
+	y: z.number().finite(),
+	inX: z.number().finite(),
+	inY: z.number().finite(),
+	outX: z.number().finite(),
+	outY: z.number().finite(),
+});
+
+const maskParamValueSchema = z.union([
+	z.string(),
+	z.number().finite(),
+	z.boolean(),
+	z.array(freeformPathPointSchema),
+]);
+
+const elementParamRecordSchema = z.record(
+	z.string(),
+	z.union([z.string(), z.number(), z.boolean()]),
+);
+
 const reframeLayoutSchema = z.enum([
 	"full-frame",
 	"split-left",
@@ -137,6 +165,33 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		content: z.string().min(1),
 		startTime: z.number().int().nonnegative(),
 		duration: z.number().int().positive(),
+	}),
+	z.object({
+		kind: z.literal("insert_graphic"),
+		definitionId: z.string().trim().min(1),
+		name: z.string().trim().min(1).optional(),
+		startTime: z.number().int().nonnegative(),
+		duration: z.number().int().positive(),
+		trackId: z.string().min(1).optional(),
+		params: elementParamRecordSchema.optional(),
+	}),
+	z.object({
+		kind: z.literal("insert_sticker"),
+		stickerId: z.string().trim().min(1),
+		name: z.string().trim().min(1).optional(),
+		startTime: z.number().int().nonnegative(),
+		duration: z.number().int().positive(),
+		trackId: z.string().min(1).optional(),
+		params: elementParamRecordSchema.optional(),
+	}),
+	z.object({
+		kind: z.literal("insert_adjustment_layer"),
+		effectType: z.string().trim().min(1),
+		name: z.string().trim().min(1).optional(),
+		startTime: z.number().int().nonnegative(),
+		duration: z.number().int().positive(),
+		trackId: z.string().min(1).optional(),
+		params: elementParamRecordSchema.optional(),
 	}),
 	z.object({
 		kind: z.literal("add_track"),
@@ -467,6 +522,30 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		elementId: z.string().min(1),
 	}),
 	z.object({
+		kind: z.literal("set_mask"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		maskId: z.string().trim().min(1),
+		maskType: z.enum([
+			"split",
+			"cinematic-bars",
+			"rectangle",
+			"ellipse",
+			"heart",
+			"diamond",
+			"star",
+			"text",
+			"freeform",
+		]),
+		params: z.record(z.string(), maskParamValueSchema).optional(),
+	}),
+	z.object({
+		kind: z.literal("remove_mask"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		maskId: z.string().trim().min(1),
+	}),
+	z.object({
 		kind: z.literal("set_audio_replacement_state"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
@@ -490,18 +569,22 @@ export const editPlanInputSchema = z
 	.superRefine((plan, context) => {
 		for (const [index, operation] of plan.operations.entries()) {
 			if (operation.kind !== "add_track") continue;
-			const isPopulatedByLaterMove = plan.operations
+			const isPopulatedByLaterOperation = plan.operations
 				.slice(index + 1)
 				.some(
 					(candidate) =>
-						candidate.kind === "move" &&
-						candidate.targetTrackId === operation.trackId,
+						(candidate.kind === "move" &&
+							candidate.targetTrackId === operation.trackId) ||
+						((candidate.kind === "insert_graphic" ||
+							candidate.kind === "insert_sticker" ||
+							candidate.kind === "insert_adjustment_layer") &&
+							candidate.trackId === operation.trackId),
 				);
-			if (!isPopulatedByLaterMove) {
+			if (!isPopulatedByLaterOperation) {
 				context.addIssue({
 					code: "custom",
 					path: ["operations", index],
-					message: `new track ${operation.trackId} must receive an element from a later move in the same plan`,
+					message: `new track ${operation.trackId} must receive an element from a later operation in the same plan`,
 				});
 			}
 		}
