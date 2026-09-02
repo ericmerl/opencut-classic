@@ -466,6 +466,17 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
 	}),
+	z.object({
+		kind: z.literal("set_audio_replacement_state"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		enabled: z.boolean(),
+	}),
+	z.object({
+		kind: z.literal("remove_audio_replacement"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+	}),
 ]);
 
 export const editPlanInputSchema = z
@@ -569,6 +580,39 @@ export const generateMatteInputSchema = z.object({
 	expectedRevision: z.number().int().nonnegative(),
 	trackId: z.string().min(1),
 	elementId: z.string().min(1),
+	modelId: z.string().trim().min(1).optional(),
+	modelVersion: z.string().trim().min(1).optional(),
+	options: z
+		.record(
+			z.string(),
+			z.union([z.string(), z.number(), z.boolean(), z.null()]),
+		)
+		.default({}),
+	timeoutSeconds: z.number().int().min(1).max(7200).default(1800),
+});
+
+export const attachCleanAudioInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	trackId: z.string().min(1),
+	elementId: z.string().min(1),
+	path: z.string().min(1),
+	modelId: z.string().trim().min(1),
+	modelVersion: z.string().trim().min(1),
+});
+
+export const cleanAudioInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	trackId: z.string().min(1),
+	elementId: z.string().min(1),
+	noiseReduction: z.number().min(0).max(1).default(0.5),
+	deReverb: z.number().min(0).max(1).default(0),
+	deEss: z.number().min(0).max(1).default(0),
+	highPassHz: z.number().min(0).max(300).default(80),
+	normalize: z.boolean().default(false),
 	modelId: z.string().trim().min(1).optional(),
 	modelVersion: z.string().trim().min(1).optional(),
 	options: z

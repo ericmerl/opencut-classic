@@ -115,10 +115,22 @@ export interface ClipMatteAttachment {
 	enabled: boolean;
 }
 
+export interface ClipAudioReplacementAttachment {
+	assetId: string;
+	sourceMediaId: string;
+	sourceFingerprint: string | null;
+	artifactHash: string;
+	artifactFingerprint: string;
+	modelId: string;
+	modelVersion: string;
+	enabled: boolean;
+}
+
 interface BaseAudioElement extends BaseTimelineElement {
 	type: "audio";
 	buffer?: AudioBuffer;
 	retime?: RetimeConfig;
+	audioReplacement?: ClipAudioReplacementAttachment;
 }
 
 export interface UploadAudioElement extends BaseAudioElement {
@@ -155,6 +167,7 @@ export interface VideoElement extends BaseTimelineElement {
 	effects?: Effect[];
 	masks?: Mask[];
 	matte?: ClipMatteAttachment;
+	audioReplacement?: ClipAudioReplacementAttachment;
 }
 
 export interface ImageElement extends BaseTimelineElement {

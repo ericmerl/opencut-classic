@@ -2,12 +2,15 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
+import { AudioCleanupService } from "./clean-audio";
 import { MatteGenerationService } from "./generate-matte";
 import { calculateNormalizationGain } from "./audio-normalization";
 import { SubtitleFiles } from "./subtitle-files";
 import { SubjectTrackingService } from "./track-subject";
 import {
 	attachMatteInputSchema,
+	attachCleanAudioInputSchema,
+	cleanAudioInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
 	generateMatteInputSchema,
@@ -33,6 +36,7 @@ const port = parsePort(
 		"32191",
 );
 const bridge = new EditorBridge({ token, port });
+const audioCleanup = new AudioCleanupService(bridge);
 const matteGeneration = new MatteGenerationService(bridge);
 const subtitleFiles = new SubtitleFiles();
 const subjectTracking = new SubjectTrackingService(bridge);
@@ -178,10 +182,42 @@ function createServer(): McpServer {
 	);
 
 	server.registerTool(
+		"opencut_attach_clean_audio",
+		{
+			description:
+				"Attach a precomputed cleaned-audio file to an uploaded audio or video clip while preserving the clip's timing, trim, retime, fades, ducking, mute, and volume automation. Use apply_edit_plan to enable, disable, or detach it.",
+			inputSchema: attachCleanAudioInputSchema,
+		},
+		async ({ path, ...params }) => {
+			const ticket = await bridge.mediaTickets.create(path);
+			return toolResult(
+				await bridge.request("attach_clean_audio", {
+					...params,
+					url: ticket.url,
+					name: ticket.name,
+					mimeType: ticket.mimeType,
+					artifactHash: ticket.contentHash,
+					artifactFingerprint: ticket.sourceFingerprint,
+				}),
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_clean_audio",
+		{
+			description:
+				"Clean the complete uploaded source audio through the configured external provider and attach the result non-destructively to the selected audio or video clip. Existing trim, retime, fades, ducking, mute, and volume automation remain on the clip.",
+			inputSchema: cleanAudioInputSchema,
+		},
+		async (input) => toolResult(await audioCleanup.clean(input)),
+	);
+
+	server.registerTool(
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Atomically update project settings, create or configure tracks, crop or reframe visual clips, separate video source audio, apply non-destructive dialogue ducking, set per-clip audio gain, mute, linear fades, or uniform mix gain, create, update, reorder, enable, or remove clip effects, create, update, retime, or remove keyframes, create, update, or remove clip transitions, insert text or timed caption batches, delete, move, retime, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
+				"Atomically update project settings, create or configure tracks, crop or reframe visual clips, separate video source audio, enable or detach a cleaned source, apply non-destructive dialogue ducking, set per-clip audio gain, mute, linear fades, or uniform mix gain, create, update, reorder, enable, or remove clip effects, create, update, retime, or remove keyframes, create, update, or remove clip transitions, insert text or timed caption batches, delete, move, retime, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
 			inputSchema: editPlanInputSchema,
 		},
 		async (plan) => toolResult(await bridge.request("apply_edit_plan", plan)),

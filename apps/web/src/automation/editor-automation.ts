@@ -60,6 +60,7 @@ import {
 } from "@/wasm";
 import { getElementKeyframes } from "@/animation";
 import { analyzeAutomationAudio } from "./audio-analysis";
+import { prepareCleanAudioAttachment } from "./attach-clean-audio";
 import { prepareMatteAttachment } from "./attach-matte";
 import { buildAudioControlPatch } from "./audio-control";
 import { buildAudioMixGainCommand } from "./audio-mix-gain";
@@ -74,10 +75,11 @@ import { buildCaptionCorrectionCommand } from "./caption-control";
 import { buildEffectControlCommand, listEffectCatalog } from "./effect-control";
 import { buildKeyframeCommand } from "./keyframe-control";
 import {
-	buildMatteControlCommand,
-	buildMatteSnapshot,
-	findVideoElement,
-} from "./matte-control";
+	buildAudioReplacementControlCommand,
+	buildAudioReplacementSnapshot,
+	findAudioCapableElement,
+} from "./audio-replacement-control";
+import { buildMatteControlCommand, buildMatteSnapshot } from "./matte-control";
 import {
 	buildReframeControlCommand,
 	buildReframeSnapshot,
@@ -99,6 +101,9 @@ import type {
 	AutomationAudioSyncAppliedResult,
 	AutomationAudioSyncRequest,
 	AutomationAudioSyncResult,
+	AutomationAttachCleanAudioAppliedResult,
+	AutomationAttachCleanAudioRequest,
+	AutomationAttachCleanAudioResult,
 	AutomationAttachMatteAppliedResult,
 	AutomationAttachMatteRequest,
 	AutomationAttachMatteResult,
@@ -166,6 +171,10 @@ export class EditorAutomation {
 	private attachedMatteOperations = new Map<
 		string,
 		{ fingerprint: string; result: AutomationAttachMatteAppliedResult }
+	>();
+	private attachedCleanAudioOperations = new Map<
+		string,
+		{ fingerprint: string; result: AutomationAttachCleanAudioAppliedResult }
 	>();
 	private projectOperations = new Map<
 		string,
@@ -263,6 +272,12 @@ export class EditorAutomation {
 		request: AutomationAttachMatteRequest,
 	): Promise<AutomationAttachMatteResult> {
 		return this.enqueue(() => this.attachMatteNow(request));
+	}
+
+	attachCleanAudio(
+		request: AutomationAttachCleanAudioRequest,
+	): Promise<AutomationAttachCleanAudioResult> {
+		return this.enqueue(() => this.attachCleanAudioNow(request));
 	}
 
 	transferSourceMedia(
@@ -1154,6 +1169,73 @@ export class EditorAutomation {
 		}
 	}
 
+	private async attachCleanAudioNow(
+		request: AutomationAttachCleanAudioRequest,
+	): Promise<AutomationAttachCleanAudioResult> {
+		this.reconcileExternalChanges();
+		const { url: _transferUrl, ...stableRequest } = request;
+		const fingerprint = stableSerialize(stableRequest);
+		const prior = this.attachedCleanAudioOperations.get(request.operationId);
+		if (prior) {
+			if (prior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason:
+						"operationId was already used for a different cleaned-audio attachment",
+				};
+			}
+			return { ...prior.result, status: "replayed" };
+		}
+		if (request.projectId !== this.getProjectId()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `active project is ${this.getProjectId()}`,
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				operationId: request.operationId,
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+
+		try {
+			const prepared = await prepareCleanAudioAttachment({
+				editor: this.editor,
+				request,
+			});
+			this.editor.command.execute({ command: prepared.command });
+			await prepared.addMedia.waitForPersistence();
+			await this.editor.save.flush();
+			this.recordCommittedState();
+			const result: AutomationAttachCleanAudioAppliedResult = {
+				status: "applied",
+				operationId: request.operationId,
+				revision: this.revision,
+				assetId: prepared.addMedia.getAssetId(),
+				snapshot: this.buildSnapshot(),
+			};
+			this.attachedCleanAudioOperations.set(request.operationId, {
+				fingerprint,
+				result,
+			});
+			return result;
+		} catch (error) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason:
+					error instanceof Error
+						? error.message
+						: "cleaned-audio attachment failed",
+			};
+		}
+	}
+
 	private async transferSourceMediaNow(
 		request: AutomationTransferSourceRequest,
 	): Promise<AutomationTransferSourceResult> {
@@ -1173,11 +1255,14 @@ export class EditorAutomation {
 		}
 
 		try {
-			const element = findVideoElement({
+			const element = findAudioCapableElement({
 				tracks: this.editor.scenes.getActiveScene().tracks,
 				trackId: request.trackId,
 				elementId: request.elementId,
 			});
+			if (!("mediaId" in element)) {
+				throw new Error("library audio cannot be transferred as source media");
+			}
 			const asset = this.editor.media
 				.getAssets()
 				.find((candidate) => candidate.id === element.mediaId);
@@ -1291,6 +1376,16 @@ export class EditorAutomation {
 			operation.kind === "remove_matte"
 		) {
 			return buildMatteControlCommand({
+				operation,
+				projectId: this.getProjectId(),
+				tracks: this.editor.scenes.getActiveScene().tracks,
+			});
+		}
+		if (
+			operation.kind === "set_audio_replacement_state" ||
+			operation.kind === "remove_audio_replacement"
+		) {
+			return buildAudioReplacementControlCommand({
 				operation,
 				projectId: this.getProjectId(),
 				tracks: this.editor.scenes.getActiveScene().tracks,
@@ -1759,6 +1854,18 @@ export class EditorAutomation {
 						}),
 					}
 				: {}),
+			...((element.type === "audio" || element.type === "video") &&
+			element.audioReplacement
+				? {
+						audioReplacement: buildAudioReplacementSnapshot({
+							audioReplacement: element.audioReplacement,
+							assets,
+							source: assets.find(
+								(asset) => asset.id === element.audioReplacement?.sourceMediaId,
+							),
+						}),
+					}
+				: {}),
 			...(element.type === "video"
 				? { sourceAudioSeparated: element.isSourceAudioEnabled === false }
 				: {}),
@@ -1801,6 +1908,7 @@ export class EditorAutomation {
 		this.transcriptionOperations.clear();
 		this.exportedOperations.clear();
 		this.attachedMatteOperations.clear();
+		this.attachedCleanAudioOperations.clear();
 		this.editor.command.clear();
 		this.editor.selection.clearSelection();
 		this.stateFingerprint = stableSerialize(this.buildTimelineProjection());

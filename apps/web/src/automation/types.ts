@@ -7,6 +7,7 @@ import type {
 	TranscriptionModelId,
 } from "@/transcription/types";
 import type {
+	ClipAudioReplacementAttachment,
 	ClipMatteAttachment,
 	ClipTransitionType,
 	RetimeConfig,
@@ -37,6 +38,7 @@ export interface AutomationElementSnapshot {
 	keyframes?: ElementKeyframe[];
 	effects?: AutomationEffectSnapshot[];
 	matte?: AutomationMatteSnapshot;
+	audioReplacement?: AutomationAudioReplacementSnapshot;
 	reframe?: AutomationReframeSnapshot;
 	sourceAudioSeparated?: boolean;
 }
@@ -72,6 +74,12 @@ export interface AutomationMatteSnapshot extends ClipMatteAttachment {
 	height: number | null;
 	duration: number | null;
 	fps: number | null;
+	stale: boolean | null;
+}
+
+export interface AutomationAudioReplacementSnapshot extends ClipAudioReplacementAttachment {
+	assetType: "audio" | null;
+	duration: number | null;
 	stale: boolean | null;
 }
 
@@ -134,7 +142,7 @@ export interface AutomationMediaAssetSnapshot {
 	fps?: number;
 	hasAudio?: boolean;
 	sourceFingerprint?: string;
-	role?: "timeline" | "matte";
+	role?: "timeline" | "matte" | "audio-replacement";
 }
 
 export interface AutomationProjectSnapshot {
@@ -550,6 +558,17 @@ export type AutomationEditOperation =
 			kind: "remove_matte";
 			trackId: string;
 			elementId: string;
+	  }
+	| {
+			kind: "set_audio_replacement_state";
+			trackId: string;
+			elementId: string;
+			enabled: boolean;
+	  }
+	| {
+			kind: "remove_audio_replacement";
+			trackId: string;
+			elementId: string;
 	  };
 
 export interface AutomationEditPlan {
@@ -656,6 +675,42 @@ export interface AutomationAttachMatteAppliedResult {
 export type AutomationAttachMatteResult =
 	| AutomationAttachMatteAppliedResult
 	| (Omit<AutomationAttachMatteAppliedResult, "status"> & {
+			status: "replayed";
+	  })
+	| {
+			status: "conflict";
+			operationId: string;
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; operationId: string; reason: string };
+
+export interface AutomationAttachCleanAudioRequest {
+	projectId: string;
+	operationId: string;
+	expectedRevision: number;
+	trackId: string;
+	elementId: string;
+	url: string;
+	name: string;
+	mimeType: string;
+	artifactHash: string;
+	artifactFingerprint: string;
+	modelId: string;
+	modelVersion: string;
+}
+
+export interface AutomationAttachCleanAudioAppliedResult {
+	status: "applied";
+	operationId: string;
+	revision: number;
+	assetId: string;
+	snapshot: AutomationProjectSnapshot;
+}
+
+export type AutomationAttachCleanAudioResult =
+	| AutomationAttachCleanAudioAppliedResult
+	| (Omit<AutomationAttachCleanAudioAppliedResult, "status"> & {
 			status: "replayed";
 	  })
 	| {

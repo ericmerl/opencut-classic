@@ -60,22 +60,41 @@ export class RemoveMediaAssetCommand extends Command {
 		const assetIdsToRemove = new Set([this.assetId]);
 		for (const track of tracks) {
 			for (const element of track.elements) {
-				if (
-					element.type !== "video" ||
-					!element.matte ||
-					!removedElementKeys.has(`${track.id}\0${element.id}`)
-				) {
-					continue;
+				if (removedElementKeys.has(`${track.id}\0${element.id}`)) {
+					if (element.type === "video" && element.matte) {
+						const hasSurvivingReference = tracks.some((candidateTrack) =>
+							candidateTrack.elements.some(
+								(candidate) =>
+									candidate.type === "video" &&
+									candidate.matte?.assetId === element.matte?.assetId &&
+									!removedElementKeys.has(
+										`${candidateTrack.id}\0${candidate.id}`,
+									),
+							),
+						);
+						if (!hasSurvivingReference)
+							assetIdsToRemove.add(element.matte.assetId);
+					}
+					if (
+						(element.type === "audio" || element.type === "video") &&
+						element.audioReplacement
+					) {
+						const hasSurvivingReference = tracks.some((candidateTrack) =>
+							candidateTrack.elements.some(
+								(candidate) =>
+									(candidate.type === "audio" || candidate.type === "video") &&
+									candidate.audioReplacement?.assetId ===
+										element.audioReplacement?.assetId &&
+									!removedElementKeys.has(
+										`${candidateTrack.id}\0${candidate.id}`,
+									),
+							),
+						);
+						if (!hasSurvivingReference) {
+							assetIdsToRemove.add(element.audioReplacement.assetId);
+						}
+					}
 				}
-				const hasSurvivingReference = tracks.some((candidateTrack) =>
-					candidateTrack.elements.some(
-						(candidate) =>
-							candidate.type === "video" &&
-							candidate.matte?.assetId === element.matte?.assetId &&
-							!removedElementKeys.has(`${candidateTrack.id}\0${candidate.id}`),
-					),
-				);
-				if (!hasSurvivingReference) assetIdsToRemove.add(element.matte.assetId);
 			}
 		}
 
@@ -97,23 +116,36 @@ export class RemoveMediaAssetCommand extends Command {
 		if (elementsToRemove.length > 0) {
 			editor.timeline.deleteElements({ elements: elementsToRemove });
 		}
-		const matteDetachUpdates = tracks.flatMap((track) =>
+		const attachmentDetachUpdates = tracks.flatMap((track) =>
 			track.elements.flatMap((element) =>
-				element.type === "video" &&
-				element.matte?.assetId === this.assetId &&
 				!removedElementKeys.has(`${track.id}\0${element.id}`)
 					? [
-							{
-								trackId: track.id,
-								elementId: element.id,
-								patch: { matte: undefined },
-							},
+							...(element.type === "video" &&
+							element.matte?.assetId === this.assetId
+								? [
+										{
+											trackId: track.id,
+											elementId: element.id,
+											patch: { matte: undefined },
+										},
+									]
+								: []),
+							...((element.type === "audio" || element.type === "video") &&
+							element.audioReplacement?.assetId === this.assetId
+								? [
+										{
+											trackId: track.id,
+											elementId: element.id,
+											patch: { audioReplacement: undefined },
+										},
+									]
+								: []),
 						]
 					: [],
 			),
 		);
-		if (matteDetachUpdates.length > 0) {
-			new UpdateElementsCommand({ updates: matteDetachUpdates }).execute();
+		if (attachmentDetachUpdates.length > 0) {
+			new UpdateElementsCommand({ updates: attachmentDetachUpdates }).execute();
 		}
 
 		for (const assetId of assetIdsToRemove) {

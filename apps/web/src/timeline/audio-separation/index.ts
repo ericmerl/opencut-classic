@@ -100,6 +100,9 @@ export function buildSeparatedAudioElement({
 					maintainPitch: sourceElement.retime.maintainPitch,
 				}
 			: undefined,
+		audioReplacement: sourceElement.audioReplacement
+			? { ...sourceElement.audioReplacement }
+			: undefined,
 		animations: cloneAudioGainAnimations({
 			animations: sourceElement.animations,
 		}),

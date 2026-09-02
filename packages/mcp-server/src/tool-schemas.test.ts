@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+	attachCleanAudioInputSchema,
 	attachMatteInputSchema,
+	cleanAudioInputSchema,
 	generateMatteInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
@@ -13,6 +15,77 @@ import {
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut audio-cleanup MCP contract", () => {
+	test("accepts attachment, cleanup defaults, and replacement controls", () => {
+		expect(
+			attachCleanAudioInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "attach-clean-1",
+				expectedRevision: 4,
+				trackId: "audio-1",
+				elementId: "clip-1",
+				path: "C:\\media\\cleaned.wav",
+				modelId: "cleaner",
+				modelVersion: "1",
+			}).success,
+		).toBe(true);
+
+		const cleanup = cleanAudioInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "clean-1",
+			expectedRevision: 4,
+			trackId: "audio-1",
+			elementId: "clip-1",
+		});
+		expect(cleanup.success).toBe(true);
+		if (cleanup.success) {
+			expect(cleanup.data).toMatchObject({
+				noiseReduction: 0.5,
+				deReverb: 0,
+				deEss: 0,
+				highPassHz: 80,
+				normalize: false,
+				timeoutSeconds: 1800,
+			});
+		}
+
+		expect(
+			editPlanInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "clean-controls-1",
+				expectedRevision: 5,
+				description: "Disable and detach cleaned audio",
+				operations: [
+					{
+						kind: "set_audio_replacement_state",
+						trackId: "audio-1",
+						elementId: "clip-1",
+						enabled: false,
+					},
+					{
+						kind: "remove_audio_replacement",
+						trackId: "audio-1",
+						elementId: "clip-1",
+					},
+				],
+			}).success,
+		).toBe(true);
+	});
+
+	test("rejects out-of-range cleanup strengths", () => {
+		expect(
+			cleanAudioInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "clean-invalid-1",
+				expectedRevision: 4,
+				trackId: "audio-1",
+				elementId: "clip-1",
+				noiseReduction: 1.1,
+			}).success,
+		).toBe(false);
+	});
+});
 
 describe("OpenCut subject-tracking MCP contract", () => {
 	test("defaults to smoothed focal-point tracking", () => {

@@ -88,6 +88,21 @@ export interface AudibleElementCandidate {
 	mediaAsset: MediaAsset | null;
 }
 
+export function resolveElementAudioAsset({
+	element,
+	mediaMap,
+}: {
+	element: AudioElement | VideoElement;
+	mediaMap: Map<string, MediaAsset>;
+}): MediaAsset | null {
+	const replacement = element.audioReplacement;
+	if (replacement?.enabled) {
+		const asset = mediaMap.get(replacement.assetId);
+		if (asset?.type === "audio") return asset;
+	}
+	return "mediaId" in element ? (mediaMap.get(element.mediaId) ?? null) : null;
+}
+
 export function collectAudibleCandidates({
 	tracks,
 	mediaAssets,
@@ -106,10 +121,24 @@ export function collectAudibleCandidates({
 			if (!canElementHaveAudio(element)) continue;
 			if (element.duration <= 0) continue;
 
-			const mediaAsset = hasMediaId(element)
+			const sourceMediaAsset = hasMediaId(element)
 				? (mediaMap.get(element.mediaId) ?? null)
 				: null;
-			if (!doesElementHaveEnabledAudio({ element, mediaAsset })) continue;
+			if (
+				!doesElementHaveEnabledAudio({
+					element,
+					mediaAsset: sourceMediaAsset,
+				})
+			) {
+				continue;
+			}
+			const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
+			if (
+				!mediaAsset &&
+				!(element.type === "audio" && element.sourceType === "library")
+			) {
+				continue;
+			}
 
 			candidates.push({ element, mediaAsset });
 		}
@@ -222,7 +251,7 @@ async function resolveAudioBufferForElement({
 }): Promise<AudioBuffer | null> {
 	try {
 		if (element.sourceType === "upload") {
-			const asset = mediaMap.get(element.mediaId);
+			const asset = resolveElementAudioAsset({ element, mediaMap });
 			if (!asset) return null;
 			return await resolveAudioBufferForAsset({ asset, audioContext });
 		}
@@ -500,10 +529,17 @@ export async function collectAudioMixSources({
 		for (const element of track.elements) {
 			if (!canElementHaveAudio(element)) continue;
 			if (isElementMuted({ element })) continue;
-			const mediaAsset = hasMediaId(element)
+			const sourceMediaAsset = hasMediaId(element)
 				? (mediaMap.get(element.mediaId) ?? null)
 				: null;
-			if (!doesElementHaveEnabledAudio({ element, mediaAsset })) continue;
+			if (
+				!doesElementHaveEnabledAudio({
+					element,
+					mediaAsset: sourceMediaAsset,
+				})
+			) {
+				continue;
+			}
 			const volume = resolveEffectiveAudioGain({
 				element,
 				localTime: 0,
@@ -511,9 +547,8 @@ export async function collectAudioMixSources({
 
 			if (element.type === "audio") {
 				if (element.sourceType === "upload") {
-					const mediaAsset = mediaMap.get(element.mediaId);
+					const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
 					if (!mediaAsset) continue;
-
 					audioMixSources.push(
 						collectMediaAudioSource({ element, mediaAsset, volume }),
 					);
@@ -526,6 +561,7 @@ export async function collectAudioMixSources({
 			}
 
 			if (element.type === "video") {
+				const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
 				if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
 					audioMixSources.push(
 						collectMediaAudioSource({ element, mediaAsset, volume }),
@@ -563,11 +599,17 @@ export async function collectAudioClips({
 		for (const element of track.elements) {
 			if (!canElementHaveAudio(element)) continue;
 
-			const mediaAsset = hasMediaId(element)
+			const sourceMediaAsset = hasMediaId(element)
 				? (mediaMap.get(element.mediaId) ?? null)
 				: null;
-			if (!doesElementHaveEnabledAudio({ element, mediaAsset })) continue;
-
+			if (
+				!doesElementHaveEnabledAudio({
+					element,
+					mediaAsset: sourceMediaAsset,
+				})
+			) {
+				continue;
+			}
 			const muted = isTrackMuted || isElementMuted({ element });
 			const volume = resolveEffectiveAudioGain({
 				element,
@@ -577,9 +619,8 @@ export async function collectAudioClips({
 
 			if (element.type === "audio") {
 				if (element.sourceType === "upload") {
-					const mediaAsset = mediaMap.get(element.mediaId);
+					const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
 					if (!mediaAsset) continue;
-
 					clips.push(
 						collectMediaAudioClip({
 							element,
@@ -597,6 +638,7 @@ export async function collectAudioClips({
 			}
 
 			if (element.type === "video") {
+				const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
 				if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
 					clips.push(
 						collectMediaAudioClip({

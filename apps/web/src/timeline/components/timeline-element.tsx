@@ -41,13 +41,17 @@ import type {
 	AudioElement,
 } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
+import { resolveElementAudioAsset } from "@/media/audio";
 import { mediaSupportsAudio } from "@/media/media-utils";
 import {
 	canToggleSourceAudio,
 	getSourceAudioActionLabel,
 	isSourceAudioSeparated,
 } from "@/timeline/audio-separation";
-import { buildWaveformGainSamples, isElementMuted } from "@/timeline/audio-state";
+import {
+	buildWaveformGainSamples,
+	isElementMuted,
+} from "@/timeline/audio-state";
 import { getTimelinePixelsPerSecond } from "@/timeline";
 import { buildWaveformSourceKey } from "@/media/waveform-summary";
 import { addMediaTime, type MediaTime, TICKS_PER_SECOND } from "@/wasm";
@@ -909,7 +913,9 @@ function TextElementContent({
 	return (
 		<div className="flex size-full items-center justify-start pl-2">
 			<span className="truncate text-xs text-white">
-				{typeof element.params.content === "string" ? element.params.content : ""}
+				{typeof element.params.content === "string"
+					? element.params.content
+					: ""}
 			</span>
 		</div>
 	);
@@ -994,7 +1000,10 @@ function AudioElementContent({
 	const mediaAssets = useEditor((e) => e.media.getAssets());
 	const mediaAsset =
 		element.sourceType === "upload"
-			? (mediaAssets.find((asset) => asset.id === element.mediaId) ?? null)
+			? resolveElementAudioAsset({
+					element,
+					mediaMap: new Map(mediaAssets.map((asset) => [asset.id, asset])),
+				})
 			: null;
 
 	const audioBuffer =
@@ -1005,7 +1014,10 @@ function AudioElementContent({
 		element.sourceType === "upload" ? mediaAsset?.file : undefined;
 	const sourceKey =
 		element.sourceType === "upload"
-			? buildWaveformSourceKey({ kind: "media", id: element.mediaId })
+			? buildWaveformSourceKey({
+					kind: "media",
+					id: mediaAsset?.id ?? element.mediaId,
+				})
 			: buildWaveformSourceKey({ kind: "library", id: element.sourceUrl });
 	const mediaLabel = mediaAsset?.name ?? element.name;
 	const gainSamples = useMemo(

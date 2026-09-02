@@ -25,6 +25,15 @@ $env:OPENCUT_MATTE_PRODUCER_ARGS = '["C:\path\to\provider.py"]'
 
 The provider receives one JSON request on stdin and must return one JSON response on stdout. Write diagnostics to stderr. See [MATTE_PRODUCER_PROTOCOL.md](./MATTE_PRODUCER_PROTOCOL.md) for the versioned contract.
 
+`opencut_clean_audio` uses the same isolated-command model for restoration. Configure its provider before starting the MCP server:
+
+```powershell
+$env:OPENCUT_AUDIO_CLEANER_COMMAND = "C:\path\to\python.exe"
+$env:OPENCUT_AUDIO_CLEANER_ARGS = '["C:\path\to\audio-cleaner.py"]'
+```
+
+See [AUDIO_CLEANER_PROTOCOL.md](./AUDIO_CLEANER_PROTOCOL.md) for the complete request and response contract.
+
 Subject tracking uses the same local command-provider pattern. Configure
 `OPENCUT_SUBJECT_TRACKER_COMMAND` and optional JSON-array
 `OPENCUT_SUBJECT_TRACKER_ARGS`. See
@@ -43,7 +52,9 @@ Available tools:
 - `opencut_analyze_audio`, measuring integrated LUFS, sample peak, estimated true peak, and available uniform mix-gain range before export mastering
 - `opencut_normalize_audio`, applying revision-safe loudness normalization with a target LUFS value, true-peak ceiling, and maximum boost
 - `opencut_sync_audio`, decoding two selected clip sources locally, estimating their waveform lag with bounded normalized cross-correlation, and moving the target clip into synchronization
-- `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, deterministic track mute and visibility, normalized crop and focal-point reframing, contain, cover, stretch, split-screen, and picture-in-picture layouts, source-audio separation, non-destructive dialogue ducking with attack and release ramps, per-clip audio gain, mute, linear fades, uniform mix gain, stable-ID clip effect creation, update, ordering, enablement, and removal, general keyframe creation, update, retiming, and removal, crossfade, fade-through-black, slide, wipe, and zoom transitions, text and styled caption-batch insertion, delete, same-track or cross-track move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and source-edge trim operations
+- `opencut_attach_clean_audio`, attaching a complete precomputed cleaned-audio source while preserving the selected clip's timing and audio automation
+- `opencut_clean_audio`, transferring a complete uploaded source to the configured cleaner and attaching its output non-destructively with model provenance
+- `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, deterministic track mute and visibility, normalized crop and focal-point reframing, contain, cover, stretch, split-screen, and picture-in-picture layouts, source-audio separation, cleaned-source enablement and detachment, non-destructive dialogue ducking with attack and release ramps, per-clip audio gain, mute, linear fades, uniform mix gain, stable-ID clip effect creation, update, ordering, enablement, and removal, general keyframe creation, update, retiming, and removal, crossfade, fade-through-black, slide, wipe, and zoom transitions, text and styled caption-batch insertion, delete, same-track or cross-track move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and source-edge trim operations
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track. Imports preserve project canvas and frame rate by default; set `adoptMediaSettings` to `true` to adopt them from the first visual asset.
 - `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path
