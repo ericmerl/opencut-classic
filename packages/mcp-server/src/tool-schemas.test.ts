@@ -9,8 +9,48 @@ import {
 	importSubtitlesInputSchema,
 	openProjectInputSchema,
 	timelineQueryInputSchema,
+	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut subject-tracking MCP contract", () => {
+	test("defaults to smoothed focal-point tracking", () => {
+		const result = trackSubjectInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "track-1",
+			expectedRevision: 3,
+			trackId: "main",
+			elementId: "video-1",
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data).toMatchObject({
+				trackingMode: "focal-point",
+				sampleIntervalTicks: 12_000,
+				maxSamples: 2_000,
+				minConfidence: 0.25,
+				smoothing: 0.75,
+				padding: 0.25,
+			});
+		}
+	});
+
+	test("accepts a prompt, initial box, crop tracking, and provider options", () => {
+		expect(
+			trackSubjectInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "track-2",
+				expectedRevision: 3,
+				trackId: "main",
+				elementId: "video-1",
+				trackingMode: "crop",
+				subjectPrompt: "presenter",
+				initialBox: { x: 0.1, y: 0.1, width: 0.4, height: 0.8 },
+				options: { detector: "person", redetect: true },
+			}).success,
+		).toBe(true);
+	});
+});
 
 describe("OpenCut subtitle MCP contract", () => {
 	test("defaults timeline transcription to the balanced local model", () => {

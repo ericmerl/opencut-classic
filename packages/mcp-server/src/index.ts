@@ -5,6 +5,7 @@ import { EditorBridge } from "./editor-bridge";
 import { MatteGenerationService } from "./generate-matte";
 import { calculateNormalizationGain } from "./audio-normalization";
 import { SubtitleFiles } from "./subtitle-files";
+import { SubjectTrackingService } from "./track-subject";
 import {
 	attachMatteInputSchema,
 	createProjectInputSchema,
@@ -15,6 +16,7 @@ import {
 	exportSubtitlesInputSchema,
 	openProjectInputSchema,
 	timelineQueryInputSchema,
+	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 } from "./tool-schemas";
 
@@ -32,6 +34,7 @@ const port = parsePort(
 const bridge = new EditorBridge({ token, port });
 const matteGeneration = new MatteGenerationService(bridge);
 const subtitleFiles = new SubtitleFiles();
+const subjectTracking = new SubjectTrackingService(bridge);
 const completedExports = new Map<
 	string,
 	{ fingerprint: string; result: Record<string, unknown> }
@@ -321,6 +324,16 @@ function createServer(): McpServer {
 			inputSchema: generateMatteInputSchema,
 		},
 		async (input) => toolResult(await matteGeneration.generate(input)),
+	);
+
+	server.registerTool(
+		"opencut_track_subject",
+		{
+			description:
+				"Track a subject through a video clip with the configured local provider, map source samples through trim and retime, smooth the motion, and atomically create focal-point or crop reframe keyframes.",
+			inputSchema: trackSubjectInputSchema,
+		},
+		async (input) => toolResult(await subjectTracking.track(input)),
 	);
 
 	server.registerTool(

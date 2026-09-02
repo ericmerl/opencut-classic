@@ -1,0 +1,206 @@
+import { describe, expect, test } from "bun:test";
+import { stat, writeFile } from "node:fs/promises";
+import {
+	buildTrackingEditOperations,
+	type SubjectTrackingBridge,
+	type TrackSubjectInput,
+	SubjectTrackingService,
+} from "./track-subject";
+
+describe("SubjectTrackingService", () => {
+	test("transfers, tracks, maps retimed source samples, applies keyframes, and replays", async () => {
+		let sourcePath = "";
+		let trackerCalls = 0;
+		const appliedPlans: Record<string, unknown>[] = [];
+		const methods: string[] = [];
+		const bridge: SubjectTrackingBridge = {
+			sourceTickets: {
+				async create(path) {
+					sourcePath = path;
+					return { url: "http://127.0.0.1/source/fixture", outputPath: path };
+				},
+			},
+			async request(method, params) {
+				methods.push(method);
+				if (method === "read_project") return snapshot();
+				if (method === "transfer_source_media") {
+					await writeFile(sourcePath, new Uint8Array([4, 5, 6]));
+					return {
+						status: "transferred",
+						revision: 2,
+						mediaId: "media-1",
+						name: "source.mp4",
+						mimeType: "video/mp4",
+						bytesTransferred: 3,
+						sourceFingerprint: "source-fingerprint",
+					};
+				}
+				if (method === "apply_edit_plan") {
+					appliedPlans.push(params as Record<string, unknown>);
+					return { status: "applied", revision: 3 };
+				}
+				throw new Error(`unexpected method: ${method}`);
+			},
+		};
+		const service = new SubjectTrackingService(bridge, () => ({
+			async track(job) {
+				trackerCalls += 1;
+				expect((await stat(job.source.path)).size).toBe(3);
+				expect(job.clip).toMatchObject({
+					trimStart: 120_000,
+					duration: 240_000,
+					retimeRate: 2,
+				});
+				return {
+					samples: [
+						{
+							sourceTime: 120_000,
+							box: { x: 0.1, y: 0.2, width: 0.2, height: 0.4 },
+							confidence: 0.95,
+						},
+						{
+							sourceTime: 360_000,
+							box: { x: 0.5, y: 0.2, width: 0.2, height: 0.4 },
+							confidence: 0.9,
+						},
+					],
+					modelId: "fixture",
+					modelVersion: "1",
+					warnings: [],
+				};
+			},
+		}));
+
+		const first = await service.track(input());
+		const replay = await service.track(input());
+
+		expect(first).toMatchObject({
+			status: "tracked-and-reframed",
+			keyframeCount: 6,
+			sampleCount: 3,
+			tracker: { modelId: "fixture", modelVersion: "1" },
+		});
+		expect(replay.status).toBe("replayed");
+		expect(trackerCalls).toBe(1);
+		expect(methods).toEqual([
+			"read_project",
+			"transfer_source_media",
+			"apply_edit_plan",
+		]);
+		const operations = appliedPlans[0].operations as Array<
+			Record<string, unknown>
+		>;
+		expect(operations[0]).toMatchObject({
+			kind: "set_reframe",
+			mode: "cover",
+		});
+		expect(
+			operations
+				.filter((operation) => operation.propertyPath === "reframe.focalX")
+				.map((operation) => operation.time),
+		).toEqual([0, 120_000, 240_000]);
+	});
+
+	test("builds padded crop channels and filters low-confidence samples", () => {
+		const operations = buildTrackingEditOperations({
+			input: { ...input(), trackingMode: "crop", padding: 0.5 },
+			clip: { duration: 120_000, trimStart: 0, retimeRate: 1 },
+			samples: [
+				{
+					sourceTime: 0,
+					box: { x: 0.4, y: 0.4, width: 0.2, height: 0.2 },
+					confidence: 0.9,
+				},
+				{
+					sourceTime: 60_000,
+					box: { x: 0.8, y: 0.8, width: 0.1, height: 0.1 },
+					confidence: 0.1,
+				},
+			],
+		});
+
+		expect(operations).toHaveLength(9);
+		expect(operations[1]).toMatchObject({
+			propertyPath: "reframe.cropX",
+			time: 0,
+		});
+		if (operations[1].kind !== "upsert_keyframe") {
+			throw new Error("expected a crop keyframe");
+		}
+		expect(operations[1].value).toBeCloseTo(0.3);
+		expect(operations[3]).toMatchObject({
+			propertyPath: "reframe.cropWidth",
+			value: 0.4,
+		});
+		expect(operations[5]).toMatchObject({ time: 120_000 });
+	});
+
+	test("clamps a boundary subject center to the reframe keyframe range", () => {
+		const operations = buildTrackingEditOperations({
+			input: input(),
+			clip: { duration: 120_000, trimStart: 0, retimeRate: 1 },
+			samples: [
+				{
+					sourceTime: 0,
+					box: { x: 0.999, y: 0.999, width: 0.001, height: 0.001 },
+				},
+			],
+		});
+
+		expect(operations[1]).toMatchObject({
+			propertyPath: "reframe.focalX",
+			value: 0.999,
+		});
+		expect(operations[2]).toMatchObject({
+			propertyPath: "reframe.focalY",
+			value: 0.999,
+		});
+	});
+});
+
+function input(): TrackSubjectInput {
+	return {
+		projectId: "project-1",
+		operationId: "track-1",
+		expectedRevision: 2,
+		trackId: "main",
+		elementId: "clip-1",
+		trackingMode: "focal-point",
+		sampleIntervalTicks: 12_000,
+		maxSamples: 2_000,
+		minConfidence: 0.25,
+		smoothing: 0,
+		padding: 0.25,
+		options: {},
+		timeoutSeconds: 30,
+	};
+}
+
+function snapshot(): Record<string, unknown> {
+	return {
+		projectId: "project-1",
+		revision: 2,
+		elements: [
+			{
+				trackId: "main",
+				elementId: "clip-1",
+				type: "video",
+				mediaId: "media-1",
+				duration: 240_000,
+				trimStart: 120_000,
+				trimEnd: 120_000,
+				retime: { rate: 2 },
+			},
+		],
+		mediaAssets: [
+			{
+				assetId: "media-1",
+				name: "source.mp4",
+				width: 1080,
+				height: 1920,
+				duration: 10,
+				fps: 30,
+			},
+		],
+	};
+}

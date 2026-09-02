@@ -25,6 +25,12 @@ $env:OPENCUT_MATTE_PRODUCER_ARGS = '["C:\path\to\provider.py"]'
 
 The provider receives one JSON request on stdin and must return one JSON response on stdout. Write diagnostics to stderr. See [MATTE_PRODUCER_PROTOCOL.md](./MATTE_PRODUCER_PROTOCOL.md) for the versioned contract.
 
+Subject tracking uses the same local command-provider pattern. Configure
+`OPENCUT_SUBJECT_TRACKER_COMMAND` and optional JSON-array
+`OPENCUT_SUBJECT_TRACKER_ARGS`. See
+[SUBJECT_TRACKER_PROTOCOL.md](./SUBJECT_TRACKER_PROTOCOL.md) for the normalized
+bounding-box and canonical-time contract.
+
 Available tools:
 
 - `opencut_connection_status`
@@ -42,12 +48,13 @@ Available tools:
 - `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path
 - `opencut_attach_matte`, attaching an existing image or video matte with explicit model provenance
 - `opencut_generate_matte`, securely transferring a selected clip source to the configured provider, generating a matte, and attaching it in one revision-safe operation
+- `opencut_track_subject`, transferring a selected video source to the configured tracker, validating and smoothing normalized subject boxes, mapping source samples through clip trim and retime, and atomically creating focal-point or crop reframe keyframes
 
 The editor must be open with a project loaded. Creating or opening a project automatically updates the connected editor route. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.
 
 OpenCut removes empty overlay and audio tracks. To create a durable track through MCP, include `add_track` with a caller-selected `trackId` and a later `move` targeting that ID in the same edit plan.
 
-Keyframe times are relative to the element start and use canonical media ticks. Stable caller-selected IDs make later updates deterministic. Built-in keyframe paths include position, scale, rotation, opacity, volume, text color, and text-background geometry and color. Keyframable graphic and effect parameters use their registered parameter paths.
+Keyframe times are relative to the element start and use canonical media ticks. Stable caller-selected IDs make later updates deterministic. Built-in keyframe paths include position, scale, rotation, opacity, normalized crop, focal-point and target rectangles, volume, text color, and text-background geometry and color. Keyframable graphic and effect parameters use their registered parameter paths.
 
 Audio analysis measures the unmastered timeline mix. Normalization shifts every audible clip base level and volume keyframe by the same dB value, preserving the relative mix. The applied gain is limited by the requested true-peak ceiling, maximum boost, and OpenCut's volume-control range. The normalization response includes measurements from before and after the mutation.
 

@@ -561,6 +561,46 @@ export const generateMatteInputSchema = z.object({
 	timeoutSeconds: z.number().int().min(1).max(7200).default(1800),
 });
 
+export const trackSubjectInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	trackId: z.string().min(1),
+	elementId: z.string().min(1),
+	trackingMode: z.enum(["focal-point", "crop"]).default("focal-point"),
+	subjectPrompt: z.string().trim().min(1).optional(),
+	initialBox: normalizedRectSchema.optional(),
+	sampleIntervalTicks: z
+		.number()
+		.int()
+		.min(1)
+		.default(12_000)
+		.describe("Tracker sampling interval in canonical media ticks."),
+	maxSamples: z.number().int().min(1).max(10_000).default(2_000),
+	minConfidence: z.number().min(0).max(1).default(0.25),
+	smoothing: z
+		.number()
+		.min(0)
+		.max(0.99)
+		.default(0.75)
+		.describe("Exponential smoothing strength. Zero disables smoothing."),
+	padding: z
+		.number()
+		.min(0)
+		.max(2)
+		.default(0.25)
+		.describe("Crop padding as a fraction of the tracked box size."),
+	modelId: z.string().trim().min(1).optional(),
+	modelVersion: z.string().trim().min(1).optional(),
+	options: z
+		.record(
+			z.string(),
+			z.union([z.string(), z.number(), z.boolean(), z.null()]),
+		)
+		.default({}),
+	timeoutSeconds: z.number().int().min(1).max(7200).default(1800),
+});
+
 export const createProjectInputSchema = z.object({
 	operationId: z.string().min(1),
 	name: z.string().trim().min(1),
