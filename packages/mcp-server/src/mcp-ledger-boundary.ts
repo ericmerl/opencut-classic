@@ -53,7 +53,8 @@ export class McpLedgerBoundary {
 			}) => Promise<void> | void;
 		} = {},
 	) {
-		this.ownerId = options.ownerId ?? `opencut-mcp:${process.pid}:${randomUUID()}`;
+		this.ownerId =
+			options.ownerId ?? `opencut-mcp:${process.pid}:${randomUUID()}`;
 	}
 
 	async execute(
@@ -73,20 +74,21 @@ export class McpLedgerBoundary {
 		const before = !operationUsesProjectPreconditions(toolName)
 			? {}
 			: existing
-			? {
-					projectId:
-						definition.operationKind === "create-project"
-							? null
-							: stringField(input, "projectId") ?? existing.record.projectId,
-					sceneId:
-						definition.operationKind === "create-project"
-							? null
-							: stringField(input, "sceneId") ??
-								(suppliedContentHash ? null : existing.record.sceneId),
-					revision: existing.record.revisionBefore,
-					contentHash: existing.record.contentHashBefore,
-				}
-			: await this.resolveBeforeState(input);
+				? {
+						projectId:
+							definition.operationKind === "create-project"
+								? null
+								: (stringField(input, "projectId") ??
+									existing.record.projectId),
+						sceneId:
+							definition.operationKind === "create-project"
+								? null
+								: (stringField(input, "sceneId") ??
+									(suppliedContentHash ? null : existing.record.sceneId)),
+						revision: existing.record.revisionBefore,
+						contentHash: existing.record.contentHashBefore,
+					}
+				: await this.resolveBeforeState(input);
 		const result = await executeLedgeredOperation({
 			ledger: this.ledger,
 			input,
@@ -148,9 +150,9 @@ export class McpLedgerBoundary {
 							);
 						}
 					}
-					} catch {
-						// A disconnected editor does not prevent server-side durable recovery.
-					}
+				} catch {
+					// A disconnected editor does not prevent server-side durable recovery.
+				}
 				if (!recoverEffect) return null;
 				const recovered = await recoverEffect(operationContext);
 				return recovered === null
@@ -301,19 +303,25 @@ export class McpLedgerBoundary {
 				},
 			};
 		}
-		const directReceipt = parseSaveReceipt(value);
+		const directReceipt = parseSaveReceipt(
+			isRecord(value) && isRecord(value.saveReceipt)
+				? value.saveReceipt
+				: value,
+		);
 		if (directReceipt) {
 			return {
 				disposition: "applied-verified",
 				value,
 				evidence: {
 					...receiptEvidence(directReceipt),
+					...terminalEvidence(value),
 					affectedObjects: verifiedAffectedObjects(toolName, input, value),
 				},
 			};
 		}
 		const result = isRecord(value) ? value : null;
-		const mutation = result && isRecord(result.mutation) ? result.mutation : null;
+		const mutation =
+			result && isRecord(result.mutation) ? result.mutation : null;
 		const snapshot =
 			result && isRecord(result.snapshot)
 				? result.snapshot
@@ -382,7 +390,10 @@ export class McpLedgerBoundary {
 		requiresSaveVerification: boolean,
 		input: ToolInput,
 		receiptEnvelope: Record<string, unknown>,
-		ledgerRecord: { revisionBefore: number | null; revisionAfter: number | null },
+		ledgerRecord: {
+			revisionBefore: number | null;
+			revisionAfter: number | null;
+		},
 	): Promise<OperationExecutionOutcome<unknown>> {
 		const value = receiptEnvelope.result;
 		const afterState = isRecord(receiptEnvelope.afterState)
@@ -391,7 +402,8 @@ export class McpLedgerBoundary {
 		if (!afterState || !validDirectBrowserResult(toolName, value)) {
 			return {
 				disposition: "unknown",
-				reason: "browser operation receipt violates its per-tool result contract",
+				reason:
+					"browser operation receipt violates its per-tool result contract",
 			};
 		}
 		const projectId = stringField(afterState, "projectId");
@@ -451,17 +463,21 @@ export class McpLedgerBoundary {
 		) {
 			return {
 				disposition: "unknown",
-				reason: "browser receipt revision chain differs from the ledger precondition",
+				reason:
+					"browser receipt revision chain differs from the ledger precondition",
 			};
 		}
 		const readback = await this.bridge.request("read_project", {
 			...protocolContext(input),
 			projectId,
 		});
-		if (!matchesLiveProjectState(readback, { projectId, sceneId, contentHash })) {
+		if (
+			!matchesLiveProjectState(readback, { projectId, sceneId, contentHash })
+		) {
 			return {
 				disposition: "unknown",
-				reason: "live project identity differs from the browser receipt after-state",
+				reason:
+					"live project identity differs from the browser receipt after-state",
 			};
 		}
 		if (!requiresSaveVerification) {
@@ -491,7 +507,8 @@ export class McpLedgerBoundary {
 					}
 				: {
 						disposition: "unknown",
-						reason: "live project content differs from the original save receipt",
+						reason:
+							"live project content differs from the original save receipt",
 					};
 		}
 		const saveOperationId = `${readOperationIdFromInput(input)}:ledger-save`;
@@ -558,11 +575,17 @@ export async function requestLedgeredBrowserStep(
 	stepId: string,
 	timeoutMs?: number,
 ): Promise<unknown> {
-	const boundRequest = await context.prepareBrowserStep(method, request, stepId);
+	const boundRequest = await context.prepareBrowserStep(
+		method,
+		request,
+		stepId,
+	);
 	return bridge.request(method, boundRequest, timeoutMs);
 }
 
-function operationUsesProjectPreconditions(toolName: MutatingToolName): boolean {
+function operationUsesProjectPreconditions(
+	toolName: MutatingToolName,
+): boolean {
 	return !new Set<MutatingToolName>([
 		"opencut_start_editor_worker",
 		"opencut_stop_editor_worker",
@@ -592,9 +615,8 @@ function assertDirectBrowserMethod(
 	toolName: MutatingToolName,
 	method: string,
 ): void {
-	const expected = DIRECT_BROWSER_METHODS[
-		toolName as keyof typeof DIRECT_BROWSER_METHODS
-	];
+	const expected =
+		DIRECT_BROWSER_METHODS[toolName as keyof typeof DIRECT_BROWSER_METHODS];
 	if (expected !== method) {
 		throw new Error(
 			`browser receipt contract for ${toolName} requires ${expected ?? "no direct browser mutation"}, received ${method}`,
@@ -696,7 +718,11 @@ function verifiedAffectedObjects(
 			}
 		}
 	}
-	add("media", result.assetId ?? result.mediaId, toolName === "opencut_import_media" ? "imported" : action);
+	add(
+		"media",
+		result.assetId ?? result.mediaId,
+		toolName === "opencut_import_media" ? "imported" : action,
+	);
 	const outputPath = result.outputPath;
 	if (typeof outputPath === "string") {
 		add(
@@ -708,9 +734,14 @@ function verifiedAffectedObjects(
 		);
 	}
 	add("provider-artifact", result.artifactHash ?? result.sha256, "generated");
-	add("export-receipt", result.exportReceiptId, toolName === "opencut_record_export_inspection" ? "inspected" : "exported");
+	add(
+		"export-receipt",
+		result.exportReceiptId,
+		toolName === "opencut_record_export_inspection" ? "inspected" : "exported",
+	);
 	if (isRecord(result.job)) add("export-job", result.job.jobId, "queued");
-	if (isRecord(result.summary)) add("export-batch", result.summary.batchId, action);
+	if (isRecord(result.summary))
+		add("export-batch", result.summary.batchId, action);
 
 	return [...values.values()];
 }
@@ -720,12 +751,38 @@ function operationAction(
 ): OperationAffectedObject["action"] {
 	if (toolName === "opencut_open_project") return "opened";
 	if (toolName === "opencut_save_project") return "saved";
-	if (toolName === "opencut_import_media" || toolName === "opencut_import_subtitles") return "imported";
-	if (toolName === "opencut_attach_clean_audio" || toolName === "opencut_attach_matte") return "attached";
-	if (toolName === "opencut_clean_audio" || toolName === "opencut_generate_matte" || toolName === "opencut_track_subject") return "generated";
-	if (toolName === "opencut_export_project" || toolName === "opencut_export_subtitles") return "exported";
-	if (toolName === "opencut_queue_export" || toolName === "opencut_queue_export_batch") return "queued";
-	if (toolName === "opencut_cancel_export_job" || toolName === "opencut_cancel_export_batch") return "cancelled";
+	if (
+		toolName === "opencut_import_media" ||
+		toolName === "opencut_import_subtitles"
+	)
+		return "imported";
+	if (
+		toolName === "opencut_attach_clean_audio" ||
+		toolName === "opencut_attach_matte"
+	)
+		return "attached";
+	if (
+		toolName === "opencut_clean_audio" ||
+		toolName === "opencut_generate_matte" ||
+		toolName === "opencut_track_subject"
+	)
+		return "generated";
+	if (
+		toolName === "opencut_export_project" ||
+		toolName === "opencut_export_subtitles"
+	)
+		return "exported";
+	if (toolName === "opencut_render_preview_frame") return "processed";
+	if (
+		toolName === "opencut_queue_export" ||
+		toolName === "opencut_queue_export_batch"
+	)
+		return "queued";
+	if (
+		toolName === "opencut_cancel_export_job" ||
+		toolName === "opencut_cancel_export_batch"
+	)
+		return "cancelled";
 	if (toolName === "opencut_record_export_inspection") return "inspected";
 	if (toolName === "opencut_undo") return "undone";
 	return "updated";
@@ -804,22 +861,28 @@ function terminalEvidence(value: unknown) {
 	const exportReceiptId = stringField(value, "exportReceiptId");
 	const saveReceiptId = stringField(value, "saveReceiptId");
 	const renderer = isRecord(value.renderer) ? value.renderer : null;
+	const mimeType =
+		stringField(value, "mimeType") ??
+		(isRecord(value.artifact) ? stringField(value.artifact, "mimeType") : null);
+	const previewReceiptId = stringField(value, "receiptId");
 	if (!outputPath || !sha256 || !/^[a-f0-9]{64}$/.test(sha256)) return {};
 	return {
 		artifacts: [
 			{
-				artifactId: exportReceiptId ?? sha256,
-				kind: "export" as const,
+				artifactId: previewReceiptId ?? exportReceiptId ?? sha256,
+				kind:
+					mimeType === "image/png" ? ("receipt" as const) : ("export" as const),
 				state: "verified" as const,
 				sha256,
 				bytes,
 				path: outputPath,
 				mimeType:
-					container === "mp4"
+					mimeType ??
+					(container === "mp4"
 						? "video/mp4"
 						: container === "webm"
 							? "video/webm"
-							: null,
+							: null),
 			},
 		],
 		providerProvenance: renderer
@@ -830,16 +893,18 @@ function terminalEvidence(value: unknown) {
 						metadata: {
 							pipeline: stringField(renderer, "pipeline") ?? "unknown",
 							protocolVersion:
-								typeof renderer.protocolVersion === "number"
-									? renderer.protocolVersion
-									: 1,
+								typeof renderer.bridgeProtocolVersion === "number"
+									? renderer.bridgeProtocolVersion
+									: typeof renderer.protocolVersion === "number"
+										? renderer.protocolVersion
+										: 1,
 						},
 					},
 				]
 			: undefined,
 		checkpoints: [
 			{
-				checkpointId: exportReceiptId ?? sha256,
+				checkpointId: previewReceiptId ?? exportReceiptId ?? sha256,
 				kind: "filesystem" as const,
 				state: "verified" as const,
 				recordedAt: new Date().toISOString(),
@@ -852,15 +917,23 @@ function terminalEvidence(value: unknown) {
 				},
 			},
 		],
-		affectedObjects: exportReceiptId
+		affectedObjects: previewReceiptId
 			? [
 					{
-						objectType: "export-receipt" as const,
-						objectId: exportReceiptId,
-						action: "exported" as const,
+						objectType: "file" as const,
+						objectId: previewReceiptId,
+						action: "processed" as const,
 					},
 				]
-			: undefined,
+			: exportReceiptId
+				? [
+						{
+							objectType: "export-receipt" as const,
+							objectId: exportReceiptId,
+							action: "exported" as const,
+						},
+					]
+				: undefined,
 	};
 }
 
@@ -962,17 +1035,23 @@ function isMatchingBrowserReceipt(
 	value: unknown,
 	contract: BrowserOperationReceiptContract,
 ): value is Record<string, unknown> {
-	if (!isRecord(value) || value.status !== "found" || !isRecord(value.binding)) {
+	if (
+		!isRecord(value) ||
+		value.status !== "found" ||
+		!isRecord(value.binding)
+	) {
 		return false;
 	}
 	return (
 		value.binding.outerOperationId === contract.outerOperationId &&
 		value.binding.outerToolName === contract.outerToolName &&
-		value.binding.outerRequestFingerprint === contract.outerRequestFingerprint &&
+		value.binding.outerRequestFingerprint ===
+			contract.outerRequestFingerprint &&
 		value.binding.role === contract.role &&
 		value.binding.stepId === contract.stepId &&
 		value.binding.browserMethod === contract.browserMethod &&
-		value.binding.browserRequestFingerprint === contract.browserRequestFingerprint
+		value.binding.browserRequestFingerprint ===
+			contract.browserRequestFingerprint
 	);
 }
 
@@ -995,8 +1074,16 @@ const rejected = new Set([
 const rejectedOrMissing = new Set([...rejected, "not-found"]);
 
 const MUTATOR_RESULT_CONTRACTS = {
-	opencut_start_editor_worker: contract([], rejected, (value) => value.running === true && value.connected === true),
-	opencut_stop_editor_worker: contract([], rejected, (value) => value.running === false),
+	opencut_start_editor_worker: contract(
+		[],
+		rejected,
+		(value) => value.running === true && value.connected === true,
+	),
+	opencut_stop_editor_worker: contract(
+		[],
+		rejected,
+		(value) => value.running === false,
+	),
 	opencut_create_project: contract(["created", "replayed"], rejected),
 	opencut_open_project: contract(["opened", "replayed"], rejectedOrMissing),
 	opencut_save_project: contract(["saved", "replayed"], rejected),
@@ -1011,15 +1098,40 @@ const MUTATOR_RESULT_CONTRACTS = {
 	opencut_transcribe_timeline: contract(["applied", "replayed"], rejected),
 	opencut_export_subtitles: contract(["exported", "replayed"], rejected),
 	opencut_attach_matte: contract(["applied", "replayed"], rejected),
-	opencut_generate_matte: contract(["generated-and-attached", "replayed"], rejected),
-	opencut_track_subject: contract(["tracked-and-reframed", "replayed"], rejected),
+	opencut_generate_matte: contract(
+		["generated-and-attached", "replayed"],
+		rejected,
+	),
+	opencut_track_subject: contract(
+		["tracked-and-reframed", "replayed"],
+		rejected,
+	),
 	opencut_export_project: contract(["exported", "replayed"], rejected),
-	opencut_queue_export: contract([], rejected, (value) => isRecord(value.job) && typeof value.job.jobId === "string"),
-	opencut_queue_export_batch: contract([], rejected, (value) => isRecord(value.summary) && typeof value.summary.batchId === "string"),
+	opencut_render_preview_frame: contract(["rendered", "replayed"], rejected),
+	opencut_queue_export: contract(
+		[],
+		rejected,
+		(value) => isRecord(value.job) && typeof value.job.jobId === "string",
+	),
+	opencut_queue_export_batch: contract(
+		[],
+		rejected,
+		(value) =>
+			isRecord(value.summary) && typeof value.summary.batchId === "string",
+	),
 	opencut_cancel_export_batch: contract(["found"], rejectedOrMissing),
 	opencut_cancel_export_job: contract(["cancelled"], rejectedOrMissing),
-	opencut_run_export_jobs: contract([], rejected, (value) => typeof value.connected === "boolean" && Array.isArray(value.processed)),
-	opencut_record_export_inspection: contract([], rejectedOrMissing, (value) => isRecord(value.receipt) && typeof value.path === "string"),
+	opencut_run_export_jobs: contract(
+		[],
+		rejected,
+		(value) =>
+			typeof value.connected === "boolean" && Array.isArray(value.processed),
+	),
+	opencut_record_export_inspection: contract(
+		[],
+		rejectedOrMissing,
+		(value) => isRecord(value.receipt) && typeof value.path === "string",
+	),
 } as const satisfies Record<MutatingToolName, MutatorResultContract>;
 
 function contract(
@@ -1027,7 +1139,11 @@ function contract(
 	notAppliedStatuses: ReadonlySet<string>,
 	structuralSuccess?: (value: Record<string, unknown>) => boolean,
 ): MutatorResultContract {
-	return { successStatuses: new Set(successStatuses), notAppliedStatuses, structuralSuccess };
+	return {
+		successStatuses: new Set(successStatuses),
+		notAppliedStatuses,
+		structuralSuccess,
+	};
 }
 
 export function classifyMutatorResult(

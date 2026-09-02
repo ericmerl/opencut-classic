@@ -4,6 +4,7 @@ import { createCanvasSurface } from "./canvas-utils";
 import { buildFrameDescriptor } from "./compositor/frame-descriptor";
 import { wasmCompositor } from "./compositor/wasm-compositor";
 import { resolveRenderTree } from "./resolve";
+import { withExclusiveRender } from "./render-coordinator";
 import {
 	measureSpanAsync,
 	measureSpanSync,
@@ -50,7 +51,13 @@ export class CanvasRenderer {
 		this.context = surface.context;
 	}
 
-	async render({ node, time }: { node: AnyBaseNode; time: number }) {
+	private async renderUnlocked({
+		node,
+		time,
+	}: {
+		node: AnyBaseNode;
+		time: number;
+	}) {
 		await measureSpanAsync({
 			name: "resolve",
 			fn: () => resolveRenderTree({ node, renderer: this, time }),
@@ -73,6 +80,25 @@ export class CanvasRenderer {
 		});
 	}
 
+	async render({ node, time }: { node: AnyBaseNode; time: number }) {
+		await withExclusiveRender(() => this.renderUnlocked({ node, time }));
+	}
+
+	async withRenderedFrame<T>({
+		node,
+		time,
+		consume,
+	}: {
+		node: AnyBaseNode;
+		time: number;
+		consume: (canvas: HTMLCanvasElement) => Promise<T>;
+	}): Promise<T> {
+		return withExclusiveRender(async () => {
+			await this.renderUnlocked({ node, time });
+			return consume(wasmCompositor.getCanvas());
+		});
+	}
+
 	async renderToCanvas({
 		node,
 		time,
@@ -82,23 +108,24 @@ export class CanvasRenderer {
 		time: number;
 		targetCanvas: HTMLCanvasElement;
 	}) {
-		await this.render({ node, time });
-
-		const ctx = targetCanvas.getContext("2d");
-		if (!ctx) {
-			throw new Error("Failed to get target canvas context");
-		}
-
-		measureSpanSync({
-			name: "drawImage",
-			fn: () =>
-				ctx.drawImage(
-					wasmCompositor.getCanvas(),
-					0,
-					0,
-					targetCanvas.width,
-					targetCanvas.height,
-				),
+		await this.withRenderedFrame({
+			node,
+			time,
+			consume: async (canvas) => {
+				const ctx = targetCanvas.getContext("2d");
+				if (!ctx) throw new Error("Failed to get target canvas context");
+				measureSpanSync({
+					name: "drawImage",
+					fn: () =>
+						ctx.drawImage(
+							canvas,
+							0,
+							0,
+							targetCanvas.width,
+							targetCanvas.height,
+						),
+				});
+			},
 		});
 		onRenderPerfFrameComplete();
 	}

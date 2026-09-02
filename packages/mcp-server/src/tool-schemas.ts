@@ -54,10 +54,7 @@ export function withConnectionAffinity<T extends z.ZodType>(schema: T) {
 export function withMutationOperationId<
 	T extends z.ZodType,
 	TField extends string = "operationId",
->(
-	schema: T,
-	field = "operationId" as TField,
-) {
+>(schema: T, field = "operationId" as TField) {
 	return withConnectionAffinity(schema)
 		.superRefine((value, context) => {
 			if (
@@ -91,8 +88,7 @@ export function withProjectMutationSafety<T extends z.ZodType>(schema: T) {
 					.optional(),
 			}),
 		),
-	)
-		.superRefine((value, context) => {
+	).superRefine((value, context) => {
 		if (
 			value.bridgeProtocolVersion === 2 &&
 			!value.expectedProjectContentHash
@@ -115,6 +111,68 @@ const canvasSizeSchema = z.object({
 	width: z.number().int().positive(),
 	height: z.number().int().positive(),
 });
+
+export const previewTimeSelectorSchema = z.discriminatedUnion("kind", [
+	z
+		.object({
+			kind: z.literal("frame-index"),
+			frameIndex: z.number().int().min(0).max(10_000_000),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("media-time"),
+			ticks: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+			rounding: z.enum(["exact", "floor", "nearest", "ceil"]),
+		})
+		.strict(),
+]);
+
+export const renderPreviewFrameInputSchema = z
+	.object({
+		contractVersion: z.literal(2),
+		bridgeProtocolVersion: z.literal(2),
+		expectedConnectionIdentity: connectionIdentitySchema,
+		operationId: operationIdSchema,
+		projectId: z.string().min(1),
+		sceneId: z.string().min(1),
+		expectedRevision: z.number().int().nonnegative(),
+		expectedProjectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+		expectedWriteVersion: z.number().int().positive(),
+		saveReceiptOperationId: operationIdSchema,
+		expectedSaveReceiptId: z.string().min(1).max(512),
+		time: previewTimeSelectorSchema,
+		canvasSize: z
+			.object({
+				width: z.number().int().min(16).max(4096),
+				height: z.number().int().min(16).max(4096),
+			})
+			.strict(),
+		format: z.literal("png"),
+	})
+	.strict()
+	.superRefine((value, context) => {
+		if (value.canvasSize.width * value.canvasSize.height > 16_777_216) {
+			context.addIssue({
+				code: "custom",
+				path: ["canvasSize"],
+				message: "preview canvas exceeds the 16777216-pixel limit",
+			});
+		}
+	});
+
+export const getPreviewFrameInputSchema = z
+	.object({ receiptId: z.string().min(1).max(512) })
+	.strict();
+
+export const listPreviewFramesInputSchema = z
+	.object({
+		projectId: z.string().min(1).optional(),
+		sceneId: z.string().min(1).optional(),
+		limit: z.number().int().min(1).max(100).default(25),
+		cursor: z.string().min(1).max(512).optional(),
+	})
+	.strict();
 
 const backgroundSchema = z.discriminatedUnion("type", [
 	z.object({ type: z.literal("color"), color: z.string().min(1) }),
@@ -973,14 +1031,17 @@ export const getExportReceiptInputSchema = z.object({
 	operationId: z.string().min(1),
 });
 
-export const recordExportInspectionInputSchema = withMutationOperationId(z.object({
-	operationId: operationIdSchema,
-	inspectionOperationId: legacyCompatibleOperationIdSchema,
-	outputSha256: z.string().regex(/^[a-f0-9]{64}$/),
-	watermarkStatus: z.enum(["verified-clean", "rejected"]),
-	reviewer: z.string().trim().min(1).optional(),
-	notes: z.string().trim().min(1).optional(),
-}), "inspectionOperationId");
+export const recordExportInspectionInputSchema = withMutationOperationId(
+	z.object({
+		operationId: operationIdSchema,
+		inspectionOperationId: legacyCompatibleOperationIdSchema,
+		outputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+		watermarkStatus: z.enum(["verified-clean", "rejected"]),
+		reviewer: z.string().trim().min(1).optional(),
+		notes: z.string().trim().min(1).optional(),
+	}),
+	"inspectionOperationId",
+);
 
 export const exportProjectInputSchema = z.object({
 	projectId: z.string().min(1),
@@ -1077,19 +1138,25 @@ export const listExportJobsInputSchema = z.object({
 	limit: z.number().int().min(1).max(100).default(25),
 });
 
-export const runExportJobsInputSchema = withMutationOperationId(z.object({
-	operationId: legacyCompatibleOperationIdSchema,
-	limit: z.number().int().min(1).max(100).default(1),
-}));
+export const runExportJobsInputSchema = withMutationOperationId(
+	z.object({
+		operationId: legacyCompatibleOperationIdSchema,
+		limit: z.number().int().min(1).max(100).default(1),
+	}),
+);
 
-export const startEditorWorkerInputSchema = withMutationOperationId(z.object({
-	operationId: legacyCompatibleOperationIdSchema,
-	projectId: z.string().min(1).default("__opencut_automation_bootstrap__"),
-}));
+export const startEditorWorkerInputSchema = withMutationOperationId(
+	z.object({
+		operationId: legacyCompatibleOperationIdSchema,
+		projectId: z.string().min(1).default("__opencut_automation_bootstrap__"),
+	}),
+);
 
-export const stopEditorWorkerInputSchema = withMutationOperationId(z.object({
-	operationId: legacyCompatibleOperationIdSchema,
-}));
+export const stopEditorWorkerInputSchema = withMutationOperationId(
+	z.object({
+		operationId: legacyCompatibleOperationIdSchema,
+	}),
+);
 
 export const undoInputSchema = z.object({
 	operationId: legacyCompatibleOperationIdSchema,
@@ -1098,10 +1165,14 @@ export const undoInputSchema = z.object({
 	undoOfOperationId: operationIdSchema.optional(),
 });
 
-export const cancelExportJobInputSchema = withMutationOperationId(getExportJobInputSchema.extend({
-	operationId: legacyCompatibleOperationIdSchema,
-}));
+export const cancelExportJobInputSchema = withMutationOperationId(
+	getExportJobInputSchema.extend({
+		operationId: legacyCompatibleOperationIdSchema,
+	}),
+);
 
-export const cancelExportBatchInputSchema = withMutationOperationId(getExportBatchInputSchema.extend({
-	operationId: legacyCompatibleOperationIdSchema,
-}));
+export const cancelExportBatchInputSchema = withMutationOperationId(
+	getExportBatchInputSchema.extend({
+		operationId: legacyCompatibleOperationIdSchema,
+	}),
+);

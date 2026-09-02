@@ -7,7 +7,7 @@ import { useRafLoop } from "@/hooks/use-raf-loop";
 import { useContainerSize } from "@/hooks/use-container-size";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
-import { TICKS_PER_SECOND } from "@/wasm";
+import { resolveFrameTime } from "@/services/renderer/frame-schedule";
 import type { RootNode } from "@/services/renderer/nodes/root-node";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { PreviewOverlayLayer } from "./overlay-layer";
@@ -138,6 +138,7 @@ function PreviewCanvas({
 	}) => void;
 }) {
 	const canvasMountRef = useRef<HTMLDivElement>(null);
+	const displayCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const lastFrameRef = useRef(-1);
 	const lastSceneRef = useRef<RootNode | null>(null);
@@ -164,40 +165,44 @@ function PreviewCanvas({
 		});
 	}, [nativeWidth, nativeHeight, activeProject.settings.fps]);
 
-	// Mount the compositor's output canvas directly into the preview. wgpu
-	// renders straight into this element, so there is no intermediate copy —
-	// the container div owns positioning/styling, the canvas itself fills it.
+	// The process-global compositor is shared with export and evidence rendering.
+	// Keep an owned display surface so another serialized consumer cannot replace
+	// the frame visible in the editor after its lease is released.
 	useEffect(() => {
 		const mount = canvasMountRef.current;
 		if (!mount) return;
-		const outputCanvas = renderer.getOutputCanvas();
-		outputCanvas.style.display = "block";
-		outputCanvas.style.width = "100%";
-		outputCanvas.style.height = "100%";
-		mount.appendChild(outputCanvas);
+		const displayCanvas = document.createElement("canvas");
+		displayCanvas.width = nativeWidth;
+		displayCanvas.height = nativeHeight;
+		displayCanvas.style.display = "block";
+		displayCanvas.style.width = "100%";
+		displayCanvas.style.height = "100%";
+		displayCanvasRef.current = displayCanvas;
+		mount.appendChild(displayCanvas);
 		return () => {
-			if (outputCanvas.parentElement === mount) {
-				mount.removeChild(outputCanvas);
+			displayCanvasRef.current = null;
+			if (displayCanvas.parentElement === mount) {
+				mount.removeChild(displayCanvas);
 			}
 		};
-	}, [renderer]);
+	}, [nativeHeight, nativeWidth]);
 
 	const render = useCallback(() => {
-		if (!renderTree || renderingRef.current) return;
+		const displayCanvas = displayCanvasRef.current;
+		if (!renderTree || !displayCanvas || renderingRef.current) return;
 
 		const renderTime = Math.min(
 			editor.playback.getCurrentTime(),
 			editor.timeline.getLastFrameTime(),
 		);
-		const ticksPerFrame = Math.round(
-			(TICKS_PER_SECOND * renderer.fps.denominator) / renderer.fps.numerator,
-		);
-		const frame = Math.floor(renderTime / ticksPerFrame);
+		const scheduled = resolveFrameTime({
+			time: { kind: "media-time", ticks: renderTime, rounding: "floor" },
+			fps: renderer.fps,
+		});
+		if (scheduled.status === "error") return;
+		const frame = scheduled.frameIndex;
 
-		if (
-			frame === lastFrameRef.current &&
-			renderTree === lastSceneRef.current
-		) {
+		if (frame === lastFrameRef.current && renderTree === lastSceneRef.current) {
 			return;
 		}
 
@@ -205,7 +210,11 @@ function PreviewCanvas({
 		lastSceneRef.current = renderTree;
 		lastFrameRef.current = frame;
 		renderer
-			.render({ node: renderTree, time: renderTime })
+			.renderToCanvas({
+				node: renderTree,
+				time: scheduled.resolvedTicks,
+				targetCanvas: displayCanvas,
+			})
 			.then(() => {
 				renderingRef.current = false;
 			});
@@ -308,20 +317,20 @@ function PreviewCanvas({
 								ref={viewportRef}
 								className="relative flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden"
 							>
-							<div
-								ref={canvasMountRef}
-								className="absolute block border"
-								style={{
-									left: viewport.sceneLeft,
-									top: viewport.sceneTop,
-									width: viewport.sceneWidth,
-									height: viewport.sceneHeight,
-									background:
-										activeProject.settings.background.type === "blur"
-											? "transparent"
-											: activeProject?.settings.background.color,
-								}}
-							/>
+								<div
+									ref={canvasMountRef}
+									className="absolute block border"
+									style={{
+										left: viewport.sceneLeft,
+										top: viewport.sceneTop,
+										width: viewport.sceneWidth,
+										height: viewport.sceneHeight,
+										background:
+											activeProject.settings.background.type === "blur"
+												? "transparent"
+												: activeProject?.settings.background.color,
+									}}
+								/>
 								<PreviewOverlayLayer
 									instances={overlayInstances}
 									plane="under-interaction"

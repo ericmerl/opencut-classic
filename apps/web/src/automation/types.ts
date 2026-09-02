@@ -1080,3 +1080,126 @@ export type AutomationExportResult =
 	  }
 	| { status: "rejected"; operationId: string; reason: string }
 	| AutomationContentIdentityBlockedResult;
+
+export type AutomationPreviewTimeSelector =
+	| { kind: "frame-index"; frameIndex: number }
+	| {
+			kind: "media-time";
+			ticks: number;
+			rounding: "exact" | "floor" | "nearest" | "ceil";
+	  };
+
+export interface AutomationRenderPreviewFrameRequest {
+	contractVersion: 2;
+	bridgeProtocolVersion: 2;
+	expectedConnectionIdentity: {
+		serverInstanceId: string;
+		editorInstanceId: string;
+		editorSessionId: string;
+		connectionGeneration: number;
+	};
+	operationId: string;
+	projectId: string;
+	sceneId: string;
+	expectedRevision: number;
+	expectedProjectContentHash: string;
+	expectedWriteVersion: number;
+	saveReceiptOperationId: string;
+	expectedSaveReceiptId: string;
+	time: AutomationPreviewTimeSelector;
+	canvasSize: TCanvasSize;
+	format: "png";
+	url: string;
+}
+
+export interface AutomationRenderPreviewFrameCompletedResult {
+	status: "rendered" | "replayed";
+	contractVersion: 2;
+	operationId: string;
+	projectId: string;
+	sceneId: string;
+	revision: number;
+	contentIdentity: ProjectContentHashResult;
+	writeVersion: number;
+	saveReceiptId: string;
+	saveReceiptOperationId: string;
+	saveReceipt: AutomationSaveReceipt;
+	requestedTime: AutomationPreviewTimeSelector;
+	requestedTicks: number;
+	resolvedTicks: number;
+	frameIndex: number;
+	fps: FrameRate;
+	ticksPerFrame: number;
+	rounding: "exact" | "floor" | "nearest" | "ceil";
+	width: number;
+	height: number;
+	mimeType: "image/png";
+	bytesWritten: number;
+	sha256: string;
+	pixelRgbaSha256: string;
+	colorSpace: "srgb";
+	alphaMode: "straight";
+	fontReadiness: {
+		status: "ready";
+		families: string[];
+		descriptors: Array<{
+			family: string;
+			style: string;
+			weight: string;
+			stretch: string;
+			css: string;
+			identitySha256: string;
+			matchedFaceIdentities: string[];
+			matchedFaces: Array<{
+				provenance: "font-face-set" | "system-local-font-face";
+				family: string;
+				style: string;
+				weight: string;
+				stretch: string;
+				unicodeRange: string;
+				featureSettings: string;
+				display: string;
+				identitySha256: string;
+			}>;
+		}>;
+		descriptorsSha256: string;
+	};
+	sourceVerification: {
+		revisionBefore: number;
+		revisionAfter: number;
+		contentHashBefore: string;
+		contentHashAfter: string;
+	};
+	renderer: {
+		provider: "opencut-web-renderer";
+		pipeline: "editor-native-exact-frame";
+		compositor: "opencut-wasm-webgl";
+		browser: string;
+		encoder: "browser-canvas-png";
+		executionIdentity: AutomationRenderPreviewFrameRequest["expectedConnectionIdentity"];
+	};
+	editorState: {
+		unchanged: true;
+		playheadTicks: number;
+		isPlaying: boolean;
+		selectionFingerprint: string;
+		canUndo: boolean;
+		canRedo: boolean;
+	};
+}
+
+export type AutomationRenderPreviewFrameResult =
+	| AutomationRenderPreviewFrameCompletedResult
+	| {
+			status: "conflict" | "rejected";
+			operationId: string;
+			code:
+				| "SOURCE_CONFLICT"
+				| "SAVE_RECEIPT_CONFLICT"
+				| "TIME_OUT_OF_BOUNDS"
+				| "TIME_ALIGNMENT_REQUIRED"
+				| "UNSUPPORTED_FRAME_RATE"
+				| "FONT_READINESS_FAILED"
+				| "RENDERER_FAILED";
+			reason: string;
+	  };

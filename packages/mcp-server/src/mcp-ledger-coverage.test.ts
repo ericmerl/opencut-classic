@@ -18,10 +18,15 @@ describe("complete mutating handler ledger coverage", () => {
 	});
 
 	afterEach(async () => {
-		await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+		await rm(directory, {
+			recursive: true,
+			force: true,
+			maxRetries: 5,
+			retryDelay: 50,
+		});
 	});
 
-	test("exactly replays and rejects changed reuse for all 25 mutators", async () => {
+	test("exactly replays and rejects changed reuse for all 26 mutators", async () => {
 		const ledger = new OperationLedger(directory);
 		const boundary = new McpLedgerBoundary(ledger, verificationBridge());
 		try {
@@ -81,11 +86,9 @@ describe("complete mutating handler ledger coverage", () => {
 			const input = operationInput(toolName, operationId);
 			const firstLedger = new OperationLedger(join(directory, String(index)));
 			const ownerId = `browser-receipt-owner-${index}`;
-			const first = await new McpLedgerBoundary(
-				firstLedger,
-				inertBridge(),
-				{ ownerId },
-			).execute(toolName, input, async (context) => {
+			const first = await new McpLedgerBoundary(firstLedger, inertBridge(), {
+				ownerId,
+			}).execute(toolName, input, async (context) => {
 				await context.prepareBrowserMutation(directMethod(toolName), input);
 				throw new Error("simulated lost browser response");
 			});
@@ -94,7 +97,9 @@ describe("complete mutating handler ledger coverage", () => {
 
 			let effects = 0;
 			const receiptResult = successValue(toolName, operationId);
-			const restartedLedger = new OperationLedger(join(directory, String(index)));
+			const restartedLedger = new OperationLedger(
+				join(directory, String(index)),
+			);
 			try {
 				const recovered = await new McpLedgerBoundary(
 					restartedLedger,
@@ -129,7 +134,9 @@ describe("complete mutating handler ledger coverage", () => {
 			const operationId = `composite-receipt-${index}`;
 			const input = operationInput(toolName, operationId);
 			const ownerId = `composite-receipt-owner-${index}`;
-			const firstLedger = new OperationLedger(join(directory, `composite-${index}`));
+			const firstLedger = new OperationLedger(
+				join(directory, `composite-${index}`),
+			);
 			const firstBoundary = new McpLedgerBoundary(firstLedger, inertBridge(), {
 				ownerId,
 			});
@@ -180,7 +187,10 @@ function operationInput(
 	operationId: string,
 ): Record<string, unknown> {
 	if (toolName === "opencut_record_export_inspection") {
-		return { operationId: `export-${operationId}`, inspectionOperationId: operationId };
+		return {
+			operationId: `export-${operationId}`,
+			inspectionOperationId: operationId,
+		};
 	}
 	if (
 		MUTATING_TOOL_MANIFEST[toolName].requiresSaveVerification &&
@@ -258,7 +268,17 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 		return { connected: true, processed: [] };
 	}
 	if (toolName === "opencut_record_export_inspection") {
-		return { receipt: { operationId: `export-${operationId}` }, path: "receipt.json" };
+		return {
+			receipt: { operationId: `export-${operationId}` },
+			path: "receipt.json",
+		};
+	}
+	if (toolName === "opencut_render_preview_frame") {
+		return {
+			status: "rendered",
+			operationId,
+			receiptId: `preview:${operationId}`,
+		};
 	}
 	const status = statusByTool[toolName];
 	if (!status) throw new Error(`missing success fixture for ${toolName}`);
@@ -299,10 +319,7 @@ function projectSnapshot() {
 	};
 }
 
-function checkpoint(
-	operationId: string,
-	state: "prepared" | "committed",
-) {
+function checkpoint(operationId: string, state: "prepared" | "committed") {
 	return {
 		checkpointId: operationId,
 		kind: "job" as const,
@@ -373,7 +390,10 @@ function browserReceiptBridge(
 				};
 			}
 			if (method === "get_save_receipt") {
-				return { ...verifiedSave(`${operationId}:ledger-save`), status: "found" };
+				return {
+					...verifiedSave(`${operationId}:ledger-save`),
+					status: "found",
+				};
 			}
 			if (method === "read_project") return projectSnapshot();
 			throw new Error(`unexpected bridge request: ${method}`);

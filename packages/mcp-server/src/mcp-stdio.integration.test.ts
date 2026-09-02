@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 const integrationTest =
 	process.env.OPENCUT_RUN_HEADLESS_INTEGRATION === "1" ? test : test.skip;
+const PREVIEW_EXPORT_RGBA_MAE_TOLERANCE = 16;
 
 let directory: string;
 const processes: McpStdioHarness[] = [];
@@ -108,6 +109,36 @@ integrationTest(
 			description: "Apply the complete realistic color grade",
 			operations: [
 				{
+					kind: "set_reframe",
+					trackId: requireString(importedElement.trackId, "trackId"),
+					elementId: importedElementId,
+					mode: "cover",
+					focalPoint: { x: 0.62, y: 0.42 },
+				},
+				{
+					kind: "insert_captions",
+					captions: [
+						{
+							text: "EXACT FRAME EVIDENCE",
+							startTime: 0,
+							duration: 120_000,
+						},
+					],
+					style: {
+						fontSize: 7,
+						fontWeight: "bold",
+						fontStyle: "italic",
+						color: "#ffffff",
+						background: {
+							enabled: true,
+							color: "#000000",
+							cornerRadius: 4,
+							paddingX: 8,
+							paddingY: 4,
+						},
+					},
+				},
+				{
 					kind: "upsert_effect",
 					trackId: requireString(importedElement.trackId, "trackId"),
 					elementId: importedElementId,
@@ -127,10 +158,7 @@ integrationTest(
 				},
 			],
 		};
-		const edited = await first.callTool(
-			"opencut_apply_edit_plan",
-			editRequest,
-		);
+		const edited = await first.callTool("opencut_apply_edit_plan", editRequest);
 		expect(edited.status).toBe("applied");
 		const editedSnapshot = requireRecord(edited.snapshot, "snapshot");
 		const contentHash = requireProjectContentHash(editedSnapshot);
@@ -199,6 +227,7 @@ integrationTest(
 			bridgePort,
 			profileDirectory,
 			receiptDirectory,
+			dropBrowserResponseOperationId: "public-exact-preview",
 		});
 		await second.callTool("opencut_start_editor_worker", { projectId });
 		const restartedStatus = await second.callTool(
@@ -292,7 +321,9 @@ integrationTest(
 			requireRecords(reloaded.elements, "elements").length,
 		);
 		expect(
-			createHash("sha256").update(await readFile(sourcePath)).digest("hex"),
+			createHash("sha256")
+				.update(await readFile(sourcePath))
+				.digest("hex"),
 		).toBe(sourceHash);
 		await expect(
 			second.callTool("opencut_apply_edit_plan", {
@@ -344,18 +375,185 @@ integrationTest(
 			),
 		).toBe(true);
 
+		const audioSaveReceipt = requireRecord(
+			recoveredAudioRecord.saveReceipt,
+			"audio save receipt",
+		);
+		const previewRequest = {
+			...affinity(restartedIdentity),
+			contractVersion: 2,
+			operationId: "public-exact-preview",
+			projectId,
+			sceneId: requireString(reloaded.sceneId, "sceneId"),
+			expectedRevision: requireNumber(reloaded.revision, "revision"),
+			expectedProjectContentHash: audioContentHash,
+			expectedWriteVersion: requireNumber(
+				audioSaveReceipt.writeVersion,
+				"writeVersion",
+			),
+			saveReceiptOperationId: requireString(
+				audioSaveReceipt.operationId,
+				"save operationId",
+			),
+			expectedSaveReceiptId: requireString(
+				audioSaveReceipt.receiptId,
+				"save receiptId",
+			),
+			time: { kind: "media-time", ticks: 60_000, rounding: "exact" },
+			canvasSize: { width: 320, height: 240 },
+			format: "png",
+		} as const;
+		const interruptedPreview = await second.callTool(
+			"opencut_render_preview_frame",
+			previewRequest,
+			5 * 60_000,
+		);
+		expect(interruptedPreview).toMatchObject({
+			status: "recoverable",
+			disposition: "unknown",
+		});
+		expect(
+			requireRecord(
+				await second.callTool("opencut_connection_status", {}),
+				"preview disconnect status",
+			).connected,
+		).toBe(false);
+
+		await second.callTool("opencut_stop_editor_worker", {});
+		await second.close();
+		const third = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await third.callTool("opencut_start_editor_worker", { projectId });
+		const thirdStatus = await third.callTool("opencut_connection_status", {});
+		const thirdIdentity = requireRecord(
+			thirdStatus.connectionIdentity,
+			"connectionIdentity",
+		);
+		const preview = await third.callTool(
+			"opencut_render_preview_frame",
+			previewRequest,
+			5 * 60_000,
+		);
+		expect(preview).toMatchObject({
+			status: "rendered",
+			durableOperationStatus: "completed",
+			projectId,
+			sceneId: reloaded.sceneId,
+			requestedTicks: 60_000,
+			resolvedTicks: 60_000,
+			frameIndex: 15,
+			ticksPerFrame: 4_000,
+			artifact: {
+				mimeType: "image/png",
+				width: 320,
+				height: 240,
+			},
+			editorState: { unchanged: true },
+			sourceVerification: {
+				revisionBefore: reloaded.revision,
+				revisionAfter: reloaded.revision,
+				contentHashBefore: audioContentHash,
+				contentHashAfter: audioContentHash,
+			},
+			renderer: {
+				executionIdentity: restartedIdentity,
+			},
+		});
+		expect(preview.sha256).toMatch(/^[a-f0-9]{64}$/);
+		expect(preview.pixelRgbaSha256).toMatch(/^[a-f0-9]{64}$/);
+		expect(preview.saveReceiptOperationId).toBe(
+			previewRequest.saveReceiptOperationId,
+		);
+		expect(
+			requireRecord(preview.saveReceipt, "preview save receipt").operationId,
+		).toBe(previewRequest.saveReceiptOperationId);
+		const fontReadiness = requireRecord(
+			preview.fontReadiness,
+			"font readiness",
+		);
+		const exactCaptionDescriptor = requireRecords(
+			fontReadiness.descriptors,
+			"font descriptors",
+		).find(
+			(descriptor) =>
+				descriptor.family === "Arial" &&
+				descriptor.style === "italic" &&
+				descriptor.weight === "bold",
+		);
+		if (!exactCaptionDescriptor)
+			throw new Error(
+				`italic bold caption font evidence is missing: ${JSON.stringify(fontReadiness.descriptors)}`,
+			);
+		const matchedFaces = requireRecords(
+			exactCaptionDescriptor.matchedFaces,
+			"matched font faces",
+		);
+		expect(matchedFaces.length).toBeGreaterThan(0);
+		const matchedFaceIdentities = matchedFaces.map((face) => {
+			const { identitySha256, ...identityFields } = face;
+			expect(face.style).toBe("italic");
+			expect(face.weight).toBe("700");
+			expect(face.stretch).toBe("100%");
+			expect(face.provenance).toMatch(
+				/^(font-face-set|system-local-font-face)$/,
+			);
+			expect(identitySha256).toBe(
+				createHash("sha256")
+					.update(JSON.stringify(identityFields))
+					.digest("hex"),
+			);
+			return identitySha256;
+		});
+		expect(exactCaptionDescriptor.matchedFaceIdentities).toEqual(
+			matchedFaceIdentities.sort(),
+		);
+		const durablePreview = await third.callTool("opencut_get_preview_frame", {
+			receiptId: requireString(preview.receiptId, "preview receiptId"),
+		});
+		expect(durablePreview).toMatchObject({
+			status: "found",
+			receipt: { artifact: { sha256: preview.sha256 } },
+		});
+		const replayedPreview = await third.callTool(
+			"opencut_render_preview_frame",
+			previewRequest,
+		);
+		expect(replayedPreview).toMatchObject({
+			status: "rendered",
+			durableOperationStatus: "replayed",
+			sha256: preview.sha256,
+			pixelRgbaSha256: preview.pixelRgbaSha256,
+		});
+		await expect(
+			third.callTool("opencut_render_preview_frame", {
+				...previewRequest,
+				time: { kind: "frame-index", frameIndex: 16 },
+			}),
+		).rejects.toThrow();
+
+		const thirdReloaded = await third.callTool(
+			"opencut_get_project",
+			affinity(thirdIdentity),
+		);
+		expect(requireProjectContentHash(thirdReloaded)).toBe(audioContentHash);
+
 		const outputPath = join(directory, "public-verified.webm");
-		const exported = await second.callTool(
+		const exported = await third.callTool(
 			"opencut_export_project",
 			{
-				...affinity(restartedIdentity),
+				...affinity(thirdIdentity),
 				projectId,
 				operationId: "public-pinned-export",
-				expectedRevision: requireNumber(reloaded.revision, "revision"),
+				expectedRevision: requireNumber(thirdReloaded.revision, "revision"),
 				expectedProjectContentHash: audioContentHash,
 				outputPath,
 				format: "webm",
-				quality: "low",
+				quality: "high",
 				fps: { numerator: 30, denominator: 1 },
 				includeAudio: true,
 				canvasSize: { width: 320, height: 240 },
@@ -374,6 +572,15 @@ integrationTest(
 			},
 		});
 		expect((await stat(outputPath)).size).toBeGreaterThan(0);
+		const previewRgba = await extractRgba(
+			requireString(preview.outputPath, "preview outputPath"),
+		);
+		const exportRgba = await extractRgba(outputPath, 0.5);
+		expect(previewRgba.byteLength).toBe(320 * 240 * 4);
+		expect(exportRgba.byteLength).toBe(previewRgba.byteLength);
+		expect(meanAbsoluteError(previewRgba, exportRgba)).toBeLessThanOrEqual(
+			PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+		);
 		const validation = requireRecord(exported.validation, "validation");
 		const samples = requireRecords(validation.frameSamples, "frameSamples");
 		expect(samples.map((sample) => sample.position)).toEqual([
@@ -385,7 +592,7 @@ integrationTest(
 			expect(sample.bytes).toBeGreaterThan(0);
 			expect(sample.sha256).toMatch(/^[a-f0-9]{64}$/);
 		}
-		const outerReceipt = await second.callTool("opencut_get_export_receipt", {
+		const outerReceipt = await third.callTool("opencut_get_export_receipt", {
 			operationId: "public-pinned-export",
 		});
 		expect(outerReceipt).toMatchObject({
@@ -402,7 +609,7 @@ integrationTest(
 		const exportOperation = requireRecord(
 			requireRecord(
 				(
-					await second.callTool("opencut_get_operation", {
+					await third.callTool("opencut_get_operation", {
 						operationId: "public-pinned-export",
 					})
 				).operation,
@@ -428,7 +635,7 @@ integrationTest(
 				},
 			],
 		});
-		await second.callTool("opencut_stop_editor_worker", {});
+		await third.callTool("opencut_stop_editor_worker", {});
 	},
 	5 * 60_000,
 );
@@ -720,6 +927,53 @@ async function createSyntheticVideo(outputPath: string): Promise<void> {
 				reject(new Error(`synthetic video generation failed: ${diagnostics}`));
 		});
 	});
+}
+
+async function extractRgba(path: string, seconds?: number): Promise<Buffer> {
+	const ffmpeg =
+		process.env.OPENCUT_FFMPEG_PATH ?? process.env.FFMPEG_PATH ?? "ffmpeg";
+	return new Promise((resolve, reject) => {
+		const output: Buffer[] = [];
+		let diagnostics = "";
+		const child = spawn(
+			ffmpeg,
+			[
+				"-v",
+				"error",
+				...(seconds === undefined ? [] : ["-ss", seconds.toFixed(6)]),
+				"-i",
+				path,
+				"-frames:v",
+				"1",
+				"-f",
+				"rawvideo",
+				"-pix_fmt",
+				"rgba",
+				"pipe:1",
+			],
+			{ windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+		);
+		child.stdout.on("data", (chunk) => output.push(Buffer.from(chunk)));
+		child.stderr.on("data", (chunk) => {
+			diagnostics += String(chunk);
+		});
+		child.once("error", reject);
+		child.once("exit", (code) => {
+			if (code === 0) resolve(Buffer.concat(output));
+			else reject(new Error(`ffmpeg RGBA extraction failed: ${diagnostics}`));
+		});
+	});
+}
+
+function meanAbsoluteError(left: Buffer, right: Buffer): number {
+	if (left.byteLength !== right.byteLength || left.byteLength === 0) {
+		throw new Error("RGBA buffers must have equal nonzero lengths");
+	}
+	let total = 0;
+	for (let index = 0; index < left.byteLength; index += 1) {
+		total += Math.abs(left[index]! - right[index]!);
+	}
+	return total / left.byteLength;
 }
 
 function requireProjectContentHash(value: Record<string, unknown>): string {

@@ -16,10 +16,9 @@ import { SubtitleFiles } from "./subtitle-files";
 import { SubtitleImportOperation } from "./subtitle-import-operation";
 import { SubjectTrackingService } from "./track-subject";
 import { OperationLedger } from "./operation-ledger";
-import {
-	parseJsonValue,
-	type JsonValue,
-} from "./operation-ledger-schema";
+import { PreviewEvidenceStore } from "./preview-evidence-store";
+import { PreviewFrameService } from "./preview-frame-service";
+import { parseJsonValue, type JsonValue } from "./operation-ledger-schema";
 import {
 	McpLedgerBoundary,
 	requestLedgeredBrowserMutation,
@@ -76,6 +75,9 @@ import {
 	openProjectInputSchema,
 	saveProjectInputSchema,
 	getSaveReceiptInputSchema,
+	getPreviewFrameInputSchema,
+	listPreviewFramesInputSchema,
+	renderPreviewFrameInputSchema,
 	queueExportInputSchema,
 	queueExportBatchInputSchema,
 	recordExportInspectionInputSchema,
@@ -104,9 +106,16 @@ const port = parsePort(
 		process.env.NEXT_PUBLIC_OPENCUT_BRIDGE_PORT ??
 		"32191",
 );
-const bridge = new EditorBridge({ token, port });
-const normalizeAudio = new NormalizeAudioOperation(bridge);
 const exportReceipts = new ExportReceiptStore();
+const previewEvidence = new PreviewEvidenceStore(
+	process.env.OPENCUT_PREVIEW_EVIDENCE_DIR ??
+		join(exportReceipts.directory, "preview-evidence"),
+	port,
+);
+await previewEvidence.readiness();
+const bridge = new EditorBridge({ token, port, previewEvidence });
+const previewFrames = new PreviewFrameService(bridge, previewEvidence);
+const normalizeAudio = new NormalizeAudioOperation(bridge);
 const audioCleanup = new AudioCleanupService(
 	bridge,
 	undefined,
@@ -142,7 +151,12 @@ const subtitleImport = new SubtitleImportOperation(bridge, subtitleFiles);
 const subjectTracking = new SubjectTrackingService(
 	bridge,
 	undefined,
-	join(exportReceipts.directory, "provider-operations", "subject-tracking", "provider-results"),
+	join(
+		exportReceipts.directory,
+		"provider-operations",
+		"subject-tracking",
+		"provider-results",
+	),
 );
 const operationLedger = new OperationLedger(
 	process.env.OPENCUT_OPERATION_LEDGER_DIR ??
@@ -223,8 +237,16 @@ function createServer(): McpServer {
 		},
 		async (params) =>
 			toolResult(
-				await ledgerBoundary.execute("opencut_create_project", params, (context) =>
-					requestLedgeredBrowserMutation(context, bridge, "create_project", params),
+				await ledgerBoundary.execute(
+					"opencut_create_project",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"create_project",
+							params,
+						),
 				),
 			),
 	);
@@ -238,8 +260,16 @@ function createServer(): McpServer {
 		},
 		async (params) =>
 			toolResult(
-				await ledgerBoundary.execute("opencut_open_project", params, (context) =>
-					requestLedgeredBrowserMutation(context, bridge, "open_project", params),
+				await ledgerBoundary.execute(
+					"opencut_open_project",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"open_project",
+							params,
+						),
 				),
 			),
 	);
@@ -263,14 +293,17 @@ function createServer(): McpServer {
 		},
 		async (params) =>
 			toolResult(
-				await ledgerBoundary.execute("opencut_save_project", params, (context) =>
-					requestLedgeredBrowserMutation(
-						context,
-						bridge,
-						"save_project",
-						params,
-						5 * 60_000,
-					),
+				await ledgerBoundary.execute(
+					"opencut_save_project",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"save_project",
+							params,
+							5 * 60_000,
+						),
 				),
 			),
 	);
@@ -308,6 +341,56 @@ function createServer(): McpServer {
 			inputSchema: listOperationHistoryInputSchema,
 		},
 		async (input) => toolResult(await operationLedger.listPage(input)),
+	);
+
+	server.registerTool(
+		"opencut_render_preview_frame",
+		{
+			description:
+				"Render one exact export-quality PNG frame from a verified persisted project without changing playback or selection, then persist hash-verified evidence.",
+			inputSchema: renderPreviewFrameInputSchema,
+		},
+		async (input) => {
+			await assertSaveReceiptEditorAffinity(input);
+			const ledgerRecord = await operationLedger.get(input.operationId);
+			if (ledgerRecord?.record.status === "completed") {
+				const receipt = await previewFrames.verifyOperationReceipt(
+					input.operationId,
+				);
+				if (!receipt)
+					throw new Error(
+						"terminal preview operation has no durable evidence receipt",
+					);
+			}
+			return toolResult(
+				await ledgerBoundary.execute(
+					"opencut_render_preview_frame",
+					input,
+					(context) => previewFrames.render(input, context),
+					(context) => previewFrames.recover(input, context),
+				),
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_get_preview_frame",
+		{
+			description:
+				"Read and integrity-verify one durable exact-frame receipt and PNG artifact.",
+			inputSchema: getPreviewFrameInputSchema,
+		},
+		async ({ receiptId }) => toolResult(await previewFrames.get(receiptId)),
+	);
+
+	server.registerTool(
+		"opencut_list_preview_frames",
+		{
+			description:
+				"List durable exact-frame receipts and verify every returned PNG artifact.",
+			inputSchema: listPreviewFramesInputSchema,
+		},
+		async (input) => toolResult(await previewFrames.list(input)),
 	);
 
 	server.registerTool(
@@ -374,9 +457,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Measure and normalize the active timeline mix to a target integrated loudness while respecting a true-peak ceiling and preserving relative clip levels and volume automation.",
-			inputSchema: withProjectMutationSafety(
-				normalizeAudioInputSchema,
-			),
+			inputSchema: withProjectMutationSafety(normalizeAudioInputSchema),
 		},
 		async (input) =>
 			toolResult(
@@ -487,8 +568,16 @@ function createServer(): McpServer {
 		},
 		async (plan) =>
 			toolResult(
-				await ledgerBoundary.execute("opencut_apply_edit_plan", plan, (context) =>
-					requestLedgeredBrowserMutation(context, bridge, "apply_edit_plan", plan),
+				await ledgerBoundary.execute(
+					"opencut_apply_edit_plan",
+					plan,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"apply_edit_plan",
+							plan,
+						),
 				),
 			),
 	);
@@ -574,14 +663,17 @@ function createServer(): McpServer {
 		},
 		async (input) =>
 			toolResult(
-				await ledgerBoundary.execute("opencut_transcribe_timeline", input, (context) =>
-					requestLedgeredBrowserMutation(
-						context,
-						bridge,
-						"transcribe_timeline",
-						input,
-						2 * 60 * 60_000,
-					),
+				await ledgerBoundary.execute(
+					"opencut_transcribe_timeline",
+					input,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"transcribe_timeline",
+							input,
+							2 * 60 * 60_000,
+						),
 				),
 			),
 	);
@@ -601,12 +693,7 @@ function createServer(): McpServer {
 					(context) =>
 						executeSubtitleExport(bridge, subtitleFiles, input, context),
 					(context) =>
-						recoverSubtitleExport(
-							bridge,
-							subtitleFiles,
-							input,
-							context,
-						),
+						recoverSubtitleExport(bridge, subtitleFiles, input, context),
 				),
 			),
 	);
@@ -741,7 +828,9 @@ function createServer(): McpServer {
 									input.operationId,
 									"filesystem",
 									"verified",
-									{ receiptPath: exportReceipts.receiptPath(input.operationId) },
+									{
+										receiptPath: exportReceipts.receiptPath(input.operationId),
+									},
 								),
 							});
 						}
@@ -1031,6 +1120,7 @@ function shutdown(): void {
 	void editorWorker.stop();
 	bridge.stop();
 	operationLedger.close();
+	previewEvidence.close();
 	void handle.close();
 }
 
@@ -1083,31 +1173,58 @@ function requiredOperationId(value: string | undefined): string {
 	return value;
 }
 
+async function assertSaveReceiptEditorAffinity(input: {
+	saveReceiptOperationId: string;
+	expectedConnectionIdentity: BridgeConnectionIdentity;
+}): Promise<void> {
+	const candidates = [
+		input.saveReceiptOperationId,
+		...(input.saveReceiptOperationId.endsWith(":ledger-save")
+			? [input.saveReceiptOperationId.slice(0, -":ledger-save".length)]
+			: []),
+	];
+	let affinity: { editorInstanceId: string } | null = null;
+	for (const operationId of candidates) {
+		const entry = await operationLedger.get(operationId);
+		if (entry?.record.connectionAffinity) {
+			affinity = entry.record.connectionAffinity;
+			break;
+		}
+	}
+	if (
+		!affinity ||
+		affinity.editorInstanceId !==
+			input.expectedConnectionIdentity.editorInstanceId
+	) {
+		throw new Error(
+			"save receipt was not produced by the durable editor instance targeted for rendering",
+		);
+	}
+}
+
 function observeProvider(
 	context: OperationExecutionContext,
 	operationId: string,
 ): CompositeOperationObserver {
 	return async (event: CompositeProviderEvent) => {
 		await context.checkpoint({
-			checkpoint: operationCheckpoint(
-				operationId,
-				"provider",
-				event.state,
-				{
-					provider: event.provider,
-					...(event.metadata ?? {}),
-				},
-			),
+			checkpoint: operationCheckpoint(operationId, "provider", event.state, {
+				provider: event.provider,
+				...(event.metadata ?? {}),
+			}),
 			providerProvenance: [
 				{
 					provider: event.provider,
 					...(event.modelId ? { modelId: event.modelId } : {}),
-					...(event.modelVersion
-						? { modelVersion: event.modelVersion }
-						: {}),
+					...(event.modelVersion ? { modelVersion: event.modelVersion } : {}),
 					...(event.artifact ? { artifactHash: event.artifact.sha256 } : {}),
 					...(event.metadata
-						? { metadata: parseJsonValue(event.metadata) as Record<string, JsonValue> }
+						? {
+								metadata: parseJsonValue(event.metadata) as Record<
+									string,
+									JsonValue
+								>,
+							}
 						: {}),
 				},
 			],
@@ -1218,7 +1335,8 @@ function parseTrackingSample(value: JsonValue) {
 		!Number.isInteger(value.sourceTime) ||
 		value.sourceTime < 0 ||
 		![box.x, box.y, box.width, box.height].every(
-			(candidate) => typeof candidate === "number" && Number.isFinite(candidate),
+			(candidate) =>
+				typeof candidate === "number" && Number.isFinite(candidate),
 		) ||
 		(value.confidence !== undefined && typeof value.confidence !== "number")
 	)

@@ -75,6 +75,10 @@ export const MUTATING_TOOL_MANIFEST = {
 		operationKind: "export-project",
 		requiresSaveVerification: false,
 	},
+	opencut_render_preview_frame: {
+		operationKind: "render-preview-frame",
+		requiresSaveVerification: false,
+	},
 	opencut_queue_export: {
 		operationKind: "queue-export",
 		requiresSaveVerification: false,

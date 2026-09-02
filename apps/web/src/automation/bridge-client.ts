@@ -9,6 +9,7 @@ import type {
 	AutomationExportRequest,
 	AutomationImportRequest,
 	AutomationImportSubtitlesRequest,
+	AutomationRenderPreviewFrameRequest,
 	AutomationExportSubtitlesRequest,
 	AutomationOpenProjectRequest,
 	AutomationSaveProjectRequest,
@@ -102,6 +103,12 @@ type BridgeRequest =
 			id: string;
 			method: "export_project";
 			params: AutomationExportRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "render_preview_frame";
+			params: AutomationRenderPreviewFrameRequest;
 	  }
 	| {
 			kind: "request";
@@ -483,6 +490,8 @@ export class AutomationBridgeClient {
 				return this.automation.applyEditPlan(message.params);
 			case "export_project":
 				return this.automation.exportProject(message.params);
+			case "render_preview_frame":
+				return this.automation.renderPreviewFrame(message.params);
 			case "import_media":
 				return this.automation.importMedia(message.params);
 			case "import_subtitles":

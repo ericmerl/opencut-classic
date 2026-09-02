@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { classifyMutatorResult } from "./mcp-ledger-boundary";
-import { MUTATING_TOOL_MANIFEST, type MutatingToolName } from "./mutating-tool-manifest";
+import {
+	MUTATING_TOOL_MANIFEST,
+	type MutatingToolName,
+} from "./mutating-tool-manifest";
 
 const successes: Record<MutatingToolName, Record<string, unknown>> = {
 	opencut_start_editor_worker: { running: true, connected: true },
@@ -22,6 +25,7 @@ const successes: Record<MutatingToolName, Record<string, unknown>> = {
 	opencut_generate_matte: { status: "generated-and-attached" },
 	opencut_track_subject: { status: "tracked-and-reframed" },
 	opencut_export_project: { status: "exported" },
+	opencut_render_preview_frame: { status: "rendered" },
 	opencut_queue_export: { job: { jobId: "job-1" } },
 	opencut_queue_export_batch: { summary: { batchId: "batch-1" } },
 	opencut_cancel_export_batch: { status: "found" },
@@ -43,11 +47,15 @@ describe("typed per-mutator terminal disposition contracts", () => {
 	});
 
 	test("maps explicit conflicts to not-applied and unknown statuses to recoverable", () => {
-		for (const toolName of Object.keys(MUTATING_TOOL_MANIFEST) as MutatingToolName[]) {
+		for (const toolName of Object.keys(
+			MUTATING_TOOL_MANIFEST,
+		) as MutatingToolName[]) {
 			expect(classifyMutatorResult(toolName, { status: "conflict" })).toBe(
 				"not-applied",
 			);
-			expect(classifyMutatorResult(toolName, { status: "done" })).toBe("unknown");
+			expect(classifyMutatorResult(toolName, { status: "done" })).toBe(
+				"unknown",
+			);
 		}
 	});
 });

@@ -14,11 +14,11 @@ import {
 } from "mediabunny";
 import type { FrameRate } from "opencut-wasm";
 import { mediaTimeToSeconds } from "opencut-wasm";
-import { TICKS_PER_SECOND } from "@/wasm";
 import { frameRateToFloat } from "@/fps/utils";
 import type { RootNode } from "./nodes/root-node";
 import type { ExportFormat, ExportQuality } from "@/export";
 import { CanvasRenderer } from "./canvas-renderer";
+import { requireFrameSchedule } from "./frame-schedule";
 
 type ExportParams = {
 	width: number;
@@ -86,9 +86,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 	}): Promise<ArrayBuffer | null> {
 		const fps = this.renderer.fps;
 		const fpsFloat = frameRateToFloat(fps);
-		const ticksPerFrame = Math.round(
-			(TICKS_PER_SECOND * fps.denominator) / fps.numerator,
-		);
+		const { ticksPerFrame } = requireFrameSchedule(fps);
 		const frameCount = Math.floor(rootNode.duration / ticksPerFrame);
 
 		const outputFormat =
@@ -143,8 +141,11 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 			const timeTicks = i * ticksPerFrame;
 			const timeSeconds = mediaTimeToSeconds({ time: timeTicks });
-			await this.renderer.render({ node: rootNode, time: timeTicks });
-			await videoSource.add(timeSeconds, 1 / fpsFloat);
+			await this.renderer.withRenderedFrame({
+				node: rootNode,
+				time: timeTicks,
+				consume: () => videoSource.add(timeSeconds, 1 / fpsFloat),
+			});
 
 			this.emit("progress", i / frameCount);
 		}

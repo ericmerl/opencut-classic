@@ -141,6 +141,8 @@ import type {
 	AutomationExportCompletedResult,
 	AutomationExportRequest,
 	AutomationExportResult,
+	AutomationRenderPreviewFrameRequest,
+	AutomationRenderPreviewFrameResult,
 	AutomationImportAppliedResult,
 	AutomationImportRequest,
 	AutomationImportResult,
@@ -170,6 +172,7 @@ import type {
 	AutomationTranscriptionResult,
 	AutomationUndoResult,
 } from "./types";
+import { renderAutomationPreviewFrame } from "./render-preview-frame";
 import {
 	buildEditorProjectContentInput,
 	hashEditorProjectContent,
@@ -336,7 +339,9 @@ export class EditorAutomation {
 		request: AutomationGetOperationReceiptRequest,
 	): Promise<AutomationGetOperationReceiptResult> {
 		return this.enqueue(async () => {
-			const receipt = await storageService.loadOperationReceipt(request.binding);
+			const receipt = await storageService.loadOperationReceipt(
+				request.binding,
+			);
 			return receipt
 				? {
 						status: "found",
@@ -354,7 +359,9 @@ export class EditorAutomation {
 		request: AutomationVerifyOperationReceiptRequest,
 	): Promise<AutomationSaveProjectResult> {
 		return this.enqueue(async () => {
-			const receipt = await storageService.loadOperationReceipt(request.binding);
+			const receipt = await storageService.loadOperationReceipt(
+				request.binding,
+			);
 			if (!receipt || receipt.binding.role !== "direct-terminal") {
 				return {
 					status: "rejected",
@@ -442,8 +449,11 @@ export class EditorAutomation {
 		request: unknown,
 		result: unknown,
 	): Promise<void> {
-		if (!isDurableOperationSuccess(method, result) || !isRecord(request)) return;
-		const binding = parseOperationReceiptBinding(request.operationReceiptBinding);
+		if (!isDurableOperationSuccess(method, result) || !isRecord(request))
+			return;
+		const binding = parseOperationReceiptBinding(
+			request.operationReceiptBinding,
+		);
 		if (!binding || binding.browserMethod !== method) return;
 		const operationId = binding.outerOperationId;
 		const requestFingerprint = await sha256Text(
@@ -456,9 +466,21 @@ export class EditorAutomation {
 		if (!resultState) {
 			throw new Error("browser operation result lacks immutable after-state");
 		}
-		const readback = await storageService.loadProjectFresh({ id: resultState.projectId });
-		if (!readback || readback.project.currentSceneId !== resultState.sceneId) {
-			throw new Error("browser operation receipt persisted project identity mismatch");
+		const readback = await storageService.loadProjectFresh({
+			id: resultState.projectId,
+		});
+		const receiptSceneExists = readback?.project.scenes.some(
+			(scene) => scene.id === resultState.sceneId,
+		);
+		if (
+			!readback ||
+			(method === "render_preview_frame"
+				? !receiptSceneExists
+				: readback.project.currentSceneId !== resultState.sceneId)
+		) {
+			throw new Error(
+				"browser operation receipt persisted project identity mismatch",
+			);
 		}
 		const persistedIdentity = await hashProjectContent(
 			buildEditorProjectContentInput({
@@ -536,6 +558,37 @@ export class EditorAutomation {
 		request: AutomationExportRequest,
 	): Promise<AutomationExportResult> {
 		return this.enqueue(() => this.exportProjectNow(request));
+	}
+
+	renderPreviewFrame(
+		request: AutomationRenderPreviewFrameRequest,
+	): Promise<AutomationRenderPreviewFrameResult> {
+		return this.enqueue(async () => {
+			this.reconcileExternalChanges();
+			const identity = await this.refreshContentIdentity();
+			if (identity.status !== "hashed") {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					code: "SOURCE_CONFLICT",
+					reason: "project content identity is blocked",
+				};
+			}
+			return renderAutomationPreviewFrame({
+				editor: this.editor,
+				request,
+				revision: this.revision,
+				contentHash: identity.hash.digest,
+				verifyCurrentSource: async () => {
+					this.reconcileExternalChanges();
+					const verified = await this.refreshContentIdentity();
+					return {
+						revision: this.revision,
+						contentIdentity: verified,
+					};
+				},
+			});
+		});
 	}
 
 	undo(request: {
@@ -2764,6 +2817,7 @@ const DURABLE_METHOD_STATUSES: Record<string, ReadonlySet<string>> = {
 	import_subtitles: new Set(["applied", "replayed"]),
 	transcribe_timeline: new Set(["applied", "replayed"]),
 	attach_matte: new Set(["applied", "replayed"]),
+	render_preview_frame: new Set(["rendered", "replayed"]),
 };
 
 function parseOperationReceiptBinding(value: unknown) {
@@ -2776,7 +2830,9 @@ function parseOperationReceiptBinding(value: unknown) {
 			"stepId",
 			"browserMethod",
 			"browserRequestFingerprint",
-		].every((field) => typeof value[field] === "string" && value[field].length > 0) ||
+		].every(
+			(field) => typeof value[field] === "string" && value[field].length > 0,
+		) ||
 		(value.role !== "direct-terminal" && value.role !== "composite-step")
 	)
 		return null;
@@ -2803,9 +2859,11 @@ function operationReceiptAfterState(value: unknown) {
 	const contentHashAfter =
 		typeof value.contentHash === "string"
 			? value.contentHash
-			: snapshot
-				? projectContentHash(snapshot)
-				: null;
+			: isRecord(value.contentIdentity)
+				? projectContentHash({ contentIdentity: value.contentIdentity })
+				: snapshot
+					? projectContentHash(snapshot)
+					: null;
 	return projectId &&
 		sceneId &&
 		revisionAfter !== null &&
@@ -2832,7 +2890,7 @@ function saveReceiptMatchesAfterState(
 	return (
 		receipt.projectId === state.projectId &&
 		receipt.sceneId === state.sceneId &&
-			receipt.revision === state.revisionAfter &&
+		receipt.revision === state.revisionAfter &&
 		receipt.revision === state.sessionRevisionAfter &&
 		receipt.writeVersion === state.durableWriteVersion &&
 		receipt.contentHash === state.contentHashAfter &&

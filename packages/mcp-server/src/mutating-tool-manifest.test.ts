@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MUTATING_TOOL_MANIFEST } from "./mutating-tool-manifest";
 
 describe("mutating MCP tool manifest", () => {
-	test("defines the complete dependency-map set of 25 mutators", () => {
+	test("defines the complete dependency-map set of 26 mutators", () => {
 		expect(Object.keys(MUTATING_TOOL_MANIFEST).sort()).toEqual(
 			[
 				"opencut_apply_edit_plan",
@@ -22,6 +22,7 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_queue_export",
 				"opencut_queue_export_batch",
 				"opencut_record_export_inspection",
+				"opencut_render_preview_frame",
 				"opencut_run_export_jobs",
 				"opencut_save_project",
 				"opencut_start_editor_worker",
@@ -32,6 +33,6 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_undo",
 			].sort(),
 		);
-		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(25);
+		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(26);
 	});
 });

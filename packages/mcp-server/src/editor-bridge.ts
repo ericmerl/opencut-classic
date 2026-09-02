@@ -3,6 +3,9 @@ import { BootstrapTickets } from "./bootstrap-tickets";
 import { ExportTickets } from "./export-tickets";
 import { MediaTickets } from "./media-tickets";
 import { SourceTickets } from "./source-tickets";
+import { PreviewEvidenceStore } from "./preview-evidence-store";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 interface SocketData {
 	authenticated: boolean;
@@ -60,6 +63,7 @@ export class EditorBridge {
 	readonly exportTickets: ExportTickets;
 	readonly mediaTickets: MediaTickets;
 	readonly sourceTickets: SourceTickets;
+	readonly previewEvidence: PreviewEvidenceStore;
 
 	constructor(
 		private options: {
@@ -67,12 +71,19 @@ export class EditorBridge {
 			port: number;
 			requestTimeoutMs?: number;
 			serverInstanceId?: string;
+			previewEvidence?: PreviewEvidenceStore;
 		},
 	) {
 		this.serverInstanceId = options.serverInstanceId ?? randomUUID();
 		this.exportTickets = new ExportTickets(options.port);
 		this.mediaTickets = new MediaTickets(options.port);
 		this.sourceTickets = new SourceTickets(options.port);
+		this.previewEvidence =
+			options.previewEvidence ??
+			new PreviewEvidenceStore(
+				join(tmpdir(), `opencut-preview-${this.serverInstanceId}`),
+				options.port,
+			);
 		this.server = Bun.serve<SocketData>({
 			hostname: "127.0.0.1",
 			port: options.port,
@@ -273,6 +284,9 @@ export class EditorBridge {
 		if (url.pathname.startsWith("/export/")) {
 			return this.handleExportRequest(request, url, origin);
 		}
+		if (url.pathname.startsWith("/preview/")) {
+			return this.handlePreviewRequest(request, url, origin);
+		}
 		if (url.pathname.startsWith("/bootstrap/")) {
 			return this.handleBootstrapRequest(request, url, origin);
 		}
@@ -402,6 +416,39 @@ export class EditorBridge {
 		} catch (error) {
 			return new Response(
 				error instanceof Error ? error.message : "Export upload failed",
+				{ status: 409, headers },
+			);
+		}
+	}
+
+	private async handlePreviewRequest(
+		request: Request,
+		url: URL,
+		origin: string | null,
+	): Promise<Response> {
+		const id = url.pathname.slice("/preview/".length);
+		const headers = transferCorsHeaders(origin);
+		if (request.method === "OPTIONS") {
+			return this.previewEvidence.hasTicket(id)
+				? new Response(null, { status: 204, headers })
+				: new Response("Expired or invalid preview ticket", {
+						status: 404,
+						headers,
+					});
+		}
+		if (request.method !== "PUT") {
+			return new Response("Method not allowed", {
+				status: 405,
+				headers: { ...headers, Allow: "PUT, OPTIONS" },
+			});
+		}
+		try {
+			return Response.json(await this.previewEvidence.receive(id, request), {
+				headers,
+			});
+		} catch (error) {
+			return new Response(
+				error instanceof Error ? error.message : "Preview upload failed",
 				{ status: 409, headers },
 			);
 		}
