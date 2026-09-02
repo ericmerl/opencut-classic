@@ -293,6 +293,11 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			{ message: "at least one audio control is required" },
 		),
 	z.object({
+		kind: z.literal("separate_source_audio"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+	}),
+	z.object({
 		kind: z.literal("adjust_mix_gain"),
 		gainDb: z
 			.number()

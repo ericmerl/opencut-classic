@@ -38,6 +38,7 @@ export interface AutomationElementSnapshot {
 	effects?: AutomationEffectSnapshot[];
 	matte?: AutomationMatteSnapshot;
 	reframe?: AutomationReframeSnapshot;
+	sourceAudioSeparated?: boolean;
 }
 
 export interface AutomationNormalizedRect {
@@ -401,6 +402,11 @@ export type AutomationEditOperation =
 				outDuration: MediaTime;
 				floorDb: number;
 			};
+	  }
+	| {
+			kind: "separate_source_audio";
+			trackId: string;
+			elementId: string;
 	  }
 	| {
 			kind: "adjust_mix_gain";

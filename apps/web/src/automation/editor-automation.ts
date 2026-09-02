@@ -54,6 +54,7 @@ import { analyzeAutomationAudio } from "./audio-analysis";
 import { prepareMatteAttachment } from "./attach-matte";
 import { buildAudioControlPatch } from "./audio-control";
 import { buildAudioMixGainCommand } from "./audio-mix-gain";
+import { buildSourceAudioSeparationCommand } from "./source-audio-control";
 import { buildCaptionCorrectionCommand } from "./caption-control";
 import { buildEffectControlCommand, listEffectCatalog } from "./effect-control";
 import { buildKeyframeCommand } from "./keyframe-control";
@@ -1314,6 +1315,18 @@ export class EditorAutomation {
 				],
 			});
 		}
+		if (operation.kind === "separate_source_audio") {
+			return buildSourceAudioSeparationCommand({
+				element,
+				trackId: operation.trackId,
+				mediaAsset:
+					element.type === "video"
+						? (this.editor.media
+								.getAssets()
+								.find((asset) => asset.id === element.mediaId) ?? null)
+						: null,
+			});
+		}
 		if (
 			operation.kind === "upsert_effect" ||
 			operation.kind === "remove_effect" ||
@@ -1511,6 +1524,9 @@ export class EditorAutomation {
 							),
 						}),
 					}
+				: {}),
+			...(element.type === "video"
+				? { sourceAudioSeparated: element.isSourceAudioEnabled === false }
 				: {}),
 			...(keyframes.length > 0 ? { keyframes } : {}),
 			...("effects" in element && element.effects?.length

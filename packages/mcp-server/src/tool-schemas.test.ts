@@ -311,6 +311,24 @@ describe("OpenCut edit-plan MCP contract", () => {
 		}
 	});
 
+	test("accepts deterministic source-audio separation", () => {
+		expect(
+			editPlanInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "audio-separate-1",
+				expectedRevision: 4,
+				description: "Separate presenter audio",
+				operations: [
+					{
+						kind: "separate_source_audio",
+						trackId: "main",
+						elementId: "video-1",
+					},
+				],
+			}).success,
+		).toBe(true);
+	});
+
 	test("rejects an empty audio-control operation", () => {
 		const result = editPlanInputSchema.safeParse({
 			projectId: "project-1",
