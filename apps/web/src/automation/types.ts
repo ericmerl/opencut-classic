@@ -936,6 +936,7 @@ export interface AutomationExportRequest {
 	quality: ExportQuality;
 	fps?: FrameRate;
 	includeAudio: boolean;
+	canvasSize?: TCanvasSize;
 }
 
 export interface AutomationExportCompletedResult {

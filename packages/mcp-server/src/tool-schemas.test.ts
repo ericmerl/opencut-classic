@@ -8,12 +8,15 @@ import {
 	editPlanInputSchema,
 	exportProjectInputSchema,
 	exportSubtitlesInputSchema,
+	getExportBatchInputSchema,
 	getExportJobInputSchema,
 	getExportReceiptInputSchema,
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
 	openProjectInputSchema,
+	listExportBatchesInputSchema,
 	listExportJobsInputSchema,
+	queueExportBatchInputSchema,
 	queueExportInputSchema,
 	recordExportInspectionInputSchema,
 	runExportJobsInputSchema,
@@ -180,6 +183,58 @@ describe("OpenCut persistent export job contract", () => {
 				.success,
 		).toBe(true);
 		expect(runExportJobsInputSchema.safeParse({ limit: 5 }).success).toBe(true);
+	});
+
+	test("accepts a bounded platform export matrix with canvas overrides", () => {
+		const batch = {
+			batchId: "campaign-1",
+			projectId: "project-1",
+			expectedRevision: 3,
+			variants: [
+				{
+					variantId: "tiktok",
+					preset: "tiktok_9_16",
+					outputPath: "C:\\exports\\tiktok.mp4",
+				},
+				{
+					variantId: "square",
+					preset: "instagram_square_1_1",
+					outputPath: "C:\\exports\\square.webm",
+					format: "webm",
+					canvasSize: { width: 1440, height: 1440 },
+				},
+			],
+		};
+		expect(queueExportBatchInputSchema.safeParse(batch).success).toBe(true);
+		expect(
+			getExportBatchInputSchema.safeParse({ batchId: "campaign-1" }).success,
+		).toBe(true);
+		expect(listExportBatchesInputSchema.safeParse({ limit: 10 }).success).toBe(
+			true,
+		);
+	});
+
+	test("rejects duplicate variant identities and output paths", () => {
+		const duplicate = {
+			batchId: "campaign-1",
+			projectId: "project-1",
+			expectedRevision: 3,
+			variants: [
+				{
+					variantId: "same",
+					preset: "tiktok_9_16",
+					outputPath: "C:\\exports\\same.mp4",
+				},
+				{
+					variantId: "same",
+					preset: "youtube_shorts_9_16",
+					outputPath: "C:\\exports\\same.mp4",
+				},
+			],
+		};
+		expect(queueExportBatchInputSchema.safeParse(duplicate).success).toBe(
+			false,
+		);
 	});
 
 	test("rejects unknown job states and an unbounded drain", () => {

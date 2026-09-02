@@ -3,6 +3,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
 import { AudioCleanupService } from "./clean-audio";
+import { ExportBatchQueue } from "./export-batches";
 import { ExportJobQueue } from "./export-jobs";
 import { ExportProjectService } from "./export-project";
 import { ExportReceiptStore } from "./export-receipts";
@@ -20,14 +21,17 @@ import {
 	editPlanInputSchema,
 	exportProjectInputSchema,
 	generateMatteInputSchema,
+	getExportBatchInputSchema,
 	getExportJobInputSchema,
 	getExportReceiptInputSchema,
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
 	listExportJobsInputSchema,
+	listExportBatchesInputSchema,
 	exportSubtitlesInputSchema,
 	openProjectInputSchema,
 	queueExportInputSchema,
+	queueExportBatchInputSchema,
 	recordExportInspectionInputSchema,
 	runExportJobsInputSchema,
 	searchStickersInputSchema,
@@ -67,6 +71,10 @@ const exportJobs = new ExportJobQueue(
 	projectExports,
 	ExportJobQueue.storeForReceiptDirectory(exportReceipts.directory),
 	{ ensureEditor: (projectId) => editorWorker.ensureConnected(projectId) },
+);
+const exportBatches = new ExportBatchQueue(
+	exportJobs,
+	ExportBatchQueue.storeForReceiptDirectory(exportReceipts.directory),
 );
 const matteGeneration = new MatteGenerationService(bridge);
 const subtitleFiles = new SubtitleFiles();
@@ -471,6 +479,61 @@ function createServer(): McpServer {
 		},
 		async ({ jobId, ...input }) =>
 			toolResult(await exportJobs.enqueue({ jobId, input })),
+	);
+
+	server.registerTool(
+		"opencut_queue_export_batch",
+		{
+			description:
+				"Persist and enqueue a restart-safe matrix of platform-specific export variants. Each variant gets an independent durable job, validation receipt, canvas override, and output path.",
+			inputSchema: queueExportBatchInputSchema,
+		},
+		async (input) => toolResult(await exportBatches.enqueue(input)),
+	);
+
+	server.registerTool(
+		"opencut_get_export_batch",
+		{
+			description:
+				"Read one durable export batch with aggregate status and every variant job.",
+			inputSchema: getExportBatchInputSchema,
+		},
+		async ({ batchId }) => {
+			const summary = await exportBatches.get(batchId);
+			return toolResult(
+				summary
+					? { status: "found", summary }
+					: { status: "not-found", batchId },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_export_batches",
+		{
+			description:
+				"List durable platform export batches in descending creation order.",
+			inputSchema: listExportBatchesInputSchema,
+		},
+		async ({ limit }) =>
+			toolResult({ batches: await exportBatches.list(limit) }),
+	);
+
+	server.registerTool(
+		"opencut_cancel_export_batch",
+		{
+			description:
+				"Cancel every still-queued variant in one export batch. Running or terminal variants are preserved and reported.",
+			inputSchema: getExportBatchInputSchema,
+		},
+		async ({ batchId }) => {
+			const summary = await exportBatches.cancel(batchId);
+			return toolResult(
+				summary
+					? { status: "found", summary }
+					: { status: "not-found", batchId },
+			);
+		},
 	);
 
 	server.registerTool(

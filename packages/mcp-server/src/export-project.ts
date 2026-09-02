@@ -14,6 +14,7 @@ export interface ExportProjectInput {
 	quality: "low" | "medium" | "high" | "very_high";
 	fps?: { numerator: number; denominator: number };
 	includeAudio: boolean;
+	canvasSize?: { width: number; height: number };
 }
 
 export interface ExportProjectBridge {
@@ -95,6 +96,7 @@ export class ExportProjectService {
 					quality: input.quality,
 					...(input.fps ? { fps: input.fps } : {}),
 					includeAudio: input.includeAudio,
+					...(input.canvasSize ? { canvasSize: input.canvasSize } : {}),
 					outputPath: ticket.outputPath,
 					url: ticket.url,
 				},
@@ -116,8 +118,8 @@ export class ExportProjectService {
 				operationId: input.operationId,
 				outputPath: outputIdentity.outputPath,
 				format: input.format,
-				expectedWidth: snapshot.width,
-				expectedHeight: snapshot.height,
+				expectedWidth: input.canvasSize?.width ?? snapshot.width,
+				expectedHeight: input.canvasSize?.height ?? snapshot.height,
 				expectedFps: frameRateValue(input.fps ?? snapshot.fps),
 				includeAudio: input.includeAudio,
 			});

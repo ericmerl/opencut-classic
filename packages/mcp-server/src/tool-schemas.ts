@@ -850,10 +850,69 @@ export const exportProjectInputSchema = z.object({
 	quality: z.enum(["low", "medium", "high", "very_high"]).default("high"),
 	fps: frameRateSchema.optional(),
 	includeAudio: z.boolean().default(true),
+	canvasSize: canvasSizeSchema.optional(),
 });
 
 export const queueExportInputSchema = exportProjectInputSchema.extend({
 	jobId: z.string().min(1),
+});
+
+export const platformExportPresetSchema = z.enum([
+	"tiktok_9_16",
+	"instagram_reels_9_16",
+	"youtube_shorts_9_16",
+	"instagram_square_1_1",
+	"youtube_landscape_16_9",
+]);
+
+const exportBatchVariantSchema = z.object({
+	variantId: z.string().trim().min(1),
+	preset: platformExportPresetSchema,
+	outputPath: z.string().min(1),
+	format: z.enum(["mp4", "webm"]).optional(),
+	quality: z.enum(["low", "medium", "high", "very_high"]).optional(),
+	fps: frameRateSchema.optional(),
+	includeAudio: z.boolean().optional(),
+	canvasSize: canvasSizeSchema.optional(),
+});
+
+export const queueExportBatchInputSchema = z
+	.object({
+		batchId: z.string().trim().min(1),
+		projectId: z.string().min(1),
+		expectedRevision: z.number().int().nonnegative(),
+		variants: z.array(exportBatchVariantSchema).min(1).max(20),
+	})
+	.superRefine((value, context) => {
+		const variantIds = new Set<string>();
+		const outputPaths = new Set<string>();
+		value.variants.forEach((variant, index) => {
+			if (variantIds.has(variant.variantId)) {
+				context.addIssue({
+					code: "custom",
+					path: ["variants", index, "variantId"],
+					message: "variant IDs must be unique",
+				});
+			}
+			variantIds.add(variant.variantId);
+			const outputKey = variant.outputPath.toLowerCase();
+			if (outputPaths.has(outputKey)) {
+				context.addIssue({
+					code: "custom",
+					path: ["variants", index, "outputPath"],
+					message: "variant output paths must be unique",
+				});
+			}
+			outputPaths.add(outputKey);
+		});
+	});
+
+export const getExportBatchInputSchema = z.object({
+	batchId: z.string().trim().min(1),
+});
+
+export const listExportBatchesInputSchema = z.object({
+	limit: z.number().int().min(1).max(100).default(25),
 });
 
 export const getExportJobInputSchema = z.object({

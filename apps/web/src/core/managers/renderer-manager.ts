@@ -6,7 +6,6 @@ import { SceneExporter } from "@/services/renderer/scene-exporter";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { createTimelineAudioBuffer } from "@/media/audio";
 import { formatTimecode } from "opencut-wasm";
-import { frameRateToFloat } from "@/fps/utils";
 import { downloadBlob } from "@/utils/browser";
 
 type SnapshotResult =
@@ -122,7 +121,10 @@ export class RendererManager {
 				return { success: false, error: "Failed to create image" };
 			}
 
-			const timecode = formatTimecode({ time: renderTime, rate: fps })!.replace(/:/g, "-");
+			const timecode = formatTimecode({ time: renderTime, rate: fps })!.replace(
+				/:/g,
+				"-",
+			);
 			const safeName =
 				activeProject.metadata.name.replace(/[<>:"/\\|?*]/g, "-").trim() ||
 				"snapshot";
@@ -164,7 +166,8 @@ export class RendererManager {
 			}
 
 			const exportFps = fps ?? activeProject.settings.fps;
-			const canvasSize = activeProject.settings.canvasSize;
+			const canvasSize =
+				options.canvasSize ?? activeProject.settings.canvasSize;
 
 			let audioBuffer: AudioBuffer | null = null;
 			if (includeAudio) {

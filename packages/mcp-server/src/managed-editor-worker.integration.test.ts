@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EditorBridge } from "./editor-bridge";
+import { ExportReceiptStore } from "./export-receipts";
+import { ExportValidator } from "./export-validator";
 import { ManagedEditorWorker } from "./managed-editor-worker";
 
 const integrationTest =
@@ -438,6 +440,57 @@ integrationTest(
 					startTime: 240_000,
 				});
 			}
+
+			const variantPath = join(directory, "square-variant.webm");
+			const variantTicket = await bridge.exportTickets.create(
+				variantPath,
+				"webm",
+			);
+			const variantExport = requireRecord(
+				await bridge.request(
+					"export_project",
+					{
+						projectId,
+						operationId: "timeline-integration-square-export",
+						expectedRevision: requireNumber(brokenApart.revision, "revision"),
+						format: "webm",
+						quality: "low",
+						fps: { numerator: 30, denominator: 1 },
+						includeAudio: false,
+						canvasSize: { width: 320, height: 320 },
+						outputPath: variantTicket.outputPath,
+						url: variantTicket.url,
+					},
+					5 * 60_000,
+				),
+			);
+			if (variantExport.status !== "exported") {
+				const diagnostics = browserDiagnostics
+					.split(/\r?\n/)
+					.filter((line) => /CONSOLE|ERROR|export|compositor|wasm/i.test(line))
+					.slice(-100)
+					.join("\n");
+				throw new Error(
+					`variant export failed: ${JSON.stringify(variantExport)}\n${diagnostics}`,
+				);
+			}
+			expect((await stat(variantPath)).size).toBeGreaterThan(0);
+			const variantValidation = await new ExportValidator(
+				new ExportReceiptStore(join(directory, "variant-receipts")),
+			).validate({
+				operationId: "timeline-integration-square-export",
+				outputPath: variantPath,
+				format: "webm",
+				expectedWidth: 320,
+				expectedHeight: 320,
+				expectedFps: 30,
+				includeAudio: false,
+			});
+			expect(variantValidation).toMatchObject({
+				status: "validated",
+				fullDecode: true,
+				video: { width: 320, height: 320, fps: 30 },
+			});
 
 			const linkDeleted = requireRecord(
 				await bridge.request("apply_edit_plan", {

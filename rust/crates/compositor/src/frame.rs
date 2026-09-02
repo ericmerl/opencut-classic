@@ -24,6 +24,7 @@ pub struct CanvasClearDescriptor {
 pub enum FrameItemDescriptor {
     Layer(LayerDescriptor),
     SceneEffect {
+        #[serde(rename = "effectPassGroups")]
         effect_pass_groups: Vec<Vec<EffectPassDescriptor>>,
     },
 }
@@ -185,5 +186,25 @@ mod tests {
         assert_eq!(transform.source_rect.y, 0.1);
         assert_eq!(transform.source_rect.width, 0.5);
         assert_eq!(transform.source_rect.height, 0.8);
+    }
+
+    #[test]
+    fn deserializes_camel_case_scene_effect_fields() {
+        let frame: FrameDescriptor = serde_json::from_value(serde_json::json!({
+            "width": 2,
+            "height": 2,
+            "clear": { "color": [0.0, 0.0, 0.0, 0.0] },
+            "items": [{
+                "type": "sceneEffect",
+                "effectPassGroups": []
+            }]
+        }))
+        .expect("scene effect descriptor should deserialize");
+
+        assert!(matches!(
+            &frame.items[0],
+            FrameItemDescriptor::SceneEffect { effect_pass_groups }
+                if effect_pass_groups.is_empty()
+        ));
     }
 }

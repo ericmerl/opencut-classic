@@ -1367,6 +1367,7 @@ export class EditorAutomation {
 				quality: request.quality,
 				fps: request.fps,
 				includeAudio: request.includeAudio,
+				canvasSize: request.canvasSize,
 			},
 		});
 		if (!exported.success || !exported.buffer) {
