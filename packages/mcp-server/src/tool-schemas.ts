@@ -509,6 +509,24 @@ export const exportSubtitlesInputSchema = z.object({
 	trackIds: z.array(z.string().min(1)).min(1).optional(),
 });
 
+export const transcribeTimelineInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	language: z.string().trim().min(1).default("auto"),
+	modelId: z
+		.enum([
+			"whisper-tiny",
+			"whisper-small",
+			"whisper-medium",
+			"whisper-large-v3-turbo",
+		])
+		.default("whisper-small"),
+	wordsPerCaption: z.number().int().min(1).max(20).default(3),
+	minCaptionDuration: z.number().min(0.1).max(10).default(0.8),
+	style: captionStyleSchema.optional(),
+});
+
 export const attachMatteInputSchema = z.object({
 	projectId: z.string().min(1),
 	operationId: z.string().min(1),

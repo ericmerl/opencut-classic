@@ -3,6 +3,10 @@ import type { ExportFormat, ExportQuality } from "@/export";
 import type { TBackground, TCanvasSize } from "@/project/types";
 import type { SubtitleStyleOverrides } from "@/subtitles/types";
 import type {
+	TranscriptionLanguage,
+	TranscriptionModelId,
+} from "@/transcription/types";
+import type {
 	ClipMatteAttachment,
 	ClipTransitionType,
 	RetimeConfig,
@@ -262,6 +266,44 @@ export type AutomationExportSubtitlesResult =
 			actualRevision: number;
 	  }
 	| { status: "rejected"; reason: string };
+
+export interface AutomationTranscriptionRequest {
+	operationId: string;
+	projectId: string;
+	expectedRevision: number;
+	language: TranscriptionLanguage;
+	modelId: TranscriptionModelId;
+	wordsPerCaption: number;
+	minCaptionDuration: number;
+	style?: SubtitleStyleOverrides;
+}
+
+export interface AutomationTranscriptionAppliedResult {
+	status: "applied";
+	operationId: string;
+	revision: number;
+	language: string;
+	modelId: TranscriptionModelId;
+	transcript: string;
+	segmentCount: number;
+	captionCount: number;
+	trackId: string;
+	elementIds: string[];
+	snapshot: AutomationProjectSnapshot;
+}
+
+export type AutomationTranscriptionResult =
+	| AutomationTranscriptionAppliedResult
+	| (Omit<AutomationTranscriptionAppliedResult, "status"> & {
+			status: "replayed";
+	  })
+	| {
+			status: "conflict";
+			operationId: string;
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; operationId: string; reason: string };
 
 export interface AutomationProjectActivatedResult {
 	operationId: string;

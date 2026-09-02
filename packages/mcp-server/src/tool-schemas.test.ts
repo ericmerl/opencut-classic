@@ -9,9 +9,27 @@ import {
 	importSubtitlesInputSchema,
 	openProjectInputSchema,
 	timelineQueryInputSchema,
+	transcribeTimelineInputSchema,
 } from "./tool-schemas";
 
 describe("OpenCut subtitle MCP contract", () => {
+	test("defaults timeline transcription to the balanced local model", () => {
+		const result = transcribeTimelineInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "transcription-1",
+			expectedRevision: 3,
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data).toMatchObject({
+				language: "auto",
+				modelId: "whisper-small",
+				wordsPerCaption: 3,
+				minCaptionDuration: 0.8,
+			});
+		}
+	});
+
 	test("accepts subtitle import, correction, and export requests", () => {
 		expect(
 			importSubtitlesInputSchema.safeParse({

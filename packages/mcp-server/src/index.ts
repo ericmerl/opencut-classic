@@ -15,6 +15,7 @@ import {
 	exportSubtitlesInputSchema,
 	openProjectInputSchema,
 	timelineQueryInputSchema,
+	transcribeTimelineInputSchema,
 } from "./tool-schemas";
 
 const token =
@@ -231,6 +232,19 @@ function createServer(): McpServer {
 					: result,
 			);
 		},
+	);
+
+	server.registerTool(
+		"opencut_transcribe_timeline",
+		{
+			description:
+				"Render the active timeline audio mix, transcribe it with OpenCut's local Whisper worker, chunk the result into captions, and atomically insert a new text track. The first model use may download model files and can take several minutes.",
+			inputSchema: transcribeTimelineInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await bridge.request("transcribe_timeline", input, 2 * 60 * 60_000),
+			),
 	);
 
 	server.registerTool(

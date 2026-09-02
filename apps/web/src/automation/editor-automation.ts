@@ -13,6 +13,8 @@ import {
 } from "@/commands/timeline";
 import type { EditorCore } from "@/core";
 import { processMediaAssets } from "@/media/processing";
+import { decodeAudioToFloat32 } from "@/media/audio";
+import { extractTimelineAudio } from "@/media/mediabunny";
 import { coerceParamValue } from "@/params";
 import {
 	buildElementParamValues,
@@ -43,6 +45,9 @@ import { buildCaptionTrackInsertion } from "@/subtitles/insert";
 import { parseSubtitleFile } from "@/subtitles/parse";
 import { serializeSubtitles } from "@/subtitles/serialize";
 import type { SubtitleCue, SubtitleStyleOverrides } from "@/subtitles/types";
+import { DEFAULT_TRANSCRIPTION_SAMPLE_RATE } from "@/transcription/audio";
+import { buildCaptionChunks } from "@/transcription/caption";
+import { transcriptionService } from "@/services/transcription/service";
 import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
 import { getElementKeyframes } from "@/animation";
 import { analyzeAutomationAudio } from "./audio-analysis";
@@ -104,6 +109,9 @@ import type {
 	AutomationProjectSnapshot,
 	AutomationTransferSourceRequest,
 	AutomationTransferSourceResult,
+	AutomationTranscriptionAppliedResult,
+	AutomationTranscriptionRequest,
+	AutomationTranscriptionResult,
 	AutomationUndoResult,
 } from "./types";
 
@@ -123,6 +131,10 @@ export class EditorAutomation {
 	private importedSubtitleOperations = new Map<
 		string,
 		{ fingerprint: string; result: AutomationImportSubtitlesAppliedResult }
+	>();
+	private transcriptionOperations = new Map<
+		string,
+		{ fingerprint: string; result: AutomationTranscriptionAppliedResult }
 	>();
 	private exportedOperations = new Map<
 		string,
@@ -210,6 +222,12 @@ export class EditorAutomation {
 		request: AutomationExportSubtitlesRequest,
 	): Promise<AutomationExportSubtitlesResult> {
 		return this.enqueue(() => this.exportSubtitlesNow(request));
+	}
+
+	transcribeTimeline(
+		request: AutomationTranscriptionRequest,
+	): Promise<AutomationTranscriptionResult> {
+		return this.enqueue(() => this.transcribeTimelineNow(request));
 	}
 
 	attachMatte(
@@ -748,6 +766,103 @@ export class EditorAutomation {
 			cueCount: captions.length,
 			content: serializeSubtitles({ captions, format: request.format }),
 		};
+	}
+
+	private async transcribeTimelineNow(
+		request: AutomationTranscriptionRequest,
+	): Promise<AutomationTranscriptionResult> {
+		this.reconcileExternalChanges();
+		const fingerprint = stableSerialize(request);
+		const prior = this.transcriptionOperations.get(request.operationId);
+		if (prior) {
+			if (prior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: "operationId was already used for a different transcription",
+				};
+			}
+			return { ...prior.result, status: "replayed" };
+		}
+		if (request.projectId !== this.getProjectId()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `active project is ${this.getProjectId()}`,
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				operationId: request.operationId,
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+
+		try {
+			const audioBlob = await extractTimelineAudio({
+				tracks: this.editor.scenes.getActiveScene().tracks,
+				mediaAssets: this.editor.media.getAssets(),
+				totalDuration: this.editor.timeline.getTotalDuration(),
+			});
+			const { samples } = await decodeAudioToFloat32({
+				audioBlob,
+				sampleRate: DEFAULT_TRANSCRIPTION_SAMPLE_RATE,
+			});
+			const transcription = await transcriptionService.transcribe({
+				audioData: samples,
+				language: request.language === "auto" ? undefined : request.language,
+				modelId: request.modelId,
+			});
+			const captions = buildCaptionChunks({
+				segments: transcription.segments,
+				wordsPerChunk: request.wordsPerCaption,
+				minDuration: request.minCaptionDuration,
+			}).map((caption) => ({ ...caption, style: request.style }));
+			const insertion = buildCaptionTrackInsertion({
+				editor: this.editor,
+				captions,
+			});
+			if (!insertion) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: "Transcription produced no caption cues",
+				};
+			}
+
+			this.editor.command.execute({ command: insertion.command });
+			await this.editor.save.flush();
+			this.recordCommittedState();
+			const result: AutomationTranscriptionAppliedResult = {
+				status: "applied",
+				operationId: request.operationId,
+				revision: this.revision,
+				language: transcription.language,
+				modelId: request.modelId,
+				transcript: transcription.text,
+				segmentCount: transcription.segments.length,
+				captionCount: captions.length,
+				trackId: insertion.trackId,
+				elementIds: insertion.elementIds,
+				snapshot: this.buildSnapshot(),
+			};
+			this.transcriptionOperations.set(request.operationId, {
+				fingerprint,
+				result,
+			});
+			return result;
+		} catch (error) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason:
+					error instanceof Error
+						? error.message
+						: "timeline transcription failed",
+			};
+		}
 	}
 
 	private async attachMatteNow(
@@ -1431,6 +1546,7 @@ export class EditorAutomation {
 		this.appliedOperations.clear();
 		this.importedOperations.clear();
 		this.importedSubtitleOperations.clear();
+		this.transcriptionOperations.clear();
 		this.exportedOperations.clear();
 		this.attachedMatteOperations.clear();
 		this.editor.command.clear();

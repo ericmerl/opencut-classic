@@ -10,6 +10,7 @@ import type {
 	AutomationExportSubtitlesRequest,
 	AutomationOpenProjectRequest,
 	AutomationTransferSourceRequest,
+	AutomationTranscriptionRequest,
 } from "./types";
 import type { AutomationTimelineQueryRequest } from "./timeline-query";
 
@@ -76,6 +77,12 @@ type BridgeRequest =
 			id: string;
 			method: "export_subtitles";
 			params: AutomationExportSubtitlesRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "transcribe_timeline";
+			params: AutomationTranscriptionRequest;
 	  }
 	| {
 			kind: "request";
@@ -212,6 +219,8 @@ export class AutomationBridgeClient {
 				return this.automation.importSubtitles(message.params);
 			case "export_subtitles":
 				return this.automation.exportSubtitles(message.params);
+			case "transcribe_timeline":
+				return this.automation.transcribeTimeline(message.params);
 			case "attach_matte":
 				return this.automation.attachMatte(message.params);
 			case "transfer_source_media":
