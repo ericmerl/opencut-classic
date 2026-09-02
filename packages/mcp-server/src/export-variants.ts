@@ -59,6 +59,7 @@ export interface ExportBatchInput {
 	batchId: string;
 	projectId: string;
 	expectedRevision: number;
+	expectedProjectContentHash?: string;
 	variants: ExportBatchVariantInput[];
 }
 
@@ -72,6 +73,22 @@ export interface ExpandedExportVariant {
 export function expandExportBatch(
 	input: ExportBatchInput,
 ): ExpandedExportVariant[] {
+	if (
+		input.expectedProjectContentHash !== undefined &&
+		!/^[a-f0-9]{64}$/.test(input.expectedProjectContentHash)
+	) {
+		throw new Error(
+			"expectedProjectContentHash must be 64 lowercase hex characters",
+		);
+	}
+	if (
+		input.bridgeProtocolVersion === 2 &&
+		input.expectedProjectContentHash === undefined
+	) {
+		throw new Error(
+			"production protocol v2 export batches require expectedProjectContentHash",
+		);
+	}
 	const variantIds = new Set<string>();
 	const outputPaths = new Set<string>();
 	return input.variants.map((variant) => {
@@ -110,6 +127,9 @@ export function expandExportBatch(
 				projectId: input.projectId,
 				operationId: `export-batch:${input.batchId}:${variant.variantId}`,
 				expectedRevision: input.expectedRevision,
+				...(input.expectedProjectContentHash
+					? { expectedProjectContentHash: input.expectedProjectContentHash }
+					: {}),
 				outputPath,
 				format,
 				quality: variant.quality ?? preset.quality,

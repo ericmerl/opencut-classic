@@ -860,6 +860,31 @@ export const openProjectInputSchema = z.object({
 	projectId: z.string().min(1),
 });
 
+export const saveProjectInputSchema = withConnectionAffinity(
+	z.object({
+		projectId: z.string().min(1),
+		sceneId: z.string().min(1).optional(),
+		operationId: z.string().min(1),
+		expectedRevision: z.number().int().nonnegative(),
+		expectedContentHash: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.optional(),
+	}),
+).superRefine((value, context) => {
+	if (value.bridgeProtocolVersion === 2 && !value.expectedContentHash) {
+		context.addIssue({
+			code: "custom",
+			path: ["expectedContentHash"],
+			message: "bridge protocol v2 requires expectedContentHash",
+		});
+	}
+});
+
+export const getSaveReceiptInputSchema = z.object({
+	operationId: z.string().min(1),
+});
+
 export const getExportReceiptInputSchema = z.object({
 	operationId: z.string().min(1),
 });
@@ -876,6 +901,10 @@ export const exportProjectInputSchema = z.object({
 	projectId: z.string().min(1),
 	operationId: z.string().min(1),
 	expectedRevision: z.number().int().nonnegative(),
+	expectedProjectContentHash: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.optional(),
 	outputPath: z.string().min(1),
 	format: z.enum(["mp4", "webm"]),
 	quality: z.enum(["low", "medium", "high", "very_high"]).default("high"),
@@ -912,6 +941,10 @@ export const queueExportBatchInputSchema = z
 		batchId: z.string().trim().min(1),
 		projectId: z.string().min(1),
 		expectedRevision: z.number().int().nonnegative(),
+		expectedProjectContentHash: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.optional(),
 		variants: z.array(exportBatchVariantSchema).min(1).max(20),
 	})
 	.superRefine((value, context) => {

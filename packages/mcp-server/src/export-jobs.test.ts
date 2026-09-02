@@ -114,7 +114,12 @@ describe("ExportJobQueue", () => {
 			connectionIdentity: reconnectedIdentity,
 			request: async (_method, _params, _timeout, expectedIdentity) => {
 				openedWith = expectedIdentity;
-				return { status: "opened", projectId: "project-1" };
+				return {
+					status: "opened",
+					projectId: "project-1",
+					revision: 0,
+					snapshot: { contentIdentity: hashedContentIdentity("d") },
+				};
 			},
 		});
 		const queue = new ExportJobQueue(
@@ -134,6 +139,7 @@ describe("ExportJobQueue", () => {
 				...exportInput(directory),
 				bridgeProtocolVersion: 2,
 				expectedConnectionIdentity: queuedIdentity,
+				expectedProjectContentHash: "d".repeat(64),
 			},
 		});
 
@@ -142,6 +148,7 @@ describe("ExportJobQueue", () => {
 		expect(processed).toMatchObject({ status: "completed" });
 		expect(openedWith).toEqual(reconnectedIdentity);
 		expect(exportedWith).toMatchObject({
+			expectedRevision: 0,
 			expectedConnectionIdentity: reconnectedIdentity,
 			requestConnectionIdentity: queuedIdentity,
 		});
@@ -170,6 +177,7 @@ describe("ExportJobQueue", () => {
 				...exportInput(directory),
 				bridgeProtocolVersion: 2,
 				expectedConnectionIdentity: identity("editor-1", "session-1", 1),
+				expectedProjectContentHash: "d".repeat(64),
 			},
 		});
 
@@ -180,6 +188,27 @@ describe("ExportJobQueue", () => {
 			lastError: expect.stringContaining("STALE_CONNECTION"),
 		});
 		expect(requests).toBe(0);
+		queue.stop();
+	});
+
+	test("rejects a durable v2 job without a pinned project content hash", async () => {
+		const queue = new ExportJobQueue(
+			fakeBridge({ connected: false }),
+			{ export: async () => ({ status: "exported" }) },
+			new ExportJobStore(directory),
+			{ autoRun: false },
+		);
+
+		expect(
+			queue.enqueue({
+				jobId: "job-unpinned",
+				input: {
+					...exportInput(directory),
+					bridgeProtocolVersion: 2,
+					expectedConnectionIdentity: identity("editor-1", "session-1", 1),
+				},
+			}),
+		).rejects.toThrow("require expectedProjectContentHash");
 		queue.stop();
 	});
 });
@@ -193,6 +222,18 @@ function exportInput(directory: string) {
 		format: "mp4" as const,
 		quality: "high" as const,
 		includeAudio: true,
+	};
+}
+
+function hashedContentIdentity(seed: string) {
+	return {
+		status: "hashed",
+		hash: {
+			algorithm: "SHA-256",
+			digest: seed.repeat(64),
+			projection: "opencut-project-content",
+			projectionVersion: 1,
+		},
 	};
 }
 

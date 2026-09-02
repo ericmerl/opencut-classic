@@ -28,13 +28,18 @@ describe("platform export batches", () => {
 	});
 
 	test("expands platform presets into independent canvas-safe exports", () => {
-		const variants = expandExportBatch(batchInput(directory));
+		const input = batchInput(directory);
+		input.bridgeProtocolVersion = 2;
+		input.expectedConnectionIdentity = identity();
+		input.expectedProjectContentHash = "e".repeat(64);
+		const variants = expandExportBatch(input);
 
 		expect(variants).toHaveLength(2);
 		expect(variants[0]).toMatchObject({
 			variantId: "vertical",
 			preset: "tiktok_9_16",
 			input: {
+				expectedProjectContentHash: "e".repeat(64),
 				canvasSize: { width: 1080, height: 1920 },
 				fps: { numerator: 30, denominator: 1 },
 				format: "mp4",
@@ -85,6 +90,32 @@ describe("platform export batches", () => {
 			"duplicate export output path",
 		);
 	});
+
+	test("rejects an unpinned v2 batch before persisting any batch or jobs", async () => {
+		const batchDirectory = join(directory, "unpinned-batches");
+		const jobDirectory = join(directory, "unpinned-jobs");
+		const jobStore = new ExportJobStore(jobDirectory);
+		const queue = new ExportJobQueue(
+			fakeBridge(),
+			{ export: async () => ({ status: "exported" }) },
+			jobStore,
+			{ autoRun: false },
+		);
+		const batchStore = new ExportBatchStore(batchDirectory);
+		const batches = new ExportBatchQueue(queue, batchStore);
+		const input = batchInput(directory);
+		input.bridgeProtocolVersion = 2;
+		input.expectedConnectionIdentity = identity();
+
+		await expect(batches.enqueue(input)).rejects.toThrow(
+			"require expectedProjectContentHash",
+		);
+		expect(
+			await new ExportBatchStore(batchDirectory).get(input.batchId),
+		).toBeNull();
+		expect(await new ExportJobStore(jobDirectory).list()).toEqual([]);
+		queue.stop();
+	});
 });
 
 function batchInput(directory: string): ExportBatchInput {
@@ -115,5 +146,14 @@ function fakeBridge(): PersistentExportJobBridge {
 		exportTickets: {
 			create: async (path) => ({ url: "http://fixture", outputPath: path }),
 		},
+	};
+}
+
+function identity() {
+	return {
+		serverInstanceId: "server-1",
+		editorInstanceId: "editor-1",
+		editorSessionId: "session-1",
+		connectionGeneration: 1,
 	};
 }

@@ -224,7 +224,7 @@ export class EditorBridge {
 				{ expectedIdentity: requestIdentity, actualIdentity: identity },
 			);
 		}
-		this.assertObservedRevision(socket, params);
+		this.assertObservedRevision(socket, method, params);
 		const id = randomUUID();
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -453,7 +453,7 @@ export class EditorBridge {
 			return;
 		}
 		if (message.ok === true) {
-			this.recordObservedRevision(socket, message.result);
+			this.recordObservedRevision(socket, pending.method, message.result);
 			pending.resolve(
 				withConnectionIdentity(
 					message.result,
@@ -542,9 +542,14 @@ export class EditorBridge {
 		this.pending.clear();
 	}
 
-	private assertObservedRevision(socket: EditorSocket, params: unknown): void {
+	private assertObservedRevision(
+		socket: EditorSocket,
+		method: string,
+		params: unknown,
+	): void {
 		if (
 			socket.data.protocolVersion !== CURRENT_BRIDGE_PROTOCOL_VERSION ||
+			method === "save_project" ||
 			!params ||
 			typeof params !== "object"
 		) {
@@ -571,7 +576,19 @@ export class EditorBridge {
 		);
 	}
 
-	private recordObservedRevision(socket: EditorSocket, result: unknown): void {
+	private recordObservedRevision(
+		socket: EditorSocket,
+		method: string,
+		result: unknown,
+	): void {
+		if (
+			method === "save_project" &&
+			result &&
+			typeof result === "object" &&
+			(result as Record<string, unknown>).status === "replayed"
+		) {
+			return;
+		}
 		const version = readProjectVersion(result);
 		if (version) {
 			socket.data.observedProjectRevisions.set(

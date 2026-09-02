@@ -10,11 +10,21 @@ import {
 	isStorageQuotaExceededError,
 	readStorageQuotaStatus,
 } from "./quota";
-import type {
-	MediaAssetData,
-	StorageConfig,
-	SerializedProject,
-	SerializedScene,
+import {
+	PROJECT_STORAGE_ENVELOPE_VERSION,
+	SAVE_RECEIPT_ENVELOPE_VERSION,
+	SAVE_RECEIPT_STORAGE_SCHEMA_VERSION,
+	type FreshProjectReadback,
+	type MediaAssetData,
+	type PersistedMediaReadback,
+	type PersistedProjectWriteRecord,
+	type PersistedSaveReceipt,
+	type PersistedSaveReceiptEnvelope,
+	type StorageConfig,
+	type SerializedProject,
+	type SerializedProjectEnvelope,
+	type SerializedScene,
+	type StoredProjectRecord,
 } from "./types";
 import type { SavedSoundsData, SavedSound, SoundEffect } from "@/sounds/types";
 import {
@@ -23,6 +33,8 @@ import {
 } from "@/services/storage/migrations";
 import type { Bookmark, SceneTracks, TScene } from "@/timeline";
 import { roundMediaTime } from "@/wasm";
+import { resolvePersistedMediaIdentity } from "@/media/content-identity";
+import { parseSaveReceiptEnvelope } from "./save-receipt-storage";
 
 function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 	if (!Array.isArray(raw)) return [];
@@ -52,10 +64,12 @@ function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 }
 
 class StorageService {
-	private projectsAdapter: IndexedDBAdapter<SerializedProject>;
+	private projectsAdapter: IndexedDBAdapter<StoredProjectRecord>;
 	private savedSoundsAdapter: IndexedDBAdapter<SavedSoundsData>;
+	private saveReceiptsAdapter: IndexedDBAdapter<unknown>;
 	private config: StorageConfig;
 	private migrationsPromise: Promise<void> | null = null;
+	private projectWriteTails = new Map<string, Promise<void>>();
 
 	constructor() {
 		this.config = {
@@ -65,15 +79,24 @@ class StorageService {
 			version: 1,
 		};
 
-		this.projectsAdapter = new IndexedDBAdapter<SerializedProject>({
-			dbName: this.config.projectsDb,
-			storeName: "projects",
-			version: this.config.version,
-		});
+		this.projectsAdapter = this.createProjectsAdapter();
 
 		this.savedSoundsAdapter = new IndexedDBAdapter<SavedSoundsData>({
 			dbName: this.config.savedSoundsDb,
 			storeName: "saved-sounds",
+			version: this.config.version,
+		});
+		this.saveReceiptsAdapter = new IndexedDBAdapter<unknown>({
+			dbName: "opencut-save-receipts",
+			storeName: "receipts",
+			version: 1,
+		});
+	}
+
+	private createProjectsAdapter(): IndexedDBAdapter<StoredProjectRecord> {
+		return new IndexedDBAdapter<StoredProjectRecord>({
+			dbName: this.config.projectsDb,
+			storeName: "projects",
 			version: this.config.version,
 		});
 	}
@@ -131,7 +154,20 @@ class StorageService {
 		};
 	}
 
-	async saveProject({ project }: { project: TProject }): Promise<void> {
+	async saveProject({
+		project,
+	}: {
+		project: TProject;
+	}): Promise<PersistedProjectWriteRecord> {
+		return this.enqueueProjectWrite({
+			projectId: project.metadata.id,
+			write: () => this.writeProjectSnapshot(project),
+		});
+	}
+
+	private async writeProjectSnapshot(
+		project: TProject,
+	): Promise<PersistedProjectWriteRecord> {
 		const duration =
 			project.metadata.duration ??
 			getProjectDurationFromScenes({ scenes: project.scenes });
@@ -161,10 +197,80 @@ class StorageService {
 			timelineViewState: project.timelineViewState,
 		};
 
+		const snapshotAt = new Date().toISOString();
+		const priorEnvelope = asProjectEnvelope(
+			await this.projectsAdapter.get(project.metadata.id),
+		);
+		const writeVersion = (priorEnvelope?.writeVersion ?? 0) + 1;
+		const completedAt = new Date().toISOString();
+		const envelope: SerializedProjectEnvelope = {
+			id: project.metadata.id,
+			envelopeVersion: PROJECT_STORAGE_ENVELOPE_VERSION,
+			storageSchemaVersion: this.config.version,
+			writeVersion,
+			snapshotAt,
+			completedAt,
+			project: serializedProject,
+		};
 		await this.projectsAdapter.set({
 			key: project.metadata.id,
-			value: serializedProject,
+			value: envelope,
 		});
+		return {
+			projectId: project.metadata.id,
+			storageSchemaVersion: this.config.version,
+			writeVersion,
+			snapshotAt,
+			completedAt,
+		};
+	}
+
+	private async enqueueProjectWrite<T>({
+		projectId,
+		write,
+	}: {
+		projectId: string;
+		write: () => Promise<T>;
+	}): Promise<T> {
+		const prior = this.projectWriteTails.get(projectId) ?? Promise.resolve();
+		let release!: () => void;
+		const tail = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		this.projectWriteTails.set(projectId, tail);
+		await prior.catch(() => undefined);
+		try {
+			return await write();
+		} finally {
+			release();
+			if (this.projectWriteTails.get(projectId) === tail) {
+				this.projectWriteTails.delete(projectId);
+			}
+		}
+	}
+
+	async saveSaveReceipt<T>(receipt: PersistedSaveReceipt<T>): Promise<void> {
+		await this.saveReceiptsAdapter.set({
+			key: receipt.operationId,
+			value: {
+				...receipt,
+				id: receipt.operationId,
+				envelopeVersion: SAVE_RECEIPT_ENVELOPE_VERSION,
+				storageSchemaVersion: SAVE_RECEIPT_STORAGE_SCHEMA_VERSION,
+			} satisfies PersistedSaveReceiptEnvelope<T>,
+		});
+	}
+
+	async loadSaveReceipt<T extends { operationId: string }>({
+		operationId,
+		parseResult,
+	}: {
+		operationId: string;
+		parseResult: (value: unknown) => T;
+	}): Promise<PersistedSaveReceiptEnvelope<T> | null> {
+		const value = await this.saveReceiptsAdapter.get(operationId);
+		if (value === null) return null;
+		return parseSaveReceiptEnvelope({ value, operationId, parseResult });
 	}
 
 	async loadProject({
@@ -173,7 +279,9 @@ class StorageService {
 		id: string;
 	}): Promise<{ project: TProject } | null> {
 		await this.ensureMigrations();
-		const serializedProject = await this.projectsAdapter.get(id);
+		const serializedProject = unwrapStoredProject(
+			await this.projectsAdapter.get(id),
+		);
 
 		if (!serializedProject) return null;
 
@@ -224,6 +332,60 @@ class StorageService {
 		return { project };
 	}
 
+	async loadProjectFresh({
+		id,
+	}: {
+		id: string;
+	}): Promise<FreshProjectReadback | null> {
+		await this.ensureMigrations();
+		const stored = await this.createProjectsAdapter().get(id);
+		const envelope = asProjectEnvelope(stored);
+		const serialized = unwrapStoredProject(stored);
+		if (!serialized) return null;
+		if (!envelope?.completedAt) {
+			throw new Error(
+				"Persisted project is missing a completed write envelope",
+			);
+		}
+		const project = deserializeProject(serialized);
+		const { mediaMetadataAdapter, mediaAssetsAdapter } =
+			this.getProjectMediaAdapters({ projectId: id });
+		const mediaAssets: PersistedMediaReadback[] = [];
+		for (const mediaId of await mediaMetadataAdapter.list()) {
+			const [metadata, file] = await Promise.all([
+				mediaMetadataAdapter.get(mediaId),
+				mediaAssetsAdapter.get(mediaId),
+			]);
+			if (!metadata || !file) continue;
+			const resolved = await resolvePersistedMediaIdentity({
+				file,
+				storedIdentity: metadata.sourceIdentity,
+			});
+			if (resolved.backfilled) {
+				await mediaMetadataAdapter.set({
+					key: metadata.id,
+					value: { ...metadata, sourceIdentity: resolved.identity },
+				});
+			}
+			mediaAssets.push({
+				...metadata,
+				file,
+				sourceIdentity: resolved.identity,
+			});
+		}
+		return {
+			project,
+			mediaAssets,
+			persistence: {
+				projectId: id,
+				storageSchemaVersion: envelope.storageSchemaVersion,
+				writeVersion: envelope.writeVersion,
+				snapshotAt: envelope.snapshotAt,
+				completedAt: envelope.completedAt,
+			},
+		};
+	}
+
 	async loadAllProjects(): Promise<TProject[]> {
 		const projectIds = await this.projectsAdapter.list();
 		const projects: TProject[] = [];
@@ -242,7 +404,12 @@ class StorageService {
 
 	async loadAllProjectsMetadata(): Promise<TProjectMetadata[]> {
 		await this.ensureMigrations();
-		const serializedProjects = await this.projectsAdapter.getAll();
+		const serializedProjects = (await this.projectsAdapter.getAll()).flatMap(
+			(record) => {
+				const project = unwrapStoredProject(record);
+				return project ? [project] : [];
+			},
+		);
 
 		const metadata: TProjectMetadata[] = [];
 		for (const serializedProject of serializedProjects) {
@@ -309,6 +476,7 @@ class StorageService {
 			ephemeral: mediaAsset.ephemeral,
 			sourceFingerprint: mediaAsset.sourceFingerprint,
 			role: mediaAsset.role,
+			sourceIdentity: mediaAsset.sourceIdentity,
 		};
 
 		try {
@@ -371,6 +539,17 @@ class StorageService {
 			url = URL.createObjectURL(file);
 		}
 
+		const resolvedIdentity = await resolvePersistedMediaIdentity({
+			file,
+			storedIdentity: metadata.sourceIdentity,
+		});
+		if (resolvedIdentity.backfilled) {
+			await mediaMetadataAdapter.set({
+				key: metadata.id,
+				value: { ...metadata, sourceIdentity: resolvedIdentity.identity },
+			});
+		}
+
 		return {
 			id: metadata.id,
 			name: metadata.name,
@@ -386,6 +565,7 @@ class StorageService {
 			ephemeral: metadata.ephemeral,
 			sourceFingerprint: metadata.sourceFingerprint,
 			role: metadata.role,
+			sourceIdentity: resolvedIdentity.identity,
 		};
 	}
 
@@ -581,3 +761,57 @@ class StorageService {
 
 export const storageService = new StorageService();
 export { StorageService };
+
+function asProjectEnvelope(
+	value: StoredProjectRecord | null,
+): SerializedProjectEnvelope | null {
+	if (
+		value &&
+		"envelopeVersion" in value &&
+		value.envelopeVersion === PROJECT_STORAGE_ENVELOPE_VERSION &&
+		"project" in value
+	) {
+		return value as SerializedProjectEnvelope;
+	}
+	return null;
+}
+
+function unwrapStoredProject(
+	value: StoredProjectRecord | null,
+): SerializedProject | null {
+	if (!value) return null;
+	const envelope = asProjectEnvelope(value);
+	return envelope ? envelope.project : (value as SerializedProject);
+}
+
+function deserializeProject(serializedProject: SerializedProject): TProject {
+	const scenes =
+		serializedProject.scenes?.map((scene) => ({
+			id: scene.id,
+			name: scene.name,
+			isMain: scene.isMain,
+			tracks: scene.tracks,
+			bookmarks: normalizeBookmarks({ raw: scene.bookmarks }),
+			createdAt: new Date(scene.createdAt),
+			updatedAt: new Date(scene.updatedAt),
+		})) ?? [];
+	return {
+		metadata: {
+			id: serializedProject.metadata.id,
+			name: serializedProject.metadata.name,
+			thumbnail: serializedProject.metadata.thumbnail,
+			duration: roundMediaTime({
+				time:
+					serializedProject.metadata.duration ??
+					getProjectDurationFromScenes({ scenes }),
+			}),
+			createdAt: new Date(serializedProject.metadata.createdAt),
+			updatedAt: new Date(serializedProject.metadata.updatedAt),
+		},
+		scenes,
+		currentSceneId: serializedProject.currentSceneId || "",
+		settings: serializedProject.settings,
+		version: serializedProject.version,
+		timelineViewState: serializedProject.timelineViewState,
+	};
+}

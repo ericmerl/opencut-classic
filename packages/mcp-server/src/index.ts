@@ -30,6 +30,8 @@ import {
 	listExportBatchesInputSchema,
 	exportSubtitlesInputSchema,
 	openProjectInputSchema,
+	saveProjectInputSchema,
+	getSaveReceiptInputSchema,
 	queueExportInputSchema,
 	queueExportBatchInputSchema,
 	recordExportInspectionInputSchema,
@@ -176,6 +178,28 @@ function createServer(): McpServer {
 			inputSchema: withConnectionAffinity(z.object({})),
 		},
 		async (params) => toolResult(await bridge.request("read_project", params)),
+	);
+
+	server.registerTool(
+		"opencut_save_project",
+		{
+			description:
+				"Flush every queued editor write, reopen the persisted project and media through fresh storage handles, verify its canonical content hash, and return a durable save receipt.",
+			inputSchema: saveProjectInputSchema,
+		},
+		async (params) =>
+			toolResult(await bridge.request("save_project", params, 5 * 60_000)),
+	);
+
+	server.registerTool(
+		"opencut_get_save_receipt",
+		{
+			description:
+				"Read a previously verified browser-persisted save receipt by operation ID.",
+			inputSchema: withConnectionAffinity(getSaveReceiptInputSchema),
+		},
+		async (params) =>
+			toolResult(await bridge.request("get_save_receipt", params)),
 	);
 
 	server.registerTool(
@@ -425,6 +449,7 @@ function createServer(): McpServer {
 				bridgeProtocolVersion: result.bridgeProtocolVersion,
 				connectionIdentity: result.connectionIdentity,
 				requestConnectionIdentity: result.requestConnectionIdentity,
+				contentIdentity: result.contentIdentity,
 				...receipt,
 			};
 			completedSubtitleExports.set(operationId, {
@@ -733,6 +758,7 @@ async function normalizeAudio(input: {
 	const beforeResult = await bridge.request(
 		"analyze_audio",
 		{
+			...bridgeProtocolContext(input),
 			projectId: input.projectId,
 			expectedRevision: input.expectedRevision,
 		},
@@ -766,6 +792,7 @@ async function normalizeAudio(input: {
 	const mutation = await bridge.request(
 		"apply_edit_plan",
 		{
+			...bridgeProtocolContext(input),
 			projectId: input.projectId,
 			operationId: input.operationId,
 			expectedRevision: input.expectedRevision,
@@ -778,7 +805,11 @@ async function normalizeAudio(input: {
 	if (!isAppliedMutation(mutation)) return mutation;
 	const afterResult = await bridge.request(
 		"analyze_audio",
-		{ projectId: input.projectId, expectedRevision: mutation.revision },
+		{
+			...bridgeProtocolContext(input),
+			projectId: input.projectId,
+			expectedRevision: mutation.revision,
+		},
 		5 * 60_000,
 		expectedIdentity,
 	);
@@ -795,6 +826,10 @@ async function normalizeAudio(input: {
 		bridgeProtocolVersion: mutation.bridgeProtocolVersion ?? null,
 		connectionIdentity: mutation.connectionIdentity ?? null,
 		requestConnectionIdentity: expectedIdentity ?? null,
+		contentIdentity:
+			(snapshot?.contentIdentity as unknown) ??
+			(isAnalyzedAudio(afterResult) ? afterResult.contentIdentity : null) ??
+			beforeResult.contentIdentity,
 		targetLufs: input.targetLufs,
 		maxTruePeakDbtp: input.maxTruePeakDbtp,
 		appliedGainDb,
@@ -829,6 +864,7 @@ function isSerializedSubtitles(value: unknown): value is {
 	bridgeProtocolVersion?: 1 | 2;
 	connectionIdentity?: BridgeConnectionIdentity;
 	requestConnectionIdentity?: BridgeConnectionIdentity;
+	contentIdentity?: unknown;
 } {
 	if (!value || typeof value !== "object") return false;
 	const record = value as Record<string, unknown>;
@@ -869,6 +905,23 @@ function expectedV2Identity(input: {
 		throw new Error("bridge protocol v2 requires expectedConnectionIdentity");
 	}
 	return input.expectedConnectionIdentity;
+}
+
+function bridgeProtocolContext(input: {
+	bridgeProtocolVersion?: 1 | 2;
+	expectedConnectionIdentity?: BridgeConnectionIdentity;
+}): {
+	bridgeProtocolVersion?: 1 | 2;
+	expectedConnectionIdentity?: BridgeConnectionIdentity;
+} {
+	return {
+		...(input.bridgeProtocolVersion !== undefined
+			? { bridgeProtocolVersion: input.bridgeProtocolVersion }
+			: {}),
+		...(input.expectedConnectionIdentity
+			? { expectedConnectionIdentity: input.expectedConnectionIdentity }
+			: {}),
+	};
 }
 
 function isActivatedProject(

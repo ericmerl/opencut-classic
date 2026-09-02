@@ -11,6 +11,8 @@ import type {
 	AutomationImportSubtitlesRequest,
 	AutomationExportSubtitlesRequest,
 	AutomationOpenProjectRequest,
+	AutomationSaveProjectRequest,
+	AutomationGetSaveReceiptRequest,
 	AutomationStickerSearchRequest,
 	AutomationTransferSourceRequest,
 	AutomationTranscriptionRequest,
@@ -72,6 +74,18 @@ type BridgeRequest =
 	| {
 			kind: "request";
 			id: string;
+			method: "save_project";
+			params: AutomationSaveProjectRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "get_save_receipt";
+			params: AutomationGetSaveReceiptRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
 			method: "export_project";
 			params: AutomationExportRequest;
 	  }
@@ -127,7 +141,11 @@ type BridgeRequest =
 			kind: "request";
 			id: string;
 			method: "undo";
-			params: { projectId: string; expectedRevision: number };
+			params: {
+				projectId: string;
+				expectedRevision: number;
+				bridgeProtocolVersion?: number;
+			};
 	  } & { target?: AutomationConnectionIdentity });
 
 type BridgeRequestWithTarget = BridgeRequest & {
@@ -410,6 +428,10 @@ export class AutomationBridgeClient {
 				return this.automation.createProject(message.params);
 			case "open_project":
 				return this.automation.openProject(message.params);
+			case "save_project":
+				return this.automation.saveProject(message.params);
+			case "get_save_receipt":
+				return this.automation.getSaveReceipt(message.params);
 			case "apply_edit_plan":
 				return this.automation.applyEditPlan(message.params);
 			case "export_project":

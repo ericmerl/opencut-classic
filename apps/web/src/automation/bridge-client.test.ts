@@ -72,6 +72,25 @@ describe("automation editor instance identity", () => {
 			connectionIdentity: firstIdentity,
 			requestConnectionIdentity: firstIdentity,
 		});
+		const saved = await bridge.request(
+			"save_project",
+			{
+				projectId: "project-1",
+				sceneId: "scene-1",
+				operationId: "save-1",
+				expectedRevision: 0,
+				expectedContentHash: "a".repeat(64),
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: firstIdentity,
+			},
+			1_000,
+			firstIdentity,
+		);
+		expect(saved).toMatchObject({
+			status: "saved",
+			receiptId: "receipt-1",
+			connectionIdentity: firstIdentity,
+		});
 
 		client.stop();
 		expect(client.getStatus()).toEqual({
@@ -159,6 +178,11 @@ function createClient(url: string): AutomationBridgeClient {
 			projectId: "project-1",
 			sceneId: "scene-1",
 			revision: 0,
+		}),
+		saveProject: (request: { operationId: string }) => ({
+			status: "saved",
+			operationId: request.operationId,
+			receiptId: "receipt-1",
 		}),
 	} as unknown as EditorAutomation;
 	const client = new AutomationBridgeClient(automation, {

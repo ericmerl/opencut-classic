@@ -4,6 +4,7 @@ import type {
 	AutomationProjectSnapshot,
 	AutomationTrackSnapshot,
 } from "./types";
+import type { ProjectContentHashResult } from "./project-content-hash";
 
 export interface AutomationTimelineQueryRequest {
 	projectId: string;
@@ -76,6 +77,7 @@ export type AutomationTimelineQueryResult =
 			projectId: string;
 			sceneId: string;
 			revision: number;
+			contentIdentity: ProjectContentHashResult;
 			projectDuration: MediaTime;
 			range: { startTime: MediaTime; endTime: MediaTime };
 			filters: { trackIds?: string[]; elementTypes?: string[] };
@@ -382,6 +384,7 @@ export function queryTimelineSnapshot({
 		projectId: snapshot.projectId,
 		sceneId: snapshot.sceneId,
 		revision: snapshot.revision,
+		contentIdentity: snapshot.contentIdentity,
 		projectDuration,
 		range: { startTime, endTime },
 		filters: {

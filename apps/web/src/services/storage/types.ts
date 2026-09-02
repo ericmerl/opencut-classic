@@ -1,4 +1,5 @@
 import type { MediaType } from "@/media/types";
+import type { MediaSourceIdentity } from "@/media/content-identity";
 import type {
 	TProject,
 	TProjectMetadata,
@@ -29,6 +30,7 @@ export interface MediaAssetData {
 	thumbnailUrl?: string;
 	sourceFingerprint?: string;
 	role?: "timeline" | "matte" | "audio-replacement";
+	sourceIdentity?: MediaSourceIdentity;
 }
 
 export type SerializedScene = Omit<TScene, "createdAt" | "updatedAt"> & {
@@ -49,6 +51,57 @@ export type SerializedProject = Omit<TProject, "metadata" | "scenes"> & {
 	scenes: SerializedScene[];
 	timelineViewState?: TTimelineViewState;
 };
+
+export const PROJECT_STORAGE_ENVELOPE_VERSION = 1 as const;
+
+export interface SerializedProjectEnvelope {
+	id: string;
+	envelopeVersion: typeof PROJECT_STORAGE_ENVELOPE_VERSION;
+	storageSchemaVersion: number;
+	writeVersion: number;
+	snapshotAt: string;
+	completedAt: string | null;
+	project: SerializedProject;
+}
+
+export type StoredProjectRecord = SerializedProject | SerializedProjectEnvelope;
+
+export interface PersistedProjectWriteRecord {
+	projectId: string;
+	storageSchemaVersion: number;
+	writeVersion: number;
+	snapshotAt: string;
+	completedAt: string;
+}
+
+export interface PersistedMediaReadback extends MediaAssetData {
+	file: File;
+	sourceIdentity: MediaSourceIdentity;
+}
+
+export interface FreshProjectReadback {
+	project: TProject;
+	mediaAssets: PersistedMediaReadback[];
+	persistence: PersistedProjectWriteRecord;
+}
+
+export const SAVE_RECEIPT_ENVELOPE_VERSION = 1 as const;
+export const SAVE_RECEIPT_STORAGE_SCHEMA_VERSION = 1 as const;
+
+export interface PersistedSaveReceipt<T> {
+	operationId: string;
+	fingerprint: string;
+	result: T;
+	recordedAt: string;
+}
+
+export interface PersistedSaveReceiptEnvelope<
+	T,
+> extends PersistedSaveReceipt<T> {
+	id: string;
+	envelopeVersion: typeof SAVE_RECEIPT_ENVELOPE_VERSION;
+	storageSchemaVersion: typeof SAVE_RECEIPT_STORAGE_SCHEMA_VERSION;
+}
 
 export interface StorageConfig {
 	projectsDb: string;

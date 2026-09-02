@@ -54,6 +54,14 @@ export class ExportJobQueue {
 		jobId: string;
 		input: ExportProjectInput;
 	}): Promise<{ job: ExportJobRecord; replayed: boolean }> {
+		if (
+			input.bridgeProtocolVersion === 2 &&
+			!input.expectedProjectContentHash
+		) {
+			throw new Error(
+				"production protocol v2 export jobs require expectedProjectContentHash",
+			);
+		}
 		const timestamp = new Date().toISOString();
 		const created = await this.store.create({
 			schemaVersion: 1,
@@ -208,7 +216,8 @@ export class ExportJobQueue {
 					resultReason(opened),
 				);
 			}
-			const result = await this.exports.export(executionInput);
+			const observedInput = bindJobToObservedProject(executionInput, opened);
+			const result = await this.exports.export(observedInput);
 			const status = result.status;
 			if (status === "exported" || status === "replayed") {
 				return this.finish(job.jobId, "completed", result, null);
@@ -275,6 +284,35 @@ function isProjectOpened(value: unknown): value is Record<string, unknown> {
 		isRecord(value) &&
 		(value.status === "opened" || value.status === "replayed")
 	);
+}
+
+function bindJobToObservedProject(
+	input: ExportProjectInput,
+	opened: Record<string, unknown>,
+): ExportProjectInput {
+	if (input.bridgeProtocolVersion !== 2) return input;
+	const expectedHash = input.expectedProjectContentHash;
+	const revision = opened.revision;
+	const snapshot = isRecord(opened.snapshot) ? opened.snapshot : opened;
+	const identity = snapshot.contentIdentity;
+	if (
+		!expectedHash ||
+		typeof revision !== "number" ||
+		!Number.isSafeInteger(revision) ||
+		revision < 0 ||
+		!isRecord(identity) ||
+		identity.status !== "hashed" ||
+		!isRecord(identity.hash) ||
+		identity.hash.projection !== "opencut-project-content" ||
+		identity.hash.projectionVersion !== 1 ||
+		identity.hash.algorithm !== "SHA-256" ||
+		identity.hash.digest !== expectedHash
+	) {
+		throw new Error(
+			"queued export project content no longer matches its pinned hash",
+		);
+	}
+	return { ...input, expectedRevision: revision };
 }
 
 function resultReason(value: unknown): string {

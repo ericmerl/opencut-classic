@@ -42,6 +42,17 @@ export interface TrackSubjectInput {
 	timeoutSeconds: number;
 }
 
+function bridgeProtocolContext(input: TrackSubjectInput) {
+	return {
+		...(input.bridgeProtocolVersion !== undefined
+			? { bridgeProtocolVersion: input.bridgeProtocolVersion }
+			: {}),
+		...(input.expectedConnectionIdentity
+			? { expectedConnectionIdentity: input.expectedConnectionIdentity }
+			: {}),
+	};
+}
+
 interface SubjectTracker {
 	track(
 		job: SubjectTrackerJob,
@@ -121,7 +132,7 @@ export class SubjectTrackingService {
 		const snapshot = asProjectSnapshot(
 			await this.bridge.request(
 				"read_project",
-				{},
+				bridgeProtocolContext(input),
 				undefined,
 				expectedIdentity,
 			),
@@ -164,6 +175,7 @@ export class SubjectTrackingService {
 				await this.bridge.request(
 					"transfer_source_media",
 					{
+						...bridgeProtocolContext(input),
 						projectId: input.projectId,
 						expectedRevision: input.expectedRevision,
 						trackId: input.trackId,
@@ -222,6 +234,7 @@ export class SubjectTrackingService {
 				await this.bridge.request(
 					"apply_edit_plan",
 					{
+						...bridgeProtocolContext(input),
 						projectId: input.projectId,
 						operationId: input.operationId,
 						expectedRevision: input.expectedRevision,

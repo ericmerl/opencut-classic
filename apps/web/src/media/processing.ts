@@ -6,6 +6,7 @@ import type { MediaAsset } from "@/media/types";
 import { readVideoFile } from "./mediabunny";
 import type { VideoFileData } from "./mediabunny";
 import { renderThumbnailDataUrl } from "./thumbnail";
+import { hashMediaBytes } from "./content-identity";
 
 export interface ProcessedMediaAsset extends Omit<MediaAsset, "id"> {}
 
@@ -126,6 +127,7 @@ export async function processMediaAssets({
 		let hasAudio: boolean | undefined;
 
 		try {
+			const contentHash = await hashMediaBytes(file);
 			if (fileType === "image") {
 				const result = await generateImageThumbnail({ imageFile: file });
 				thumbnailUrl = result.thumbnailUrl;
@@ -152,9 +154,7 @@ export async function processMediaAssets({
 					}
 				} catch (error) {
 					const message =
-						error instanceof Error
-							? error.message
-							: "Could not process video";
+						error instanceof Error ? error.message : "Could not process video";
 
 					toast.error(`Couldn't process ${file.name}`, {
 						description: message,
@@ -175,6 +175,7 @@ export async function processMediaAssets({
 				height,
 				fps,
 				hasAudio,
+				sourceIdentity: { kind: "local", contentHash },
 			});
 
 			await new Promise((resolve) => setTimeout(resolve, 0));

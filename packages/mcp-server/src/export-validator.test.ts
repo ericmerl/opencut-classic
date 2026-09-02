@@ -62,9 +62,38 @@ describe("ExportValidator", () => {
 			}),
 		).rejects.toThrow("includeAudio is false");
 	});
+
+	test("samples the ending from video duration when audio outlasts video", async () => {
+		const outputPath = join(directory, "audio-tail.mp4");
+		await createFixture(outputPath, { audioDuration: 1.25, shortest: false });
+		const validator = new ExportValidator(
+			new ExportReceiptStore(join(directory, "audio-tail-receipts")),
+			{ ffmpeg, ffprobe },
+		);
+
+		const validation = await validator.validate({
+			operationId: "audio-tail",
+			outputPath,
+			format: "mp4",
+			expectedWidth: 160,
+			expectedHeight: 90,
+			expectedFps: 10,
+			includeAudio: true,
+		});
+
+		expect(validation.durationSeconds).toBeGreaterThan(1);
+		expect(validation.frameSamples.at(-1)?.position).toBe("ending");
+		expect(validation.frameSamples.at(-1)?.timeSeconds).toBeCloseTo(0.8);
+	});
 });
 
-async function createFixture(outputPath: string): Promise<void> {
+async function createFixture(
+	outputPath: string,
+	{
+		audioDuration = 1,
+		shortest = true,
+	}: { audioDuration?: number; shortest?: boolean } = {},
+): Promise<void> {
 	const process = Bun.spawn(
 		[
 			ffmpeg,
@@ -77,8 +106,8 @@ async function createFixture(outputPath: string): Promise<void> {
 			"-f",
 			"lavfi",
 			"-i",
-			"sine=frequency=440:duration=1",
-			"-shortest",
+			`sine=frequency=440:duration=${audioDuration}`,
+			...(shortest ? ["-shortest"] : []),
 			"-c:v",
 			"libx264",
 			"-pix_fmt",

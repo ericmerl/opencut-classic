@@ -49,6 +49,9 @@ describe("ExportProjectService", () => {
 						},
 					};
 				}
+				if (method === "save_project") {
+					return verifiedSave("b");
+				}
 				if (method === "export_project") {
 					exportRequest = params;
 					return {
@@ -60,6 +63,7 @@ describe("ExportProjectService", () => {
 						outputPath: join(directory, "video.mp4"),
 						bytesWritten: 123,
 						sha256: "a".repeat(64),
+						contentIdentity: hashedContentIdentity("b"),
 					};
 				}
 				throw new Error(`unexpected method: ${method}`);
@@ -109,7 +113,7 @@ describe("ExportProjectService", () => {
 			inspection: { status: "pending", outputSha256: "a".repeat(64) },
 		});
 		expect(replay).toMatchObject({ status: "replayed", replayed: true });
-		expect(requestCount).toBe(2);
+		expect(requestCount).toBe(3);
 		expect(verifyCount).toBe(2);
 		expect(exportRequest).toMatchObject({
 			canvasSize: { width: 1080, height: 1080 },
@@ -169,6 +173,112 @@ describe("ExportProjectService", () => {
 		expect(ticketsCreated).toBe(0);
 	});
 
+	test("blocks v2 export before ticket creation when content identity is incomplete", async () => {
+		const connectionIdentity = identity("editor-1");
+		let ticketsCreated = 0;
+		const bridge: ExportProjectBridge = {
+			exportTickets: {
+				async create(path) {
+					ticketsCreated += 1;
+					return { url: "http://fixture", outputPath: path };
+				},
+			},
+			async request() {
+				return {
+					projectId: "project-1",
+					sceneId: "scene-1",
+					revision: 2,
+					settings: {
+						canvasSize: { width: 1080, height: 1920 },
+						fps: { numerator: 30, denominator: 1 },
+					},
+					contentIdentity: {
+						status: "blocked",
+						blockers: [{ code: "unverified-url-media" }],
+					},
+				};
+			},
+		};
+		const service = new ExportProjectService(
+			bridge,
+			new ExportReceiptStore(join(directory, "blocked-receipts")),
+			{
+				preflight: async () => undefined,
+				verifyOutput: async () => undefined,
+				validate: async () => {
+					throw new Error("validation should not run");
+				},
+			} as unknown as ExportValidator,
+		);
+		const result = await service.export({
+			...input(directory),
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: connectionIdentity,
+		});
+		expect(result).toMatchObject({
+			status: "content-identity-blocked",
+			contentIdentity: { status: "blocked" },
+		});
+		expect(ticketsCreated).toBe(0);
+	});
+
+	test("rejects a project hash change during rendering", async () => {
+		const connectionIdentity = identity("editor-1");
+		let requestCount = 0;
+		const bridge: ExportProjectBridge = {
+			exportTickets: {
+				async create(path) {
+					return { url: "http://fixture", outputPath: path };
+				},
+			},
+			async request(method) {
+				requestCount += 1;
+				if (method === "read_project") {
+					return {
+						projectId: "project-1",
+						sceneId: "scene-1",
+						revision: 2,
+						settings: {
+							canvasSize: { width: 1080, height: 1920 },
+							fps: { numerator: 30, denominator: 1 },
+						},
+						contentIdentity: hashedContentIdentity("b"),
+					};
+				}
+				if (method === "save_project") return verifiedSave("b");
+				return {
+					status: "exported",
+					outputPath: join(directory, "video.mp4"),
+					bytesWritten: 1,
+					sha256: "a".repeat(64),
+					contentIdentity: hashedContentIdentity("c"),
+				};
+			},
+		};
+		const service = new ExportProjectService(
+			bridge,
+			new ExportReceiptStore(join(directory, "mid-render-receipts")),
+			{
+				preflight: async () => undefined,
+				verifyOutput: async () => undefined,
+				validate: async () => {
+					throw new Error("validation should not run");
+				},
+			} as unknown as ExportValidator,
+		);
+		const result = await service.export({
+			...input(directory),
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: connectionIdentity,
+		});
+		expect(result).toMatchObject({
+			status: "content-hash-conflict",
+			expectedProjectContentHash: "b".repeat(64),
+			actualProjectContentHash: "c".repeat(64),
+		});
+		expect(requestCount).toBe(3);
+	});
+
 	test("preserves the immutable envelope on project mismatch and revision conflict", async () => {
 		const connectionIdentity = identity("editor-1");
 		const bridge: ExportProjectBridge = {
@@ -185,6 +295,7 @@ describe("ExportProjectService", () => {
 					bridgeProtocolVersion: 2,
 					connectionIdentity,
 					requestConnectionIdentity: connectionIdentity,
+					contentIdentity: hashedContentIdentity(),
 					settings: {
 						canvasSize: { width: 1080, height: 1920 },
 						fps: { numerator: 30, denominator: 1 },
@@ -259,5 +370,26 @@ function identity(editorInstanceId: string): BridgeConnectionIdentity {
 		editorInstanceId,
 		editorSessionId: "session-1",
 		connectionGeneration: 1,
+	};
+}
+
+function hashedContentIdentity(seed = "b") {
+	return {
+		status: "hashed" as const,
+		hash: {
+			algorithm: "SHA-256" as const,
+			projection: "opencut-project-content",
+			projectionVersion: 1,
+			digest: seed.repeat(64),
+		},
+	};
+}
+
+function verifiedSave(seed = "b") {
+	return {
+		status: "saved",
+		receiptId: "save-receipt-1",
+		contentHash: seed.repeat(64),
+		reloadVerified: true,
 	};
 }

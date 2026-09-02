@@ -18,6 +18,7 @@ import type {
 	AnimationInterpolation,
 	ElementKeyframe,
 } from "@/animation/types";
+import type { ProjectContentHashResult } from "./project-content-hash";
 
 export interface AutomationElementSnapshot {
 	trackId: string;
@@ -232,6 +233,13 @@ export interface AutomationMediaAssetSnapshot {
 	hasAudio?: boolean;
 	sourceFingerprint?: string;
 	role?: "timeline" | "matte" | "audio-replacement";
+	sourceIdentity?: {
+		kind: "local" | "provider";
+		contentHash?: { algorithm: "SHA-256"; digest: string };
+		provider?: string;
+		providerVersion?: string;
+		sourceUrl?: string;
+	};
 }
 
 export interface AutomationProjectSnapshot {
@@ -241,6 +249,7 @@ export interface AutomationProjectSnapshot {
 	sceneId: string;
 	sceneName: string;
 	revision: number;
+	contentIdentity: ProjectContentHashResult;
 	settings: {
 		fps: FrameRate;
 		canvasSize: TCanvasSize;
@@ -250,6 +259,14 @@ export interface AutomationProjectSnapshot {
 	transitions: AutomationTransitionSnapshot[];
 	mediaAssets: AutomationMediaAssetSnapshot[];
 	elements: AutomationElementSnapshot[];
+}
+
+export interface AutomationContentIdentityBlockedResult {
+	status: "content-identity-blocked";
+	projectId: string;
+	operationId?: string;
+	reason: string;
+	contentIdentity: Extract<ProjectContentHashResult, { status: "blocked" }>;
 }
 
 export interface AutomationProjectSummary {
@@ -305,7 +322,8 @@ export type AutomationAudioSyncResult =
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "rejected"; operationId: string; reason: string };
+	| { status: "rejected"; operationId: string; reason: string }
+	| AutomationContentIdentityBlockedResult;
 
 export interface AutomationAudioAnalysis {
 	integratedLufs: number | null;
@@ -325,6 +343,7 @@ export type AutomationAudioAnalysisResult =
 			status: "analyzed";
 			projectId: string;
 			revision: number;
+			contentIdentity: ProjectContentHashResult;
 			analysis: AutomationAudioAnalysis;
 	  }
 	| {
@@ -343,6 +362,59 @@ export interface AutomationOpenProjectRequest {
 	operationId: string;
 	projectId: string;
 }
+
+export interface AutomationSaveProjectRequest {
+	projectId: string;
+	sceneId?: string;
+	operationId: string;
+	expectedRevision: number;
+	expectedContentHash?: string;
+	bridgeProtocolVersion?: 1 | 2;
+}
+
+export interface AutomationSaveReceipt {
+	receiptId: string;
+	operationId: string;
+	projectId: string;
+	sceneId: string;
+	revision: number;
+	contentHash: string;
+	persistedAt: string;
+	completedAt: string;
+	storageSchemaVersion: number;
+	writeVersion: number;
+	reloadVerified: true;
+	readbackContentHash: string;
+}
+
+export type AutomationSaveProjectResult =
+	| ({ status: "saved" } & AutomationSaveReceipt)
+	| ({ status: "replayed" } & AutomationSaveReceipt)
+	| {
+			status: "conflict";
+			operationId: string;
+			expectedRevision: number;
+			actualRevision: number;
+			expectedContentHash?: string;
+			actualContentHash?: string | null;
+	  }
+	| { status: "rejected"; operationId: string; reason: string }
+	| {
+			status: "verification-failed";
+			operationId: string;
+			projectId: string;
+			reason: string;
+			expectedContentHash: string;
+			readbackContentHash: string | null;
+	  };
+
+export interface AutomationGetSaveReceiptRequest {
+	operationId: string;
+}
+
+export type AutomationGetSaveReceiptResult =
+	| ({ status: "found" } & AutomationSaveReceipt)
+	| { status: "not-found"; operationId: string };
 
 export interface AutomationImportSubtitlesRequest {
 	operationId: string;
@@ -376,7 +448,8 @@ export type AutomationImportSubtitlesResult =
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "rejected"; operationId: string; reason: string };
+	| { status: "rejected"; operationId: string; reason: string }
+	| AutomationContentIdentityBlockedResult;
 
 export interface AutomationExportSubtitlesRequest {
 	projectId: string;
@@ -391,6 +464,7 @@ export type AutomationExportSubtitlesResult =
 			projectId: string;
 			sceneId: string;
 			revision: number;
+			contentIdentity: ProjectContentHashResult;
 			format: "srt" | "vtt";
 			trackIds: string[];
 			cueCount: number;
@@ -439,7 +513,8 @@ export type AutomationTranscriptionResult =
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "rejected"; operationId: string; reason: string };
+	| { status: "rejected"; operationId: string; reason: string }
+	| AutomationContentIdentityBlockedResult;
 
 export interface AutomationProjectActivatedResult {
 	operationId: string;
@@ -782,7 +857,8 @@ export type AutomationMutationResult =
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "rejected"; operationId: string; reason: string };
+	| { status: "rejected"; operationId: string; reason: string }
+	| AutomationContentIdentityBlockedResult;
 
 export type AutomationUndoResult =
 	| {
@@ -795,7 +871,12 @@ export type AutomationUndoResult =
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "nothing-to-undo"; revision: number };
+	| {
+			status: "nothing-to-undo";
+			revision: number;
+			contentIdentity: ProjectContentHashResult;
+	  }
+	| AutomationContentIdentityBlockedResult;
 
 export interface AutomationImportRequest {
 	projectId: string;
@@ -828,7 +909,8 @@ export type AutomationImportResult =
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "rejected"; operationId: string; reason: string };
+	| { status: "rejected"; operationId: string; reason: string }
+	| AutomationContentIdentityBlockedResult;
 
 export interface AutomationAttachMatteRequest {
 	projectId: string;
@@ -865,7 +947,8 @@ export type AutomationAttachMatteResult =
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "rejected"; operationId: string; reason: string };
+	| { status: "rejected"; operationId: string; reason: string }
+	| AutomationContentIdentityBlockedResult;
 
 export interface AutomationAttachCleanAudioRequest {
 	projectId: string;
@@ -901,7 +984,8 @@ export type AutomationAttachCleanAudioResult =
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "rejected"; operationId: string; reason: string };
+	| { status: "rejected"; operationId: string; reason: string }
+	| AutomationContentIdentityBlockedResult;
 
 export interface AutomationTransferSourceRequest {
 	projectId: string;
@@ -920,6 +1004,7 @@ export type AutomationTransferSourceResult =
 			mimeType: string;
 			bytesTransferred: number;
 			sourceFingerprint: string | null;
+			contentIdentity: ProjectContentHashResult;
 	  }
 	| {
 			status: "conflict";
@@ -939,6 +1024,8 @@ export interface AutomationExportRequest {
 	fps?: FrameRate;
 	includeAudio: boolean;
 	canvasSize?: TCanvasSize;
+	expectedProjectContentHash?: string;
+	bridgeProtocolVersion?: 1 | 2;
 }
 
 export interface AutomationExportCompletedResult {
@@ -950,6 +1037,9 @@ export interface AutomationExportCompletedResult {
 	outputPath: string;
 	bytesWritten: number;
 	sha256: string;
+	contentIdentity: ProjectContentHashResult;
+	saveReceiptId: string;
+	savedContentHash: string;
 }
 
 export type AutomationExportResult =
@@ -961,4 +1051,5 @@ export type AutomationExportResult =
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "rejected"; operationId: string; reason: string };
+	| { status: "rejected"; operationId: string; reason: string }
+	| AutomationContentIdentityBlockedResult;

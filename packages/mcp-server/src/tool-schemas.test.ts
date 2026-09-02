@@ -14,6 +14,7 @@ import {
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
 	openProjectInputSchema,
+	saveProjectInputSchema,
 	listExportBatchesInputSchema,
 	listExportJobsInputSchema,
 	queueExportBatchInputSchema,
@@ -68,6 +69,43 @@ describe("OpenCut bridge affinity contract", () => {
 				expectedConnectionIdentity: connectionIdentity,
 			}).success,
 		).toBe(false);
+	});
+});
+
+describe("OpenCut save barrier contract", () => {
+	const request = {
+		projectId: "project-1",
+		sceneId: "scene-1",
+		operationId: "save-1",
+		expectedRevision: 3,
+	};
+
+	test("requires v2 affinity and the canonical expected content hash", () => {
+		expect(
+			saveProjectInputSchema.safeParse({
+				...request,
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: connectionIdentity,
+			}).success,
+		).toBe(false);
+		expect(
+			saveProjectInputSchema.safeParse({
+				...request,
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: connectionIdentity,
+				expectedContentHash: "a".repeat(64),
+			}).success,
+		).toBe(true);
+	});
+
+	test("preserves target-free legacy save compatibility", () => {
+		expect(saveProjectInputSchema.parse(request)).toEqual(request);
+		expect(
+			saveProjectInputSchema.safeParse({
+				...request,
+				bridgeProtocolVersion: 1,
+			}).success,
+		).toBe(true);
 	});
 });
 

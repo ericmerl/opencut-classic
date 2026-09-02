@@ -35,6 +35,17 @@ export interface CleanAudioInput {
 	timeoutSeconds: number;
 }
 
+function bridgeProtocolContext(input: CleanAudioInput) {
+	return {
+		...(input.bridgeProtocolVersion !== undefined
+			? { bridgeProtocolVersion: input.bridgeProtocolVersion }
+			: {}),
+		...(input.expectedConnectionIdentity
+			? { expectedConnectionIdentity: input.expectedConnectionIdentity }
+			: {}),
+	};
+}
+
 interface AudioCleaner {
 	clean(job: AudioCleanerJob, timeoutMs: number): Promise<AudioCleanerResult>;
 }
@@ -100,7 +111,7 @@ export class AudioCleanupService {
 		const snapshot = asProjectSnapshot(
 			await this.bridge.request(
 				"read_project",
-				{},
+				bridgeProtocolContext(input),
 				undefined,
 				expectedIdentity,
 			),
@@ -146,6 +157,7 @@ export class AudioCleanupService {
 				await this.bridge.request(
 					"transfer_source_media",
 					{
+						...bridgeProtocolContext(input),
 						projectId: input.projectId,
 						expectedRevision: input.expectedRevision,
 						trackId: input.trackId,
@@ -211,6 +223,7 @@ export class AudioCleanupService {
 				await this.bridge.request(
 					"attach_clean_audio",
 					{
+						...bridgeProtocolContext(input),
 						projectId: input.projectId,
 						operationId: input.operationId,
 						expectedRevision: input.expectedRevision,

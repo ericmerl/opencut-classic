@@ -45,6 +45,15 @@ function buildSnapshot(): AutomationProjectSnapshot {
 		sceneId: "scene-1",
 		sceneName: "Main scene",
 		revision: 7,
+		contentIdentity: {
+			status: "hashed",
+			hash: {
+				algorithm: "SHA-256",
+				projection: "opencut-project-content",
+				projectionVersion: 1,
+				digest: "a".repeat(64),
+			},
+		},
 		settings: {
 			fps: { numerator: 30, denominator: 1 },
 			canvasSize: { width: 1080, height: 1920 },

@@ -15,7 +15,13 @@ export async function analyzeAutomationAudio({
 	editor: EditorCore;
 	request: AutomationAudioAnalysisRequest;
 	revision: number;
-}): Promise<AutomationAudioAnalysisResult> {
+}): Promise<
+	| Exclude<AutomationAudioAnalysisResult, { status: "analyzed" }>
+	| Omit<
+			Extract<AutomationAudioAnalysisResult, { status: "analyzed" }>,
+			"contentIdentity"
+	  >
+> {
 	const activeProject = editor.project.getActive();
 	if (!activeProject)
 		return { status: "rejected", reason: "No active project" };

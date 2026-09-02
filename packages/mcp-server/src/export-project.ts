@@ -19,6 +19,7 @@ export interface ExportProjectInput {
 	fps?: { numerator: number; denominator: number };
 	includeAudio: boolean;
 	canvasSize?: { width: number; height: number };
+	expectedProjectContentHash?: string;
 }
 
 export interface ExportProjectBridge {
@@ -80,6 +81,7 @@ export class ExportProjectService {
 				undefined,
 				expectedIdentity,
 			),
+			input.bridgeProtocolVersion !== 2,
 		);
 		if (snapshot.projectId !== input.projectId) {
 			return {
@@ -107,6 +109,75 @@ export class ExportProjectService {
 				actualRevision: snapshot.revision,
 			};
 		}
+		if (
+			input.bridgeProtocolVersion === 2 &&
+			snapshot.contentIdentity.status !== "hashed"
+		) {
+			return {
+				status: "content-identity-blocked",
+				operationId: input.operationId,
+				projectId: input.projectId,
+				sceneId: snapshot.sceneId,
+				contentIdentity: snapshot.contentIdentity,
+				reason:
+					"Production protocol v2 requires immutable identity for every project media source",
+			};
+		}
+		const snapshotHash =
+			snapshot.contentIdentity.status === "hashed"
+				? snapshot.contentIdentity.hash.digest
+				: null;
+		if (
+			input.expectedProjectContentHash &&
+			input.expectedProjectContentHash !== snapshotHash
+		) {
+			return {
+				status: "content-hash-conflict",
+				operationId: input.operationId,
+				projectId: input.projectId,
+				expectedProjectContentHash: input.expectedProjectContentHash,
+				actualProjectContentHash: snapshotHash,
+			};
+		}
+		const saveBarrierValue = await this.bridge.request(
+			"save_project",
+			{
+				projectId: input.projectId,
+				sceneId: snapshot.sceneId,
+				operationId: `${input.operationId}:save-barrier`,
+				expectedRevision: input.expectedRevision,
+				...(snapshotHash ? { expectedContentHash: snapshotHash } : {}),
+				...(input.bridgeProtocolVersion
+					? { bridgeProtocolVersion: input.bridgeProtocolVersion }
+					: {}),
+				...(requestIdentity
+					? { expectedConnectionIdentity: requestIdentity }
+					: {}),
+			},
+			5 * 60_000,
+			expectedIdentity,
+		);
+		if (!isRecord(saveBarrierValue)) {
+			throw new Error("editor returned an invalid save barrier result");
+		}
+		const saveBarrier = saveBarrierValue;
+		if (saveBarrier.status !== "saved" && saveBarrier.status !== "replayed") {
+			return saveBarrier;
+		}
+		if (
+			typeof saveBarrier.contentHash !== "string" ||
+			!/^[a-f0-9]{64}$/.test(saveBarrier.contentHash) ||
+			(snapshotHash !== null && saveBarrier.contentHash !== snapshotHash) ||
+			saveBarrier.reloadVerified !== true
+		) {
+			return {
+				status: "verification-failed",
+				operationId: input.operationId,
+				projectId: input.projectId,
+				reason: "verified save receipt did not match the export snapshot",
+			};
+		}
+		const pinnedContentHash = saveBarrier.contentHash;
 		await this.validator.preflight();
 
 		const ticket = await this.bridge.exportTickets.create(
@@ -127,6 +198,7 @@ export class ExportProjectService {
 					...(input.canvasSize ? { canvasSize: input.canvasSize } : {}),
 					outputPath: ticket.outputPath,
 					url: ticket.url,
+					expectedProjectContentHash: pinnedContentHash,
 				},
 				30 * 60_000,
 				expectedIdentity,
@@ -137,6 +209,24 @@ export class ExportProjectService {
 			editorResult.status !== "replayed"
 		) {
 			return editorResult;
+		}
+		const renderedContentIdentity = readContentIdentity(
+			editorResult.contentIdentity,
+			input.bridgeProtocolVersion !== 2,
+		);
+		const renderedHash =
+			renderedContentIdentity.status === "hashed"
+				? renderedContentIdentity.hash.digest
+				: null;
+		if (renderedHash !== pinnedContentHash) {
+			return {
+				status: "content-hash-conflict",
+				operationId: input.operationId,
+				projectId: input.projectId,
+				expectedProjectContentHash: pinnedContentHash,
+				actualProjectContentHash: renderedHash,
+				reason: "project content changed while the export was rendering",
+			};
 		}
 
 		const outputIdentity = readOutputIdentity(editorResult);
@@ -164,6 +254,9 @@ export class ExportProjectService {
 			...editorResult,
 			projectId: snapshot.projectId,
 			sceneId: snapshot.sceneId,
+			projectContentIdentity: snapshot.contentIdentity,
+			saveReceiptId: saveBarrier.receiptId,
+			savedContentHash: saveBarrier.contentHash,
 			requestConnectionIdentity: requestIdentity,
 			bridgeProtocolVersion: editorResult.bridgeProtocolVersion,
 			status:
@@ -200,7 +293,10 @@ function expectedV2Identity(
 	return input.expectedConnectionIdentity;
 }
 
-function readProjectSnapshot(value: unknown): {
+function readProjectSnapshot(
+	value: unknown,
+	allowLegacyMissingContentIdentity: boolean,
+): {
 	projectId: string;
 	sceneId: string;
 	revision: number;
@@ -210,6 +306,7 @@ function readProjectSnapshot(value: unknown): {
 	bridgeProtocolVersion: unknown;
 	connectionIdentity: unknown;
 	requestConnectionIdentity: unknown;
+	contentIdentity: ProjectContentIdentity;
 } {
 	if (!isRecord(value) || !isRecord(value.settings)) {
 		throw new Error("editor returned an invalid project snapshot");
@@ -239,6 +336,60 @@ function readProjectSnapshot(value: unknown): {
 		bridgeProtocolVersion: value.bridgeProtocolVersion ?? null,
 		connectionIdentity: value.connectionIdentity ?? null,
 		requestConnectionIdentity: value.requestConnectionIdentity ?? null,
+		contentIdentity: readContentIdentity(
+			value.contentIdentity,
+			allowLegacyMissingContentIdentity,
+		),
+	};
+}
+
+type ProjectContentIdentity =
+	| {
+			status: "hashed";
+			hash: {
+				algorithm: "SHA-256";
+				projection: string;
+				projectionVersion: number;
+				digest: string;
+			};
+	  }
+	| { status: "blocked"; blockers: unknown[] };
+
+function readContentIdentity(
+	value: unknown,
+	allowLegacyMissing: boolean,
+): ProjectContentIdentity {
+	if (!isRecord(value)) {
+		if (allowLegacyMissing) {
+			return {
+				status: "blocked",
+				blockers: [{ code: "legacy-editor-content-identity-missing" }],
+			};
+		}
+		throw new Error("editor project content identity is missing");
+	}
+	if (value.status === "blocked" && Array.isArray(value.blockers)) {
+		return { status: "blocked", blockers: value.blockers };
+	}
+	if (
+		value.status !== "hashed" ||
+		!isRecord(value.hash) ||
+		value.hash.algorithm !== "SHA-256" ||
+		value.hash.projection !== "opencut-project-content" ||
+		value.hash.projectionVersion !== 1 ||
+		typeof value.hash.digest !== "string" ||
+		!/^[a-f0-9]{64}$/.test(value.hash.digest)
+	) {
+		throw new Error("editor project content identity is invalid");
+	}
+	return {
+		status: "hashed",
+		hash: {
+			algorithm: "SHA-256",
+			projection: value.hash.projection,
+			projectionVersion: value.hash.projectionVersion,
+			digest: value.hash.digest,
+		},
 	};
 }
 

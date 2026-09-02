@@ -32,6 +32,17 @@ export interface GenerateMatteInput {
 	timeoutSeconds: number;
 }
 
+function bridgeProtocolContext(input: GenerateMatteInput) {
+	return {
+		...(input.bridgeProtocolVersion !== undefined
+			? { bridgeProtocolVersion: input.bridgeProtocolVersion }
+			: {}),
+		...(input.expectedConnectionIdentity
+			? { expectedConnectionIdentity: input.expectedConnectionIdentity }
+			: {}),
+	};
+}
+
 interface MatteProducer {
 	produce(
 		job: MatteProducerJob,
@@ -88,7 +99,7 @@ export class MatteGenerationService {
 		const snapshot = asProjectSnapshot(
 			await this.bridge.request(
 				"read_project",
-				{},
+				bridgeProtocolContext(input),
 				undefined,
 				expectedIdentity,
 			),
@@ -133,6 +144,7 @@ export class MatteGenerationService {
 				await this.bridge.request(
 					"transfer_source_media",
 					{
+						...bridgeProtocolContext(input),
 						projectId: input.projectId,
 						expectedRevision: input.expectedRevision,
 						trackId: input.trackId,
@@ -185,6 +197,7 @@ export class MatteGenerationService {
 				await this.bridge.request(
 					"attach_matte",
 					{
+						...bridgeProtocolContext(input),
 						projectId: input.projectId,
 						operationId: input.operationId,
 						expectedRevision: input.expectedRevision,

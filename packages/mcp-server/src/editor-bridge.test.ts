@@ -170,7 +170,11 @@ describe("EditorBridge identity protocol", () => {
 		await close(first);
 
 		const reconnect = await connect(bridge);
-		await authenticate(reconnect, "editor-1", "session-1");
+		const reconnectIdentity = await authenticate(
+			reconnect,
+			"editor-1",
+			"session-1",
+		);
 		try {
 			bridge.request("apply_edit_plan", {
 				projectId: "project-1",
@@ -180,6 +184,74 @@ describe("EditorBridge identity protocol", () => {
 		} catch (error) {
 			expect(error).toMatchObject({ code: "STALE_CONNECTION" });
 		}
+		const currentReadMessage = nextJson(reconnect);
+		const currentReadResult = bridge.request(
+			"read_project",
+			{},
+			1_000,
+			reconnectIdentity,
+		);
+		const currentReadRequest = await currentReadMessage;
+		reconnect.send(
+			JSON.stringify({
+				kind: "response",
+				id: currentReadRequest.id,
+				ok: true,
+				result: { projectId: "project-1", sceneId: "scene-1", revision: 0 },
+				identity: reconnectIdentity,
+			}),
+		);
+		await currentReadResult;
+
+		const saveMessage = nextJson(reconnect);
+		const saveResult = bridge.request(
+			"save_project",
+			{ projectId: "project-1", expectedRevision: 7 },
+			1_000,
+			reconnectIdentity,
+		);
+		const saveRequest = await saveMessage;
+		expect(saveRequest).toMatchObject({
+			kind: "request",
+			method: "save_project",
+			params: { projectId: "project-1", expectedRevision: 7 },
+		});
+		reconnect.send(
+			JSON.stringify({
+				kind: "response",
+				id: saveRequest.id,
+				ok: true,
+				result: {
+					status: "replayed",
+					projectId: "project-1",
+					revision: 7,
+				},
+				identity: reconnectIdentity,
+			}),
+		);
+		expect(await saveResult).toMatchObject({
+			status: "replayed",
+			projectId: "project-1",
+			revision: 7,
+		});
+		const currentEditMessage = nextJson(reconnect);
+		const currentEditResult = bridge.request(
+			"apply_edit_plan",
+			{ projectId: "project-1", expectedRevision: 0 },
+			1_000,
+			reconnectIdentity,
+		);
+		const currentEditRequest = await currentEditMessage;
+		reconnect.send(
+			JSON.stringify({
+				kind: "response",
+				id: currentEditRequest.id,
+				ok: true,
+				result: { projectId: "project-1", revision: 1 },
+				identity: reconnectIdentity,
+			}),
+		);
+		expect(await currentEditResult).toMatchObject({ revision: 1 });
 	});
 
 	test("rejects declared protocol mismatches in both directions", async () => {

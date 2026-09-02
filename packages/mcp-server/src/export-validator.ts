@@ -11,6 +11,7 @@ interface ProbeStream extends Record<string, unknown> {
 	height?: number;
 	avg_frame_rate?: string;
 	r_frame_rate?: string;
+	duration?: string;
 	sample_rate?: string;
 	channels?: number;
 	channel_layout?: string;
@@ -141,10 +142,14 @@ export class ExportValidator {
 			"full export decode",
 			2 * 60 * 60_000,
 		);
+		const videoDurationSeconds = numericValueOrNull(video.duration);
 		const frameSamples = await this.extractFrameSamples({
 			operationId,
 			outputPath,
-			durationSeconds,
+			durationSeconds:
+				videoDurationSeconds !== null && videoDurationSeconds > 0
+					? Math.min(durationSeconds, videoDurationSeconds)
+					: durationSeconds,
 			fps: fps ?? expectedFps,
 		});
 		return {
@@ -229,7 +234,7 @@ export class ExportValidator {
 		fps: number;
 	}): Promise<ExportFrameSample[]> {
 		const directory = await this.receipts.artifactsDirectory(operationId);
-		const finalFrameOffset = Math.max(1 / Math.max(fps, 1), 0.04);
+		const finalFrameOffset = Math.max(2 / Math.max(fps, 1), 0.1);
 		const positions: Array<{
 			position: ExportFrameSample["position"];
 			timeSeconds: number;
@@ -249,10 +254,10 @@ export class ExportValidator {
 				[
 					"-v",
 					"error",
-					"-ss",
-					position.timeSeconds.toFixed(6),
 					"-i",
 					outputPath,
+					"-ss",
+					position.timeSeconds.toFixed(6),
 					"-frames:v",
 					"1",
 					"-an",

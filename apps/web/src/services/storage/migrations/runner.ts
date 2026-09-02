@@ -5,6 +5,7 @@ import {
 import type { StorageMigration } from "./base";
 import type { ProjectRecord } from "./transformers/types";
 import { getProjectId, isRecord } from "./transformers/utils";
+import type { SerializedProjectEnvelope } from "@/services/storage/types";
 
 export interface StorageMigrationResult {
 	migratedCount: number;
@@ -38,11 +39,13 @@ export async function runStorageMigrations({
 		hasCleanedUpMetaDb = true;
 	}
 
-	const projectsAdapter = new IndexedDBAdapter<ProjectRecord>(
-		"video-editor-projects",
-		"projects",
-		1,
-	);
+	const projectsAdapter = new IndexedDBAdapter<
+		ProjectRecord | SerializedProjectEnvelope
+	>({
+		dbName: "video-editor-projects",
+		storeName: "projects",
+		version: 1,
+	});
 
 	const projects = await projectsAdapter.getAll();
 
@@ -50,12 +53,13 @@ export async function runStorageMigrations({
 	let migratedCount = 0;
 	let migrationStartTime: number | null = null;
 
-	for (const project of projects) {
-		if (typeof project !== "object" || project === null) {
+	for (const storedProject of projects) {
+		if (typeof storedProject !== "object" || storedProject === null) {
 			continue;
 		}
 
-		let projectRecord = project as ProjectRecord;
+		const envelope = readProjectEnvelope(storedProject);
+		let projectRecord = (envelope?.project ?? storedProject) as ProjectRecord;
 		const projectId = getProjectId({ project: projectRecord });
 		if (!projectId) {
 			continue;
@@ -95,7 +99,12 @@ export async function runStorageMigrations({
 				break;
 			}
 
-			await projectsAdapter.set(projectId, result.project);
+			await projectsAdapter.set({
+				key: projectId,
+				value: envelope
+					? { ...envelope, project: result.project as never }
+					: result.project,
+			});
 			migratedCount++;
 			currentVersion = migration.to;
 			projectRecord = result.project;
@@ -120,6 +129,16 @@ export async function runStorageMigrations({
 	});
 
 	return { migratedCount };
+}
+
+function readProjectEnvelope(
+	value: ProjectRecord | SerializedProjectEnvelope,
+): SerializedProjectEnvelope | null {
+	return isRecord(value) &&
+		value.envelopeVersion === 1 &&
+		isRecord(value.project)
+		? (value as unknown as SerializedProjectEnvelope)
+		: null;
 }
 
 function getProjectVersion({ project }: { project: ProjectRecord }): number {

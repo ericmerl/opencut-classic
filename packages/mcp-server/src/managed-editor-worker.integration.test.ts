@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { readFile, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EditorBridge } from "./editor-bridge";
@@ -423,6 +423,149 @@ integrationTest(
 				),
 			).toBe(true);
 
+			const sourcePath = join(directory, "save-barrier-source.mp4");
+			await createSyntheticVideo(sourcePath);
+			const sourceBytes = await readFile(sourcePath);
+			const sourceSha256 = createHash("sha256")
+				.update(sourceBytes)
+				.digest("hex");
+			const sourceTicket = await bridge.mediaTickets.create(sourcePath);
+			const imported = requireRecord(
+				await bridge.request(
+					"import_media",
+					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: initialConnectionIdentity,
+						projectId,
+						operationId: "save-barrier-media-import",
+						expectedRevision: requireNumber(compounded.revision, "revision"),
+						url: sourceTicket.url,
+						name: sourceTicket.name,
+						mimeType: sourceTicket.mimeType,
+						sourceFingerprint: sourceTicket.sourceFingerprint,
+						startTime: 480_000,
+						adoptMediaSettings: false,
+					},
+					undefined,
+					initialConnectionIdentity,
+				),
+			);
+			expect(imported.status).toBe("applied");
+			const importedSnapshot = requireRecord(imported.snapshot);
+			const importedHash = requireProjectContentHash(importedSnapshot);
+			const importedAssetId = requireString(imported.assetId, "assetId");
+			const importedAssets = requireRecords(
+				importedSnapshot.mediaAssets,
+				"mediaAssets",
+			);
+			expect(
+				requireRecord(
+					requireRecord(
+						importedAssets.find((asset) => asset.assetId === importedAssetId)
+							?.sourceIdentity,
+					).contentHash,
+				).digest,
+			).toBe(sourceSha256);
+			const importedElementId = requireString(imported.elementId, "elementId");
+			const importedElement = requireRecords(
+				importedSnapshot.elements,
+				"elements",
+			).find((element) => element.elementId === importedElementId);
+			if (!importedElement)
+				throw new Error("imported video element is missing");
+
+			const graded = requireRecord(
+				await bridge.request(
+					"apply_edit_plan",
+					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: initialConnectionIdentity,
+						projectId,
+						operationId: "save-barrier-observable-grade",
+						expectedRevision: requireNumber(imported.revision, "revision"),
+						description: "Apply the complete realistic color grade",
+						operations: [
+							{
+								kind: "upsert_effect",
+								trackId: requireString(importedElement.trackId, "trackId"),
+								elementId: importedElementId,
+								effectId: "save-barrier-realistic-grade",
+								effectType: "color-grade",
+								params: {
+									temperature: -3,
+									tint: 2,
+									saturation: -6,
+									exposure: -3,
+									contrast: 12,
+									highlights: -35,
+									shadows: 18,
+									fade: 6,
+								},
+								enabled: true,
+							},
+						],
+					},
+					undefined,
+					initialConnectionIdentity,
+				),
+			);
+			expect(graded.status).toBe("applied");
+			const gradedSnapshot = requireRecord(graded.snapshot);
+			const gradedHash = requireProjectContentHash(gradedSnapshot);
+			const saveRequest = {
+				bridgeProtocolVersion: 2 as const,
+				expectedConnectionIdentity: initialConnectionIdentity,
+				projectId,
+				sceneId: requireString(gradedSnapshot.sceneId, "sceneId"),
+				operationId: "managed-video-save-barrier",
+				expectedRevision: requireNumber(graded.revision, "revision"),
+				expectedContentHash: gradedHash,
+			};
+			const saved = requireRecord(
+				await bridge.request(
+					"save_project",
+					saveRequest,
+					5 * 60_000,
+					initialConnectionIdentity,
+				),
+			);
+			expect(saved).toMatchObject({
+				status: "saved",
+				projectId,
+				contentHash: gradedHash,
+				readbackContentHash: gradedHash,
+				reloadVerified: true,
+			});
+			const saveReceiptId = requireString(saved.receiptId, "receiptId");
+			const saveWriteVersion = requireNumber(
+				saved.writeVersion,
+				"writeVersion",
+			);
+			expect(saveWriteVersion).toBeGreaterThan(0);
+			expect(
+				Date.parse(requireString(saved.persistedAt, "persistedAt")),
+			).not.toBeNaN();
+			expect(
+				Date.parse(requireString(saved.completedAt, "completedAt")),
+			).not.toBeNaN();
+			const queriedReceipt = requireRecord(
+				await bridge.request(
+					"get_save_receipt",
+					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: initialConnectionIdentity,
+						operationId: saveRequest.operationId,
+					},
+					undefined,
+					initialConnectionIdentity,
+				),
+			);
+			expect(queriedReceipt).toMatchObject({
+				status: "found",
+				receiptId: saveReceiptId,
+				writeVersion: saveWriteVersion,
+			});
+
 			await worker.stop();
 			const restarted = await worker.ensureConnected(projectId);
 			expect(restarted).toMatchObject({ running: true, connected: true });
@@ -458,7 +601,123 @@ integrationTest(
 			expect(reloaded.connectionIdentity).toEqual(
 				restartedBridgeStatus.connectionIdentity,
 			);
+			expect(requireProjectContentHash(reloaded)).toBe(gradedHash);
+			const reloadedAssets = requireRecords(
+				reloaded.mediaAssets,
+				"mediaAssets",
+			);
+			expect(
+				requireRecord(
+					requireRecord(
+						reloadedAssets.find((asset) => asset.assetId === importedAssetId)
+							?.sourceIdentity,
+					).contentHash,
+				).digest,
+			).toBe(sourceSha256);
 			const reloadedElements = requireRecords(reloaded.elements, "elements");
+			expect(
+				reloadedElements.find(
+					(element) => element.elementId === importedElementId,
+				),
+			).toMatchObject({
+				type: "video",
+				effects: [
+					expect.objectContaining({
+						effectId: "save-barrier-realistic-grade",
+						effectType: "color-grade",
+						enabled: true,
+						params: {
+							temperature: -3,
+							tint: 2,
+							saturation: -6,
+							exposure: -3,
+							contrast: 12,
+							highlights: -35,
+							shadows: 18,
+							fade: 6,
+						},
+					}),
+				],
+			});
+			const replayedSave = requireRecord(
+				await bridge.request(
+					"save_project",
+					{
+						...saveRequest,
+						expectedConnectionIdentity: restartedConnectionIdentity,
+					},
+					5 * 60_000,
+					restartedConnectionIdentity,
+				),
+			);
+			expect(replayedSave).toMatchObject({
+				status: "replayed",
+				receiptId: saveReceiptId,
+				writeVersion: saveWriteVersion,
+				contentHash: gradedHash,
+			});
+
+			const verifiedExportPath = join(directory, "save-barrier-verified.webm");
+			const verifiedExportTicket = await bridge.exportTickets.create(
+				verifiedExportPath,
+				"webm",
+			);
+			const verifiedExport = requireRecord(
+				await bridge.request(
+					"export_project",
+					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: restartedConnectionIdentity,
+						projectId,
+						operationId: "save-barrier-pinned-export",
+						expectedRevision: requireNumber(reloaded.revision, "revision"),
+						expectedProjectContentHash: gradedHash,
+						format: "webm",
+						quality: "low",
+						fps: { numerator: 30, denominator: 1 },
+						includeAudio: true,
+						canvasSize: { width: 320, height: 240 },
+						outputPath: verifiedExportTicket.outputPath,
+						url: verifiedExportTicket.url,
+					},
+					5 * 60_000,
+					restartedConnectionIdentity,
+				),
+			);
+			if (verifiedExport.status !== "exported") {
+				throw new Error(
+					`verified export failed: ${JSON.stringify(verifiedExport)}`,
+				);
+			}
+			expect(verifiedExport).toMatchObject({
+				status: "exported",
+				savedContentHash: gradedHash,
+			});
+			expect(typeof verifiedExport.saveReceiptId).toBe("string");
+			const verifiedValidation = await new ExportValidator(
+				new ExportReceiptStore(join(directory, "save-barrier-receipts")),
+			).validate({
+				operationId: "save-barrier-pinned-export",
+				outputPath: verifiedExportPath,
+				format: "webm",
+				expectedWidth: 320,
+				expectedHeight: 240,
+				expectedFps: 30,
+				includeAudio: true,
+			});
+			expect(verifiedValidation).toMatchObject({
+				status: "validated",
+				fullDecode: true,
+				video: { width: 320, height: 240, fps: 30 },
+				audio: { present: true },
+			});
+			expect(
+				verifiedValidation.frameSamples.map((sample) => sample.position),
+			).toEqual(["opening", "middle", "ending"]);
+			for (const sample of verifiedValidation.frameSamples) {
+				expect(sample.bytes).toBeGreaterThan(0);
+				expect(sample.sha256).toMatch(/^[a-f0-9]{64}$/);
+			}
 			const reloadedCompound = reloadedElements.find(
 				(element) => element.elementId === "integration-compound-1",
 			);
@@ -522,6 +781,9 @@ integrationTest(
 						projectId,
 						operationId: "timeline-integration-square-export",
 						expectedRevision: requireNumber(brokenApart.revision, "revision"),
+						expectedProjectContentHash: requireProjectContentHash(
+							requireRecord(brokenApart.snapshot),
+						),
 						format: "webm",
 						quality: "low",
 						fps: { numerator: 30, denominator: 1 },
@@ -546,6 +808,9 @@ integrationTest(
 			}
 			expect(variantExport.connectionIdentity).toEqual(
 				restartedBridgeStatus.connectionIdentity,
+			);
+			expect(requireProjectContentHash(variantExport)).toBe(
+				requireProjectContentHash(requireRecord(brokenApart.snapshot)),
 			);
 			expect((await stat(variantPath)).size).toBeGreaterThan(0);
 			const variantValidation = await new ExportValidator(
@@ -596,14 +861,67 @@ integrationTest(
 			bridge.stop();
 		}
 	},
-	120_000,
+	5 * 60_000,
 );
+
+async function createSyntheticVideo(outputPath: string): Promise<void> {
+	const ffmpeg =
+		process.env.OPENCUT_FFMPEG_PATH ?? process.env.FFMPEG_PATH ?? "ffmpeg";
+	await new Promise<void>((resolve, reject) => {
+		let diagnostics = "";
+		const child = spawn(
+			ffmpeg,
+			[
+				"-y",
+				"-f",
+				"lavfi",
+				"-i",
+				"testsrc2=size=320x240:rate=30:duration=2",
+				"-f",
+				"lavfi",
+				"-i",
+				"sine=frequency=440:sample_rate=48000:duration=2",
+				"-shortest",
+				"-c:v",
+				"libx264",
+				"-pix_fmt",
+				"yuv420p",
+				"-c:a",
+				"aac",
+				"-ar",
+				"48000",
+				"-ac",
+				"2",
+				outputPath,
+			],
+			{ stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
+		);
+		child.stderr?.on("data", (data) => {
+			diagnostics += String(data);
+		});
+		child.once("error", reject);
+		child.once("exit", (code) => {
+			if (code === 0) resolve();
+			else
+				reject(new Error(`synthetic video generation failed: ${diagnostics}`));
+		});
+	});
+}
 
 function requireRecord(value: unknown): Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
 		throw new Error("expected an object response");
 	}
 	return Object.fromEntries(Object.entries(value));
+}
+
+function requireProjectContentHash(value: Record<string, unknown>): string {
+	const identity = requireRecord(value.contentIdentity);
+	if (identity.status !== "hashed") {
+		throw new Error(`project content identity is ${String(identity.status)}`);
+	}
+	const hash = requireRecord(identity.hash);
+	return requireString(hash.digest, "project content digest");
 }
 
 function requireRecords(

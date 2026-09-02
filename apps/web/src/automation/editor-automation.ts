@@ -121,6 +121,7 @@ import type {
 	AutomationAudioSyncRequest,
 	AutomationAudioSyncResult,
 	AutomationCompoundSnapshot,
+	AutomationContentIdentityBlockedResult,
 	AutomationAttachCleanAudioAppliedResult,
 	AutomationAttachCleanAudioRequest,
 	AutomationAttachCleanAudioResult,
@@ -151,6 +152,10 @@ import type {
 	AutomationMutationResult,
 	AutomationOpenProjectRequest,
 	AutomationOpenProjectResult,
+	AutomationSaveProjectRequest,
+	AutomationSaveProjectResult,
+	AutomationGetSaveReceiptRequest,
+	AutomationGetSaveReceiptResult,
 	AutomationProjectActivatedResult,
 	AutomationProjectListResult,
 	AutomationProjectSnapshot,
@@ -161,6 +166,20 @@ import type {
 	AutomationTranscriptionResult,
 	AutomationUndoResult,
 } from "./types";
+import {
+	buildEditorProjectContentInput,
+	hashEditorProjectContent,
+	serializeEditorProjectContent,
+} from "./project-content-identity";
+import {
+	hashProjectContent,
+	type ProjectContentHashResult,
+} from "./project-content-hash";
+import { storageService } from "@/services/storage/service";
+import {
+	parsePersistedSaveProjectResult,
+	type PersistedAutomationSaveResult,
+} from "./save-project-receipt";
 
 interface AppliedOperation {
 	fingerprint: string;
@@ -170,6 +189,7 @@ interface AppliedOperation {
 export class EditorAutomation {
 	private revision = 0;
 	private stateFingerprint = "";
+	private contentIdentity: ProjectContentHashResult | null = null;
 	private appliedOperations = new Map<string, AppliedOperation>();
 	private importedOperations = new Map<
 		string,
@@ -208,20 +228,31 @@ export class EditorAutomation {
 			};
 		}
 	>();
+	private saveOperations = new Map<
+		string,
+		{
+			fingerprint: string;
+			result: Extract<AutomationSaveProjectResult, { status: "saved" }>;
+		}
+	>();
 	private writer: Promise<void> = Promise.resolve();
 
 	constructor(private editor: EditorCore) {}
 
-	readProject(): AutomationProjectSnapshot {
+	async readProject(): Promise<AutomationProjectSnapshot> {
 		this.reconcileExternalChanges();
+		await this.refreshContentIdentity();
 		return this.buildSnapshot();
 	}
 
 	queryTimeline(
 		request: AutomationTimelineQueryRequest,
-	): AutomationTimelineQueryResult {
-		this.reconcileExternalChanges();
-		return queryTimelineSnapshot({ snapshot: this.buildSnapshot(), request });
+	): Promise<AutomationTimelineQueryResult> {
+		return this.enqueue(async () => {
+			this.reconcileExternalChanges();
+			await this.refreshContentIdentity();
+			return queryTimelineSnapshot({ snapshot: this.buildSnapshot(), request });
+		});
 	}
 
 	listEffects(): AutomationEffectCatalogEntry[] {
@@ -241,13 +272,17 @@ export class EditorAutomation {
 	analyzeAudio(
 		request: AutomationAudioAnalysisRequest,
 	): Promise<AutomationAudioAnalysisResult> {
-		return this.enqueue(() => {
+		return this.enqueue(async () => {
 			this.reconcileExternalChanges();
-			return analyzeAutomationAudio({
+			await this.refreshContentIdentity();
+			const result = await analyzeAutomationAudio({
 				editor: this.editor,
 				request,
 				revision: this.revision,
 			});
+			return result.status === "analyzed"
+				? { ...result, contentIdentity: this.requireContentIdentity() }
+				: result;
 		});
 	}
 
@@ -271,6 +306,26 @@ export class EditorAutomation {
 		request: AutomationOpenProjectRequest,
 	): Promise<AutomationOpenProjectResult> {
 		return this.enqueue(() => this.openProjectNow(request));
+	}
+
+	saveProject(
+		request: AutomationSaveProjectRequest,
+	): Promise<AutomationSaveProjectResult> {
+		return this.enqueue(() => this.saveProjectNow(request));
+	}
+
+	getSaveReceipt(
+		request: AutomationGetSaveReceiptRequest,
+	): Promise<AutomationGetSaveReceiptResult> {
+		return this.enqueue(async () => {
+			const receipt = await storageService.loadSaveReceipt({
+				operationId: request.operationId,
+				parseResult: parsePersistedSaveProjectResult,
+			});
+			return receipt
+				? { ...receipt.result, status: "found" }
+				: { status: "not-found", operationId: request.operationId };
+		});
 	}
 
 	applyEditPlan(plan: AutomationEditPlan): Promise<AutomationMutationResult> {
@@ -325,14 +380,12 @@ export class EditorAutomation {
 		return this.enqueue(() => this.exportProjectNow(request));
 	}
 
-	undo({
-		projectId,
-		expectedRevision,
-	}: {
+	undo(request: {
 		projectId: string;
 		expectedRevision: number;
+		bridgeProtocolVersion?: number;
 	}): Promise<AutomationUndoResult> {
-		return this.enqueue(() => this.undoNow({ projectId, expectedRevision }));
+		return this.enqueue(() => this.undoNow(request));
 	}
 
 	private enqueue<T>(work: () => T | Promise<T>): Promise<T> {
@@ -364,6 +417,172 @@ export class EditorAutomation {
 					left.projectId.localeCompare(right.projectId),
 			);
 		return { activeProjectId, projects };
+	}
+
+	private async saveProjectNow(
+		request: AutomationSaveProjectRequest,
+	): Promise<AutomationSaveProjectResult> {
+		this.reconcileExternalChanges();
+		const fingerprint = stableSerialize({
+			method: "save_project",
+			projectId: request.projectId,
+			sceneId: request.sceneId ?? null,
+			operationId: request.operationId,
+			expectedRevision: request.expectedRevision,
+			expectedContentHash: request.expectedContentHash ?? null,
+		});
+		const prior = this.saveOperations.get(request.operationId);
+		if (prior) {
+			return prior.fingerprint === fingerprint
+				? { ...prior.result, status: "replayed" }
+				: {
+						status: "rejected",
+						operationId: request.operationId,
+						reason: "operationId was already used for a different save",
+					};
+		}
+		const persistedPrior = await storageService.loadSaveReceipt({
+			operationId: request.operationId,
+			parseResult: parsePersistedSaveProjectResult,
+		});
+		if (persistedPrior) {
+			if (persistedPrior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: "operationId was already used for a different save",
+				};
+			}
+			this.saveOperations.set(request.operationId, {
+				fingerprint,
+				result: persistedPrior.result,
+			});
+			return { ...persistedPrior.result, status: "replayed" };
+		}
+		if (!request.operationId.trim()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "operationId is required",
+			};
+		}
+		const projectId = this.getProjectId();
+		const sceneId = this.editor.scenes.getActiveScene().id;
+		if (
+			request.projectId !== projectId ||
+			(request.sceneId && request.sceneId !== sceneId)
+		) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "active project or scene does not match the save request",
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				operationId: request.operationId,
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+		const identity = await this.refreshContentIdentity();
+		if (identity.status !== "hashed") {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "project content identity is blocked",
+			};
+		}
+		const contentHash = identity.hash.digest;
+		if (request.bridgeProtocolVersion === 2 && !request.expectedContentHash) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "bridge protocol v2 requires expectedContentHash",
+			};
+		}
+		if (
+			request.expectedContentHash &&
+			request.expectedContentHash !== contentHash
+		) {
+			return {
+				status: "conflict",
+				operationId: request.operationId,
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+				expectedContentHash: request.expectedContentHash,
+				actualContentHash: contentHash,
+			};
+		}
+		const write = await this.editor.save.flush();
+		if (!write || write.projectId !== projectId) {
+			return {
+				status: "verification-failed",
+				operationId: request.operationId,
+				projectId,
+				reason: "save did not produce a persisted write for the active project",
+				expectedContentHash: contentHash,
+				readbackContentHash: null,
+			};
+		}
+		const readback = await storageService.loadProjectFresh({ id: projectId });
+		if (!readback) {
+			return {
+				status: "verification-failed",
+				operationId: request.operationId,
+				projectId,
+				reason: "persisted project could not be reloaded",
+				expectedContentHash: contentHash,
+				readbackContentHash: null,
+			};
+		}
+		const readbackIdentity = await hashProjectContent(
+			buildEditorProjectContentInput({
+				project: readback.project,
+				mediaAssets: readback.mediaAssets,
+			}),
+		);
+		const readbackHash =
+			readbackIdentity.status === "hashed"
+				? readbackIdentity.hash.digest
+				: null;
+		if (
+			readbackHash !== contentHash ||
+			readback.persistence.writeVersion !== write.writeVersion
+		) {
+			return {
+				status: "verification-failed",
+				operationId: request.operationId,
+				projectId,
+				reason: "fresh storage readback did not match the saved project",
+				expectedContentHash: contentHash,
+				readbackContentHash: readbackHash,
+			};
+		}
+		const result: PersistedAutomationSaveResult = {
+			status: "saved",
+			receiptId: `save:${projectId}:${write.writeVersion}:${contentHash}`,
+			operationId: request.operationId,
+			projectId,
+			sceneId,
+			revision: this.revision,
+			contentHash,
+			persistedAt: write.snapshotAt,
+			completedAt: write.completedAt,
+			storageSchemaVersion: write.storageSchemaVersion,
+			writeVersion: write.writeVersion,
+			reloadVerified: true,
+			readbackContentHash: readbackHash,
+		};
+		await storageService.saveSaveReceipt({
+			operationId: request.operationId,
+			fingerprint,
+			result,
+			recordedAt: new Date().toISOString(),
+		});
+		this.saveOperations.set(request.operationId, { fingerprint, result });
+		return result;
 	}
 
 	private async createProjectNow(
@@ -400,6 +619,7 @@ export class EditorAutomation {
 		await this.editor.save.flush();
 		const projectId = await this.editor.project.createNewProject({ name });
 		this.resetProjectSession();
+		await this.refreshContentIdentity();
 		const result: AutomationProjectActivatedResult & { status: "created" } = {
 			status: "created",
 			operationId: request.operationId,
@@ -462,6 +682,7 @@ export class EditorAutomation {
 		} else {
 			this.reconcileExternalChanges();
 		}
+		await this.refreshContentIdentity();
 
 		const result: AutomationProjectActivatedResult & { status: "opened" } = {
 			status: "opened",
@@ -479,6 +700,8 @@ export class EditorAutomation {
 		plan: AutomationEditPlan,
 	): Promise<AutomationMutationResult> {
 		this.reconcileExternalChanges();
+		const identityBlock = await this.blockedProductionRequest(plan);
+		if (identityBlock) return identityBlock;
 		const shapeError = validatePlanShape(plan);
 		if (shapeError) {
 			return {
@@ -536,6 +759,7 @@ export class EditorAutomation {
 		});
 		await this.editor.save.flush();
 		this.recordCommittedState();
+		await this.refreshContentIdentity();
 
 		const result: AutomationAppliedResult = {
 			status: "applied",
@@ -550,11 +774,19 @@ export class EditorAutomation {
 	private async undoNow({
 		projectId,
 		expectedRevision,
+		...requestContext
 	}: {
 		projectId: string;
 		expectedRevision: number;
+		bridgeProtocolVersion?: number;
 	}): Promise<AutomationUndoResult> {
 		this.reconcileExternalChanges();
+		const identityBlock = await this.blockedProductionRequest({
+			projectId,
+			expectedRevision,
+			...requestContext,
+		});
+		if (identityBlock) return identityBlock;
 		if (projectId !== this.getProjectId()) {
 			throw new Error(`active project is ${this.getProjectId()}`);
 		}
@@ -566,12 +798,18 @@ export class EditorAutomation {
 			};
 		}
 		if (!this.editor.command.canUndo()) {
-			return { status: "nothing-to-undo", revision: this.revision };
+			await this.refreshContentIdentity();
+			return {
+				status: "nothing-to-undo",
+				revision: this.revision,
+				contentIdentity: this.requireContentIdentity(),
+			};
 		}
 
 		this.editor.command.undo();
 		await this.editor.save.flush();
 		this.recordCommittedState();
+		await this.refreshContentIdentity();
 		return {
 			status: "undone",
 			revision: this.revision,
@@ -583,6 +821,8 @@ export class EditorAutomation {
 		request: AutomationImportRequest,
 	): Promise<AutomationImportResult> {
 		this.reconcileExternalChanges();
+		const identityBlock = await this.blockedProductionRequest(request);
+		if (identityBlock) return identityBlock;
 		const { url: _transferUrl, ...stableRequest } = request;
 		const fingerprint = stableSerialize(stableRequest);
 		const prior = this.importedOperations.get(request.operationId);
@@ -680,6 +920,7 @@ export class EditorAutomation {
 		await addMedia.waitForPersistence();
 		await this.editor.save.flush();
 		this.recordCommittedState();
+		await this.refreshContentIdentity();
 
 		const result: AutomationImportAppliedResult = {
 			status: "applied",
@@ -697,6 +938,8 @@ export class EditorAutomation {
 		request: AutomationImportSubtitlesRequest,
 	): Promise<AutomationImportSubtitlesResult> {
 		this.reconcileExternalChanges();
+		const identityBlock = await this.blockedProductionRequest(request);
+		if (identityBlock) return identityBlock;
 		const { input: _input, ...stableRequest } = request;
 		const fingerprint = stableSerialize(stableRequest);
 		const prior = this.importedSubtitleOperations.get(request.operationId);
@@ -763,6 +1006,7 @@ export class EditorAutomation {
 		this.editor.command.execute({ command: insertion.command });
 		await this.editor.save.flush();
 		this.recordCommittedState();
+		await this.refreshContentIdentity();
 		const result: AutomationImportSubtitlesAppliedResult = {
 			status: "applied",
 			operationId: request.operationId,
@@ -781,10 +1025,11 @@ export class EditorAutomation {
 		return result;
 	}
 
-	private exportSubtitlesNow(
+	private async exportSubtitlesNow(
 		request: AutomationExportSubtitlesRequest,
-	): AutomationExportSubtitlesResult {
+	): Promise<AutomationExportSubtitlesResult> {
 		this.reconcileExternalChanges();
+		await this.refreshContentIdentity();
 		if (request.projectId !== this.getProjectId()) {
 			return {
 				status: "rejected",
@@ -840,6 +1085,7 @@ export class EditorAutomation {
 			projectId: request.projectId,
 			sceneId: this.editor.scenes.getActiveScene().id,
 			revision: this.revision,
+			contentIdentity: this.requireContentIdentity(),
 			format: request.format,
 			trackIds: tracks.map((track) => track.id),
 			cueCount: captions.length,
@@ -851,6 +1097,8 @@ export class EditorAutomation {
 		request: AutomationTranscriptionRequest,
 	): Promise<AutomationTranscriptionResult> {
 		this.reconcileExternalChanges();
+		const identityBlock = await this.blockedProductionRequest(request);
+		if (identityBlock) return identityBlock;
 		const fingerprint = stableSerialize(request);
 		const prior = this.transcriptionOperations.get(request.operationId);
 		if (prior) {
@@ -914,6 +1162,7 @@ export class EditorAutomation {
 			this.editor.command.execute({ command: insertion.command });
 			await this.editor.save.flush();
 			this.recordCommittedState();
+			await this.refreshContentIdentity();
 			const result: AutomationTranscriptionAppliedResult = {
 				status: "applied",
 				operationId: request.operationId,
@@ -948,6 +1197,8 @@ export class EditorAutomation {
 		request: AutomationAudioSyncRequest,
 	): Promise<AutomationAudioSyncResult> {
 		this.reconcileExternalChanges();
+		const identityBlock = await this.blockedProductionRequest(request);
+		if (identityBlock) return identityBlock;
 		const fingerprint = stableSerialize(request);
 		const prior = this.audioSyncOperations.get(request.operationId);
 		if (prior) {
@@ -1104,6 +1355,7 @@ export class EditorAutomation {
 			});
 			await this.editor.save.flush();
 			this.recordCommittedState();
+			await this.refreshContentIdentity();
 			const lagTicks = mediaTime({
 				ticks: Math.round(
 					(correlation.lagSamples / request.analysisSampleRate) *
@@ -1143,6 +1395,8 @@ export class EditorAutomation {
 		request: AutomationAttachMatteRequest,
 	): Promise<AutomationAttachMatteResult> {
 		this.reconcileExternalChanges();
+		const identityBlock = await this.blockedProductionRequest(request);
+		if (identityBlock) return identityBlock;
 		const { url: _transferUrl, ...stableRequest } = request;
 		const fingerprint = stableSerialize(stableRequest);
 		const prior = this.attachedMatteOperations.get(request.operationId);
@@ -1182,6 +1436,7 @@ export class EditorAutomation {
 			await prepared.addMedia.waitForPersistence();
 			await this.editor.save.flush();
 			this.recordCommittedState();
+			await this.refreshContentIdentity();
 			const result: AutomationAttachMatteAppliedResult = {
 				status: "applied",
 				operationId: request.operationId,
@@ -1208,6 +1463,8 @@ export class EditorAutomation {
 		request: AutomationAttachCleanAudioRequest,
 	): Promise<AutomationAttachCleanAudioResult> {
 		this.reconcileExternalChanges();
+		const identityBlock = await this.blockedProductionRequest(request);
+		if (identityBlock) return identityBlock;
 		const { url: _transferUrl, ...stableRequest } = request;
 		const fingerprint = stableSerialize(stableRequest);
 		const prior = this.attachedCleanAudioOperations.get(request.operationId);
@@ -1247,6 +1504,7 @@ export class EditorAutomation {
 			await prepared.addMedia.waitForPersistence();
 			await this.editor.save.flush();
 			this.recordCommittedState();
+			await this.refreshContentIdentity();
 			const result: AutomationAttachCleanAudioAppliedResult = {
 				status: "applied",
 				operationId: request.operationId,
@@ -1275,6 +1533,7 @@ export class EditorAutomation {
 		request: AutomationTransferSourceRequest,
 	): Promise<AutomationTransferSourceResult> {
 		this.reconcileExternalChanges();
+		await this.refreshContentIdentity();
 		if (request.projectId !== this.getProjectId()) {
 			return {
 				status: "rejected",
@@ -1320,6 +1579,7 @@ export class EditorAutomation {
 				mimeType,
 				bytesTransferred: receipt.bytesWritten,
 				sourceFingerprint: asset.sourceFingerprint ?? null,
+				contentIdentity: this.requireContentIdentity(),
 			};
 		} catch (error) {
 			return {
@@ -1334,6 +1594,19 @@ export class EditorAutomation {
 		request: AutomationExportRequest,
 	): Promise<AutomationExportResult> {
 		this.reconcileExternalChanges();
+		const identityBlock = await this.blockedProductionRequest(request);
+		if (identityBlock) return identityBlock;
+		if (
+			request.expectedProjectContentHash &&
+			(this.contentIdentity?.status !== "hashed" ||
+				this.contentIdentity.hash.digest !== request.expectedProjectContentHash)
+		) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "project content hash changed before export",
+			};
+		}
 		const { url: _transferUrl, ...stableRequest } = request;
 		const fingerprint = stableSerialize(stableRequest);
 		const prior = this.exportedOperations.get(request.operationId);
@@ -1347,6 +1620,11 @@ export class EditorAutomation {
 			}
 			return { ...prior.result, status: "replayed" };
 		}
+		const renderRevision = this.revision;
+		const renderContentHash =
+			this.contentIdentity?.status === "hashed"
+				? this.contentIdentity.hash.digest
+				: null;
 		if (request.projectId !== this.getProjectId()) {
 			return {
 				status: "rejected",
@@ -1360,6 +1638,21 @@ export class EditorAutomation {
 				operationId: request.operationId,
 				expectedRevision: request.expectedRevision,
 				actualRevision: this.revision,
+			};
+		}
+		const saveResult = await this.saveProjectNow({
+			projectId: request.projectId,
+			sceneId: this.editor.scenes.getActiveScene().id,
+			operationId: `${request.operationId}:save-barrier`,
+			expectedRevision: request.expectedRevision,
+			expectedContentHash: request.expectedProjectContentHash,
+			bridgeProtocolVersion: request.bridgeProtocolVersion,
+		});
+		if (saveResult.status !== "saved" && saveResult.status !== "replayed") {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `verified save barrier failed: ${"reason" in saveResult ? saveResult.reason : saveResult.status}`,
 			};
 		}
 
@@ -1379,6 +1672,23 @@ export class EditorAutomation {
 				reason: exported.cancelled
 					? "export was cancelled"
 					: (exported.error ?? "OpenCut did not produce an export buffer"),
+			};
+		}
+		this.reconcileExternalChanges();
+		const verifiedContentIdentity = await this.refreshContentIdentity();
+		const verifiedContentHash =
+			verifiedContentIdentity.status === "hashed"
+				? verifiedContentIdentity.hash.digest
+				: null;
+		if (
+			this.revision !== renderRevision ||
+			verifiedContentHash !== renderContentHash
+		) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason:
+					"project revision or content hash changed while the export was rendering",
 			};
 		}
 		const upload = await fetch(request.url, {
@@ -1403,6 +1713,9 @@ export class EditorAutomation {
 			outputPath: receipt.outputPath,
 			bytesWritten: receipt.bytesWritten,
 			sha256: receipt.sha256,
+			contentIdentity: this.requireContentIdentity(),
+			saveReceiptId: saveResult.receiptId,
+			savedContentHash: saveResult.contentHash,
 		};
 		this.exportedOperations.set(request.operationId, { fingerprint, result });
 		return result;
@@ -1917,6 +2230,7 @@ export class EditorAutomation {
 			sceneId: scene.id,
 			sceneName: scene.name,
 			revision: this.revision,
+			contentIdentity: this.requireContentIdentity(),
 			settings: {
 				fps: project.settings.fps,
 				canvasSize: project.settings.canvasSize,
@@ -1960,6 +2274,9 @@ export class EditorAutomation {
 					? {}
 					: { sourceFingerprint: asset.sourceFingerprint }),
 				...(asset.role == null ? {} : { role: asset.role }),
+				...(asset.sourceIdentity == null
+					? {}
+					: { sourceIdentity: asset.sourceIdentity }),
 			})),
 			elements: tracks.flatMap((track) =>
 				track.elements.map((element) =>
@@ -2108,7 +2425,7 @@ export class EditorAutomation {
 	}
 
 	private reconcileExternalChanges(): void {
-		const nextFingerprint = stableSerialize(this.buildTimelineProjection());
+		const nextFingerprint = serializeEditorProjectContent(this.editor);
 		if (!this.stateFingerprint) {
 			this.stateFingerprint = nextFingerprint;
 			return;
@@ -2116,12 +2433,14 @@ export class EditorAutomation {
 		if (nextFingerprint !== this.stateFingerprint) {
 			this.revision += 1;
 			this.stateFingerprint = nextFingerprint;
+			this.contentIdentity = null;
 		}
 	}
 
 	private recordCommittedState(): void {
 		this.revision += 1;
-		this.stateFingerprint = stableSerialize(this.buildTimelineProjection());
+		this.stateFingerprint = serializeEditorProjectContent(this.editor);
+		this.contentIdentity = null;
 	}
 
 	private resetProjectSession(): void {
@@ -2133,21 +2452,58 @@ export class EditorAutomation {
 		this.exportedOperations.clear();
 		this.attachedMatteOperations.clear();
 		this.attachedCleanAudioOperations.clear();
+		this.saveOperations.clear();
 		this.editor.command.clear();
 		this.editor.selection.clearSelection();
-		this.stateFingerprint = stableSerialize(this.buildTimelineProjection());
+		this.stateFingerprint = serializeEditorProjectContent(this.editor);
+		this.contentIdentity = null;
 	}
 
-	private buildTimelineProjection(): unknown {
-		const scene = this.editor.scenes.getActiveScene();
-		const project = this.editor.project.getActive();
-		if (!project) throw new Error("No active project");
+	private async refreshContentIdentity(): Promise<ProjectContentHashResult> {
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			const capturedState = serializeEditorProjectContent(this.editor);
+			const contentIdentity = await hashEditorProjectContent(this.editor);
+			const verifiedState = serializeEditorProjectContent(this.editor);
+			if (capturedState === verifiedState) {
+				this.contentIdentity = contentIdentity;
+				return contentIdentity;
+			}
+			this.reconcileExternalChanges();
+		}
+		this.contentIdentity = null;
+		throw new Error(
+			"Project state changed repeatedly while computing its content identity",
+		);
+	}
+
+	private async blockedProductionRequest(
+		request: unknown,
+	): Promise<AutomationContentIdentityBlockedResult | null> {
+		const contentIdentity = await this.refreshContentIdentity();
+		if (
+			!isRecord(request) ||
+			request.bridgeProtocolVersion !== 2 ||
+			contentIdentity.status !== "blocked"
+		) {
+			return null;
+		}
 		return {
-			projectId: project.metadata.id,
-			sceneId: scene.id,
-			settings: project.settings,
-			tracks: scene.tracks,
+			status: "content-identity-blocked",
+			projectId: this.getProjectId(),
+			...(typeof request.operationId === "string"
+				? { operationId: request.operationId }
+				: {}),
+			reason:
+				"Production protocol v2 requires immutable identity for every project media source",
+			contentIdentity,
 		};
+	}
+
+	private requireContentIdentity(): ProjectContentHashResult {
+		if (!this.contentIdentity) {
+			throw new Error("Project content identity has not been computed");
+		}
+		return this.contentIdentity;
 	}
 }
 
@@ -2206,4 +2562,8 @@ function stableSerialize(value: unknown): string {
 		return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`).join(",")}}`;
 	}
 	return JSON.stringify(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
 }

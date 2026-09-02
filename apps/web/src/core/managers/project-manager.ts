@@ -15,7 +15,10 @@ import { UpdateProjectSettingsCommand } from "@/commands/project";
 import { DEFAULT_BACKGROUND_COLOR } from "@/background/color";
 import { DEFAULT_CANVAS_SIZE } from "@/canvas/sizes";
 import { DEFAULT_FPS } from "@/fps/defaults";
-import { buildDefaultScene, getProjectDurationFromScenes } from "@/timeline/scenes";
+import {
+	buildDefaultScene,
+	getProjectDurationFromScenes,
+} from "@/timeline/scenes";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
 import {
@@ -35,6 +38,15 @@ export interface MigrationState {
 	fromVersion: number | null;
 	toVersion: number | null;
 	projectName: string | null;
+}
+
+export interface PersistedProjectWrite {
+	projectId: string;
+	persistedAt: string;
+	snapshotAt: string;
+	completedAt: string;
+	storageSchemaVersion: number;
+	writeVersion: number;
 }
 
 export class ProjectManager {
@@ -189,27 +201,40 @@ export class ProjectManager {
 		}
 	}
 
-	async saveCurrentProject(): Promise<void> {
-		if (!this.active) return;
+	async saveCurrentProject(): Promise<PersistedProjectWrite | null> {
+		const activeAtStart = this.active;
+		if (!activeAtStart) return null;
 
-		try {
-			const scenes = this.editor.scenes.getScenes();
-			const updatedProject = {
-				...this.active,
-				scenes,
-				metadata: {
-					...this.active.metadata,
-					duration: getProjectDurationFromScenes({ scenes }),
-					updatedAt: new Date(),
-				},
-			};
+		const scenesAtStart = this.editor.scenes.getScenes();
+		const persistedAt = new Date();
+		const updatedProject: TProject = {
+			...activeAtStart,
+			scenes: scenesAtStart,
+			metadata: {
+				...activeAtStart.metadata,
+				duration: getProjectDurationFromScenes({ scenes: scenesAtStart }),
+				updatedAt: persistedAt,
+			},
+		};
 
-			await storageService.saveProject({ project: updatedProject });
+		const storageWrite = await storageService.saveProject({
+			project: updatedProject,
+		});
+		if (
+			this.active === activeAtStart &&
+			this.editor.scenes.getScenes() === scenesAtStart
+		) {
 			this.active = updatedProject;
 			this.updateMetadata(updatedProject);
-		} catch (error) {
-			console.error("Failed to save project:", error);
 		}
+		return {
+			projectId: updatedProject.metadata.id,
+			persistedAt: persistedAt.toISOString(),
+			snapshotAt: storageWrite.snapshotAt,
+			completedAt: storageWrite.completedAt,
+			storageSchemaVersion: storageWrite.storageSchemaVersion,
+			writeVersion: storageWrite.writeVersion,
+		};
 	}
 
 	async export({ options }: { options: ExportOptions }): Promise<ExportResult> {
