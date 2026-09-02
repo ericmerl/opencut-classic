@@ -1,280 +1,351 @@
-# OpenCut Classic MCP capability gap audit
-
-Date: 2026-09-01
-Branch audited: `codex/issue-1-mcp-editor-bridge` at `54d3c088`
-
-## Scope and method
-
-This report defines "not supported by the MCP" as a capability for which the MCP server has no registered tool and no accepted `apply_edit_plan` operation. It distinguishes three cases:
-
-1. Native editor capability not exposed through MCP.
-2. MCP plumbing exists, but the capability still depends on a separately configured provider or has an operational limitation.
-3. Desired workflow capability is absent from both MCP and the current native OpenCut Classic model.
-
-The authoritative MCP surface is the registered tool list in `packages/mcp-server/src/index.ts:95-537`, the browser bridge request union in `apps/web/src/automation/bridge-client.ts:19-112`, and the edit-operation union in `apps/web/src/automation/types.ts:369-572`. The native editor comparison uses timeline types, commands, managers, registries, and renderer/export code in this repository.
-
-## Current boundary in one sentence
-
-The MCP can create and open projects, inspect one active scene, import local media, edit existing media/text/caption clips, apply clip effects and animation, perform several audio and matte workflows, and render durable MP4/WebM export jobs. It cannot yet construct or fully manage several native visual and organizational objects, especially graphics, stickers, masks, adjustment layers, scenes, bookmarks, tracks, project records, and multi-element editing workflows.
-
-## Native editor capabilities that are not exposed by MCP
-
-### 1. Graphics and stickers
-
-- No operation inserts a native `GraphicElement`. OpenCut provides the native builder at `apps/web/src/timeline/element-utils.ts:175-194`, and graphic tracks accept graphic elements at `apps/web/src/timeline/types.ts:42-46`, but the MCP edit union has only `insert_text` and `insert_captions` insertion operations at `apps/web/src/automation/types.ts:369-401`.
-- No operation inserts a native `StickerElement`. The builder exists at `apps/web/src/timeline/element-utils.ts:146-173`, and the element model stores `stickerId` plus intrinsic dimensions at `apps/web/src/timeline/types.ts:187-196`.
-- No MCP tool lists graphic definitions, their parameter schemas, or previews. Native graphic lookup and default instance construction exist at `apps/web/src/graphics/index.ts:42-61`.
-- No MCP tool searches or resolves stickers. Native sticker providers and resolution exist, including `resolveStickerId`, at `apps/web/src/stickers/resolver.ts:6-24`; the shapes provider maps square, circle, triangles, diamond, and star to native graphic definitions at `apps/web/src/stickers/providers/shapes.ts:21-41`.
-- No MCP snapshot identifies a graphic's `definitionId`, a sticker's `stickerId`, or intrinsic sticker dimensions. `AutomationElementSnapshot` exposes generic type, name, timing, params, and optional media fields only at `apps/web/src/automation/types.ts:22-44`.
-
-Impact: an agent cannot add callouts, boxes, circles, arrows built from shapes, flags, logos, decorative stickers, or shape-backed lower thirds without first rasterizing them externally and importing them as media.
-
-### 2. Masks
-
-- No operation creates, updates, reorders, inverts, or removes a native visual mask. The MCP's `remove_matte` is specifically for a generated clip matte, not the native `Mask[]` attached to video, image, and graphic elements.
-- Native maskable element types are video, image, and graphic at `apps/web/src/timeline/types.ts:227-232`.
-- Native OpenCut registers split, cinematic bars, rectangle, ellipse, heart, diamond, star, text, and freeform masks at `apps/web/src/masks/builtin/definitions/index.ts:41-77`.
-- Native commands already support removing masks, toggling inversion, and editing freeform path points: `apps/web/src/commands/timeline/element/masks/remove-mask.ts:18`, `apps/web/src/commands/timeline/element/masks/toggle-mask-inverted.ts:29`, `apps/web/src/commands/timeline/element/masks/insert-custom-mask-point.ts:88`, and `apps/web/src/commands/timeline/element/masks/delete-custom-mask-points.ts:67`.
-- No mask catalog or mask state appears in MCP project snapshots. `AutomationElementSnapshot` has `matte` but no `masks` field at `apps/web/src/automation/types.ts:22-44`.
-
-Impact: agents cannot build split-screen composites with native masks, create shaped reveals, feather or invert a region, or edit freeform mask paths.
-
-### 3. Adjustment layers and timeline effect elements
-
-- No operation inserts an `EffectElement` on an effect track, even though OpenCut has a native builder at `apps/web/src/timeline/element-utils.ts:124-144`, an `EffectTrack` model at `apps/web/src/timeline/types.ts:48-52`, and an `EffectElement` model at `apps/web/src/timeline/types.ts:205-208`.
-- `opencut_list_effects` and the `upsert_effect` operation address effects attached to individual visual clips. The tool explicitly calls them "clip effects" at `packages/mcp-server/src/index.ts:181-186`, and the operation requires a target `trackId` and `elementId` at `apps/web/src/automation/types.ts:469-476`.
-- No operation updates parameters on an adjustment-layer effect element through its effect definition. Generic `set_params` is element-parameter based, while adjustment effects carry their definition parameters in the effect element's own `params` and require effect-aware validation.
-- No snapshot field exposes `effectType` for an effect element at `apps/web/src/automation/types.ts:22-44`.
-
-Impact: global or region-wide color grades, blurs, and future registered effects cannot be applied once as timeline layers. Agents must repeat clip effects on every target clip.
-
-### 4. Scene management
-
-- MCP reads only the active scene. The project snapshot contains singular `sceneId` and `sceneName` fields at `apps/web/src/automation/types.ts:148-164`.
-- There is no tool to list all scenes, create a scene, switch scenes independently of projects, rename a scene, delete a scene, set the main scene, or reorder scenes.
-- Native scene create, delete, and rename methods exist at `apps/web/src/core/managers/scenes-manager.ts:33-78`; native commands exist at `apps/web/src/commands/scene/create-scene.ts:6`, `apps/web/src/commands/scene/delete-scene.ts:6`, and `apps/web/src/commands/scene/rename-scene.ts:6`.
-
-Impact: an agent cannot use scenes as alternate edits, sequences, versions, or multi-part deliverables, and cannot choose which scene is rendered through a scene-aware MCP call.
-
-### 5. Bookmarks, notes, and edit markers
-
-- No MCP snapshot returns bookmarks, and no operation creates, removes, moves, or updates one.
-- Native bookmarks support time, optional note, color, and duration at `apps/web/src/timeline/types.ts:10-15`.
-- Native scene manager methods toggle, remove, update, and move bookmarks at `apps/web/src/core/managers/scenes-manager.ts:113-158`.
-
-Impact: agents cannot leave revision notes, mark hook/body/CTA beats, tag review issues, or preserve semantic edit markers in the project.
-
-### 6. Project record lifecycle
-
-- MCP can list, create, and open projects, but cannot rename, duplicate, or delete them. The registered project tools stop at open/read at `packages/mcp-server/src/index.ts:125-167`.
-- Native project manager methods support delete, rename, and duplicate at `apps/web/src/core/managers/project-manager.ts:279-307`, `apps/web/src/core/managers/project-manager.ts:321-361`, and `apps/web/src/core/managers/project-manager.ts:363-482`.
-- There is no MCP operation to change project name after creation.
-
-Impact: automated variant generation cannot clone a template project or maintain project lifecycle without browser actions.
-
-### 7. Track removal and incomplete track lifecycle
-
-- MCP can add a caller-named track and set mute/hidden state, but cannot remove a track. Native track removal exists at `apps/web/src/commands/timeline/track/remove-track.ts:5`; native add, mute, and visibility commands are at `apps/web/src/commands/timeline/track/add-track.ts:10`, `apps/web/src/commands/timeline/track/toggle-track-mute.ts:6`, and `apps/web/src/commands/timeline/track/toggle-track-visibility.ts:6`.
-- No operation changes a track's role or ordering among overlays/audio tracks. The current command set also has no dedicated durable track rename, duplicate, or reorder command, so those portions require native work as well as MCP work.
-- MCP cannot explicitly designate or replace the main video track.
-
-Impact: generated edits accumulate disposable tracks, and agents cannot deterministically control paint order or audio-track organization after creation.
-
-### 8. Multi-element edit operations
-
-- Delete, move, trim, split, retime, parameter, effect, and keyframe operations address one element at a time. Atomic plans can contain many operations, but there is no native-style selection set or group edit primitive.
-- No MCP operation duplicates one or more elements. Native duplication exists at `apps/web/src/commands/timeline/element/duplicate-elements.ts:17-113`.
-- No copy/paste operation exists. Native element paste exists at `apps/web/src/commands/timeline/clipboard/paste.ts:24-165`, and native keyframe paste exists at `apps/web/src/commands/timeline/clipboard/paste-keyframes.ts:87`.
-- No group move or group resize operation preserves relative timing across selected elements. Native group movement is used by `MoveElementCommand` via `apps/web/src/commands/timeline/element/move-elements.ts:18`, and native grouped resize logic exists under `apps/web/src/timeline/group-resize/compute-resize.ts:26-151`.
-- No batch trim-to-range, align, distribute, or gap-close operation is exposed.
-
-Impact: repetitive montage construction, B-roll duplication, template repetition, and coordinated timing changes require large plans and manual ID bookkeeping.
-
-### 9. Ripple editing
-
-- The MCP can trim, split, delete, and move, but it cannot request ripple behavior or close downstream gaps automatically.
-- Native UI state explicitly includes `rippleEditingEnabled` at `apps/web/src/timeline/timeline-store.ts:12-31`, and native ripple calculations are applied by the command manager from `apps/web/src/core/managers/commands.ts:4`.
-- There is no plan-level ripple mode, ripple delete, insert edit, overwrite edit, lift, or extract operation.
-
-Impact: dialogue cleanup and assembly edits cannot reliably preserve downstream sequence timing without calculating every subsequent move in the agent.
-
-### 10. Media-bin management and library audio insertion
-
-- `opencut_import_media` both imports and places one local file on the timeline at `packages/mcp-server/src/index.ts:286-305`. There is no import-to-bin-only option.
-- No MCP operation inserts another timeline instance of an already imported media asset by `mediaId`.
-- No MCP operation removes an unused media asset, renames it, replaces/relinks its source, or reports whether it is used. Native add and remove media commands exist at `apps/web/src/commands/media/add-media-asset.ts:12` and `apps/web/src/commands/media/remove-media-asset.ts:12`.
-- The timeline model supports uploaded and library audio sources at `apps/web/src/timeline/types.ts:112-129`, but MCP accepts only an absolute local path for import and has no native library-audio browse or insert tool.
-
-Impact: agents must re-import duplicate bytes for reuse, cannot clean the project bin, and cannot use native library sounds programmatically.
-
-### 11. Discovery catalogs and schema introspection
-
-Only effects have an MCP catalog. Missing catalogs include:
-
-- graphics and graphic presets;
-- stickers, providers, categories, search, and intrinsic size;
-- masks, supported element types, and mask parameters;
-- fonts and available font weights/styles;
-- text styles and subtitle style fields;
-- valid animation target paths per element/effect;
-- transition types and their capability rules;
-- track compatibility and element insertion rules;
-- provider availability for matte generation, subject tracking, and audio cleanup.
-
-The gap is visible at the bridge boundary: the only catalog method is `list_effects` at `apps/web/src/automation/bridge-client.ts:19-40`, dispatched at `apps/web/src/automation/bridge-client.ts:210-223`.
-
-Impact: an agent must know undocumented internal identifiers before calling generic parameter, keyframe, transition, or asset operations. Invalid guesses are rejected only at mutation time.
-
-### 12. Snapshot fidelity and complete round-trip state
-
-The MCP project snapshot is not a complete serialization of the native project. It omits:
-
-- all non-active scenes;
-- scene bookmarks;
-- element animations as structured channels, except the flattened `keyframes` summary;
-- native masks;
-- sticker IDs and intrinsic dimensions;
-- graphic definition IDs;
-- adjustment-layer effect types;
-- track ordering metadata beyond the returned array order;
-- media usage and richer source metadata;
-- undo/redo depth and command history.
-
-The snapshot contract is at `apps/web/src/automation/types.ts:22-44` and `apps/web/src/automation/types.ts:148-164`, while the native scene and element fields are at `apps/web/src/timeline/types.ts:18-25` and `apps/web/src/timeline/types.ts:165-216`.
-
-Impact: even after new mutation operations are added, an agent cannot safely round-trip or diff these objects until the read model exposes their identity and state.
-
-### 13. Undo/redo and history control
-
-- MCP exposes one-step undo only at `packages/mcp-server/src/index.ts:273-284`.
-- There is no redo, multi-step undo, history listing, named checkpoint, restore-to-revision, branch, or transaction preview/dry-run operation. Native redo is already available through the command manager at `apps/web/src/core/managers/commands.ts:70-87`.
-- Revisions provide optimistic concurrency but are not addressable historical snapshots. The mutation result reports only current revision and current snapshot at `apps/web/src/automation/types.ts:582-603`.
-
-Impact: agents cannot inspect what will be undone, recover an accidentally undone change, or compare alternative edit branches inside one project.
-
-### 14. Timeline query limitations
-
-- Query filtering is limited to time range, `trackIds`, and `elementTypes` at `apps/web/src/automation/timeline-query.ts:8-15`.
-- There is no filter by media asset, name, effect, mask, tag, muted/hidden state, source URL, source fingerprint, overlap class, or semantic role.
-- There is no full-text caption search, nearest-cut lookup, beat/marker query, or audio-silence query.
-- Results are time-ordered with gaps/overlaps, but there is no dependency graph for transitions, mattes, replacement audio, or source-derived artifacts.
-
-Impact: project-wide edits require fetching and filtering broad snapshots in the agent.
-
-### 15. Advanced keyframe curve editing
-
-- MCP supports creating, removing, and retiming keyframes, with interpolation selection, but it does not expose scalar Bezier handle editing, extrapolation modes, easing presets, copying/pasting keyframes, or bulk offset/scale of keyframe timing.
-- Native animation types support linear, hold, and Bezier interpolation plus hold/linear extrapolation at `apps/web/src/animation/types.ts:59-67`.
-- Native curve editing has a dedicated `UpdateScalarKeyframeCurveCommand` at `apps/web/src/commands/timeline/element/keyframes/update-scalar-keyframe-curve.ts:14`.
-
-Impact: motion can be automated, but precise speed curves and reusable easing treatments still require UI work.
-
-### 16. Text and subtitle workflow gaps
-
-- Text insertion has no explicit target track, name, or initial style in its operation contract at `apps/web/src/automation/types.ts:370-375`. Styling requires a subsequent `set_params` call with pre-known internal parameter keys.
-- There is no font catalog or font-loading tool.
-- There is no reusable text-style preset, caption-style preset, batch restyle by predicate, or clone-style operation.
-- Subtitle export supports only SRT and WebVTT at `apps/web/src/automation/types.ts:292-313`; imported ASS cannot be exported back to ASS.
-- There is no operation for merging/splitting captions by words, shifting all captions, resolving overlaps, changing words-per-caption after transcription, karaoke/word highlighting, speaker assignment, or transcript correction mapped back to caption timing.
-- There is no burn-in toggle because captions are ordinary rendered text elements. Excluding captions from a video export would require hiding their track before export and restoring it afterward.
-
-Impact: caption creation is functional, but sophisticated reusable social-video subtitle treatments are not yet a high-level agent workflow.
-
-### 17. Audio workflow gaps
-
-- No equalizer, compressor, limiter, noise gate, de-esser, channel pan, channel mapping, pitch shift, voice isolation control, or audio-effect stack is modeled by MCP.
-- `set_audio` is limited to volume, mute, and linear fade parameters at `apps/web/src/automation/types.ts:439-449`.
-- Ducking accepts caller-supplied regions but there is no dialogue/activity detector tool to derive those regions automatically.
-- Loudness normalization applies a uniform mix gain after analysis. It does not expose per-track buses, sidechain routing, or final limiter settings; the tool description states that it preserves relative clip levels at `packages/mcp-server/src/index.ts:203-217`.
-- Clean audio is not self-contained unless a provider is configured. The tool explicitly routes through a configured external provider at `packages/mcp-server/src/index.ts:253-260`.
-- Sync aligns one target to one reference by a single offset at `packages/mcp-server/src/index.ts:220-228`; there is no multicamera sync group, drift correction, time-stretch sync, or timecode sync.
-
-Impact: the MCP covers core dialogue assembly and level normalization, but not a complete audio post-production chain.
-
-### 18. Subject tracking and background removal limitations
-
-- `opencut_track_subject` depends on a configured local provider at `packages/mcp-server/src/index.ts:424-431`. There is no provider discovery, model download/setup, target-object selector beyond the provider contract, multi-subject identity management, tracking correction, confidence visualization, or reusable tracking data object.
-- Background removal is implemented as generating or attaching a foreground matte, not as a bundled one-click native model. `opencut_generate_matte` explicitly uses a configured external provider at `packages/mcp-server/src/index.ts:414-422`.
-- The MCP has no background replacement composite operation. After attaching a matte, the agent must separately import and place the new background and manage layers.
-- There is no garbage matte, edge decontamination, spill suppression, hair-detail refinement, matte paint/repair, temporal flicker repair, or matte preview/diagnostic tool.
-- Attached mattes support only alpha or red channels through the native model at `apps/web/src/timeline/types.ts:101-113`.
-
-Impact: the architecture can carry a generated background-removal matte, but dependable production background removal still requires provider setup and quality-control tooling.
-
-### 19. Export variants and delivery packaging
-
-- Export is limited to MP4 or WebM, four quality levels, optional supported frame rate, and include/exclude audio. The native export contract is at `apps/web/src/export/index.ts:4-21`, mirrored by the MCP schema at `packages/mcp-server/src/tool-schemas.ts:715-719`.
-- There is no explicit output resolution override independent of project canvas, codec/profile/level, bitrate, CRF, pixel format, color space, HDR metadata, audio codec/bitrate/sample rate, hardware-encoder selection, keyframe interval, alpha output, GIF, image sequence, still-frame export, audio-only export, or proxy render.
-- There is no one-call batch matrix for multiple aspect ratios, project variants, formats, qualities, captions-on/off, or audio-on/off. Jobs must be enqueued individually.
-- A queued job can be canceled, but a running render cannot be interrupted, as stated at `packages/mcp-server/src/index.ts:478-485`.
-- There is no pause/resume, retry policy, priority, concurrency setting, schedule, resource limit, or render-time estimate.
-- Receipts support a single inspection status, but no structured QC annotations per frame, audio QC result, caption-safe-zone result, or automatic watermark detector. Human or vision review must be performed outside the MCP before recording status at `packages/mcp-server/src/index.ts:523-535`.
-- There is no packaging tool for thumbnails, cover frames, subtitle sidecars, manifests, platform filenames, or upload-ready bundles.
-
-Impact: one deterministic video render is supported well, but platform-scale variant generation and delivery orchestration remain manual at the tool-call level.
-
-## Desired agentic workflow capabilities absent from both MCP and current native model
-
-These should not be described as simple MCP exposure work because the underlying editor model does not currently provide them.
-
-### 20. Persistent clip grouping, linking, and compound clips
-
-- The native timeline has temporary multi-selection/group move behavior, but `TimelineElement` has no persistent group ID, link ID, parent compound ID, or nested timeline reference at `apps/web/src/timeline/types.ts:165-216`.
-- Source-audio separation is a specialized video/audio relationship, not a general link model.
-- There is no compound clip, nested sequence, synchronized group, multicam clip, or reusable timeline component.
-
-### 21. Semantic editing and media intelligence
-
-- There is no transcript-to-source search index, shot-boundary detector, scene classifier, object/face index, OCR index, semantic embedding search, duplicate-take detector, quality scorer, or automatic B-roll recommender in the native model or MCP.
-- Timeline transcription produces captions from the current mix, but it does not retain word-level source provenance as an editable transcript model. Its MCP result returns transcript text, segment count, caption count, and created element IDs at `apps/web/src/automation/types.ts:326-338`.
-
-### 22. Advanced compositing and motion graphics
-
-- There is no chroma key, luma key, track matte routing, motion blur, 3D transform/camera, parenting, expressions, particle system, vector path animation, text-on-path, or template variable system in `TimelineElement` at `apps/web/src/timeline/types.ts:165-216`. Standard element blend modes are supported and are not a gap.
-- Native masks and effects provide a foundation, but these capabilities require renderer and project-schema work before MCP tools can expose them.
-
-### 23. Speed ramps, reverse, freeze frames, and optical flow
-
-- Native retiming is represented by a single constant `rate` and optional `maintainPitch` at `apps/web/src/timeline/types.ts:83-86`.
-- There is no time-varying speed curve, reverse flag, freeze-frame element, frame blending, or optical-flow interpolation in the current retime model.
-
-### 24. Automated editorial decision systems
-
-- There is no first-class edit-decision-list import/export, screenplay or storyboard binding, beat grid, silence-removal command, auto-reframe policy object, multicam switching, version comparison, or constraints-based layout engine.
-- Existing low-level operations can be composed by an agent, but OpenCut does not persist these higher-level decisions or their provenance.
-
-## Operational and protocol limitations
-
-### 25. Active-editor architecture
-
-- Every browser method in the bridge is tied to one connected `EditorAutomation` instance, and the request union contains no session or editor identifier at `apps/web/src/automation/bridge-client.ts:19-112`.
-- A managed worker can be launched, but the MCP cannot concurrently control multiple projects in separate editor sessions through one server.
-- Project mutations require the active project and exact revision. This is safe, but long-running provider work can conflict if another actor edits the project before attachment.
-
-### 26. Local-only and provider boundary
-
-- Media import is from absolute local paths, and the hidden editor bridge listens on localhost. There is no direct HTTP/S3/Drive/Dropbox media ingest, remote asset credential broker, or resumable upload interface in the MCP.
-- Matte generation, subject tracking, and audio cleaning depend on separately configured providers. Their existence as registered tools does not mean a fresh checkout can execute those workflows without provider installation/configuration.
-
-### 27. No capability negotiation
-
-- Connection status reports whether an editor is authenticated, but there is no protocol version negotiation, server/editor feature flags, provider readiness matrix, renderer codec probe, GPU availability, or model readiness response.
-- The server version is statically `0.1.0` at `packages/mcp-server/src/index.ts:88-93`, while callers must infer the actual feature set from tool presence and failed calls.
-
-## Priority summary for the stated workflow
-
-The highest-value missing work for programmatic short-form editing is:
-
-1. Native graphics, stickers, masks, and adjustment layers, including catalogs and complete snapshot state.
-2. Duplicate, bulk/group operations, and ripple editing primitives.
-3. Track cleanup/order controls and reusable media-asset insertion.
-4. Project duplication plus scene listing/selection for template and variant workflows.
-5. Batch export matrices and structured QC packaging.
-6. Provider discovery and production QC around matte generation, subject tracking, and audio cleaning.
-7. Persistent grouping/linking and compound clips, which require native schema and renderer design rather than MCP wiring alone.
-
-Background removal itself is no longer a missing transport capability because generated and precomputed mattes can be attached. The remaining gap is a ready, discoverable provider plus mask-quality repair and compositing workflows.
+# OpenCut Classic MCP capability-gap audit and completion requirements
+
+Audit date: 2026-09-02
+Audited branch: `codex/issue-1-mcp-editor-bridge`
+Audited commit: `d4cfdce1ded8fa4a29b8324745db9f18563404eb`
+
+This tracked document is the current source-backed requirements baseline for completing the OpenCut Classic MCP. It replaces historical gap assumptions with the behavior present at the audited commit. The evidence boundary is the registered MCP tool surface, input schemas, browser bridge request union, automation read and write contracts, native project and timeline models, commands and managers, renderer, export pipeline, and provider adapters in this checkout. Simple Media workflow requirements come from the canonical `opencut-editing` and `capcut-editing` skills and their MCP execution contract.
+
+## Classification
+
+- **Fully supported**: callable through MCP on a configured checkout, persisted, readable, and covered by a real implementation path.
+- **Partially supported**: useful MCP behavior exists, but the requested workflow is incomplete or lacks safe readback, control, fidelity, or lifecycle behavior.
+- **Provider-dependent**: MCP plumbing exists, but a fresh checkout cannot execute the capability without a separately configured command or model provider.
+- **Unsupported by MCP but present in OpenCut**: OpenCut has the required native state, manager, command, or renderer behavior, but MCP cannot operate it.
+- **Unsupported by both MCP and OpenCut**: neither MCP nor the current native model, editor, renderer, provider bundle, or infrastructure implements the required behavior.
+- **Optional future enhancement**: outside baseline production parity and not required by a named current Simple Media workflow.
+
+## Requirement-record conventions
+
+Every incomplete matrix row is a requirements record. Its third column states the current implementation, the exact missing behavior, and current code evidence. Its fourth column states the required work layer, the affected workflow or operational outcome, objective acceptance criteria, and production criticality. Section order and the final dependency map define recommended implementation order. When a row names a more specific dependency, that dependency takes precedence. A tool registration, protocol shape, fixture, configured external command, or renderer code path is not classified as fully supported unless the end-to-end behavior is callable, persistent where required, and readable or verifiable.
+
+## Current-state summary
+
+- The server registers 37 tools from connection and worker control through export inspection at `packages/mcp-server/src/index.ts:104-618`.
+- The browser request union contains one active-editor channel with read/query/catalog/audio/project/export/attachment/import/transcription/edit/undo methods at `apps/web/src/automation/bridge-client.ts:20-125`.
+- The edit plan accepts 41 operation variants at `apps/web/src/automation/types.ts:458-752`, mirrored by Zod schemas at `packages/mcp-server/src/tool-schemas.ts:171-609`.
+- Every edit plan requires project ID, operation ID, expected revision, description, and an operation array at `apps/web/src/automation/types.ts:754-760`.
+- Mutation success is save-flushed before returning, for example edit plans at `apps/web/src/automation/editor-automation.ts:486-546`, imports at `apps/web/src/automation/editor-automation.ts:587-692`, and undo at `apps/web/src/automation/editor-automation.ts:550-578`.
+- The canonical project snapshot includes settings, active scene identity, tracks, transitions, media, and recursively described elements, including relationships, effects, keyframes, mattes, audio replacements, reframes, visual asset identities, masks, and compounds at `apps/web/src/automation/types.ts:22-253`.
+- The typed construction and timeline core is substantial. The remaining production blockers are durable identity and save evidence, lifecycle breadth, preview and review evidence, bundled providers, semantic source editing, advanced retiming and audio, service-grade rendering, variant overlays, structured QC, and delivery packaging.
+
+## Stale claims in the tracked audit
+
+The following tracked sections are no longer accurate at current HEAD.
+
+| Tracked section | Stale claim | Current evidence |
+|---|---|---|
+| 1, Graphics and stickers | No insertion, discovery, or snapshot identity | `insert_graphic`, `insert_sticker`, and `insert_adjustment_layer` exist at `apps/web/src/automation/types.ts:465-491`; catalogs and sticker search are at `apps/web/src/automation/types.ts:144-202` and tools at `packages/mcp-server/src/index.ts:198-216`; snapshot identities are at `apps/web/src/automation/types.ts:46-50`. |
+| 2, Masks | No authored-mask CRUD or snapshot | `set_mask` and `remove_mask` are at `apps/web/src/automation/types.ts:719-741`; mask snapshots are at `apps/web/src/automation/types.ts:51,61-81`; catalog serialization is at `apps/web/src/automation/visual-asset-catalog.ts:27-69`. |
+| 3, Adjustment layers | No effect-element insertion | `insert_adjustment_layer` is at `apps/web/src/automation/types.ts:483-491`; effect type is returned at `apps/web/src/automation/types.ts:50`. |
+| 8, Multi-element operations | No duplication or relationship-aware movement | `duplicate_elements` is at `apps/web/src/automation/types.ts:533-537`; group/link scopes and movement are at `apps/web/src/automation/types.ts:108,552-576`. |
+| 9, Ripple editing | No ripple delete/trim/split | Ripple flags are present on delete, trim, and split at `apps/web/src/automation/types.ts:527-532,691-707`. |
+| 11, Discovery | Only effects have a catalog | Visual asset catalog and sticker search now exist at `packages/mcp-server/src/index.ts:198-216`; structured graphic and mask schemas are at `apps/web/src/automation/types.ts:132-202`. |
+| 12, Snapshot fidelity | Omits masks, sticker and graphic IDs, effect element types | All are now present at `apps/web/src/automation/types.ts:46-52,77-81`. |
+| 16, Text/subtitles | No caption correction | `update_caption` exists at `apps/web/src/automation/types.ts:519-525`; SRT/ASS/VTT import and SRT/VTT export are registered at `packages/mcp-server/src/index.ts:336-419`. |
+| 17, Audio | Only basic levels and configured clean-audio hook | Source separation, ducking, mix gain, waveform sync, loudness analysis/normalization, clean-audio attachment, and provider cleanup are registered or modeled at `packages/mcp-server/src/index.ts:218-291` and `apps/web/src/automation/types.ts:593-622`. The bundled-provider claim remains false. |
+| 18, Tracking | No applied subject tracking | The provider result is mapped through trim and retime, confidence-filtered, smoothed, and applied as reframe keyframes at `packages/mcp-server/src/track-subject.ts:230-281,404-450`. It remains provider-dependent. |
+| 19, Export variants | No canvas override or one-call batch matrix | Canvas override is at `apps/web/src/automation/types.ts:929-939`; platform batch tools are at `packages/mcp-server/src/index.ts:484-537`; built-in presets are at `packages/mcp-server/src/export-variants.ts:4-38`. |
+| 20, Persistent relationships and compounds | Missing both native and MCP | Persistent `groupId`, `linkId`, and recursive compound state are in the snapshot at `apps/web/src/automation/types.ts:27-28,52-59`; create/break apart and relationship CRUD are at `apps/web/src/automation/types.ts:539-568`; native compound model is at `apps/web/src/timeline/types.ts:212-218`. |
+| 25, Active-editor architecture | A managed worker exists but description understates it | Hidden Chrome/Edge launch and persistent profile are implemented at `packages/mcp-server/src/managed-editor-worker.ts:41-82`, and tools are at `packages/mcp-server/src/index.ts:114-131`. Rendering is still browser-dependent and single-session. |
+
+## Current capability matrix and requirements
+
+### A. Protocol, state, safety, and discovery
+
+These requirements affect every deterministic editing workflow. Implement capability negotiation and canonical identity first, then save and content-hash barriers, durable idempotency and history, and finally generalized job execution.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Connection status and managed worker lifecycle | **Fully supported** | Status includes bridge and worker state, and MCP can start or stop its hidden worker at `packages/mcp-server/src/index.ts:104-131`. Worker status contains enabled/running/connected/base URL/profile/browser/project/error at `packages/mcp-server/src/managed-editor-worker.ts:11-20`. | Meets baseline unattended local editing when configured. |
+| Stable editor and session identity | **Partially supported** | Status reports the currently connected project and one worker, while `EditorBridge` owns one `activeSocket` at `packages/mcp-server/src/editor-bridge.ts:20-22` and rejects another editor at `packages/mcp-server/src/editor-bridge.ts:287-307`. Requests and snapshots carry project identity but no durable editor handle, session ID, instance nonce, or connection generation. | **Protocol/bridge; production-critical.** Affected workflow: reconnect-safe edits and job affinity. Dependency/order: define negotiated protocol identity before durable revisions, operation replay, jobs, or multi-session routing. Acceptance: every read, mutation, save, preview, and export identifies server, editor instance, session, project, scene, and connection generation; reconnects cannot silently target another editor or reuse stale revision state. |
+| Revision-checked atomic edit plans | **Fully supported** | Plans require exact revision and apply as a command batch, then flush save and return a new snapshot at `apps/web/src/automation/editor-automation.ts:486-546`. | This satisfies the skill requirement for typed, atomic, conflict-aware timeline mutation. |
+| Revision durability and coverage | **Partially supported** | The revision starts at zero in each automation instance and resets on project-session change at `apps/web/src/automation/editor-automation.ts:170-173,2123-2134`. Its change fingerprint covers only active project ID, active scene ID, project settings, and active-scene tracks at `apps/web/src/automation/editor-automation.ts:2137-2146`; it excludes project name, other scenes, bookmarks, and unplaced media-bin state. | **Automation/model; production-critical.** Acceptance: durable monotonic project version or canonical content hash survives reload, covers every MCP-visible durable field and all scenes/assets, and distinguishes editor-session sequence from persisted project identity. |
+| Save barrier | **Partially supported** | Mutating methods internally call `SaveManager.flush()`, but there is no explicit `opencut_save_project` or `opencut_wait_for_save` tool and no durable save receipt. Native flush exists at `apps/web/src/core/managers/save-manager.ts:65-69`. | **MCP/infrastructure; production-critical.** Affected workflow: deterministic edit handoff and crash-safe export. Dependency: expose save status and persisted project identity. Acceptance: explicit tool returns project ID, revision, durable persisted timestamp or storage version, and readback hash after all queued writes complete. |
+| Project content hash | **Unsupported by both MCP and OpenCut** | Internal stable serialization detects external timeline changes at `apps/web/src/automation/editor-automation.ts:2106-2120`, but snapshots expose only a process-local revision, not a content hash, at `apps/web/src/automation/types.ts:237-253`. | **Automation/model; production-critical.** Acceptance: canonical hash includes project settings, active scene, tracks, transitions, elements, relationships, and referenced asset identities; unchanged save/reload preserves it; every mutation/read/export receipt reports it. |
+| Dry-run and plan validation | **Unsupported by both MCP and OpenCut** | Zod validates request shape and edit commands are constructed before execution, but there is no non-mutating evaluation result, diff, warnings, or cost estimate. The public plan schema has no dry-run field or result variant at `packages/mcp-server/src/tool-schemas.ts:611-640`. | **Automation/MCP; production-critical.** Acceptance: validate a complete plan against a specific revision, return deterministic before/after summary, changed IDs, timing consequences, ripple/relationship expansion, warnings, and no state mutation. |
+| Idempotency | **Partially supported** | Browser mutation replay maps are in memory at `apps/web/src/automation/editor-automation.ts:165-210` and are cleared on project session reset at `apps/web/src/automation/editor-automation.ts:2123-2134`. Export jobs and receipts are durable at `packages/mcp-server/src/export-job-store.ts:36-130` and `packages/mcp-server/src/export-receipts.ts:44-113`. | **Infrastructure; production-critical.** Acceptance: all mutating operations have durable operation ledger keyed by operation ID and fingerprint, survive worker/server restart, and replay the original result or reject mismatched reuse. |
+| Undo | **Partially supported** | One-step MCP undo is registered at `packages/mcp-server/src/index.ts:302-313`; native command history supports undo and redo at `apps/web/src/core/managers/commands.ts:51-87`. No history description, multi-step undo, redo, checkpoints, or revision restore is exposed. | **MCP plus history model; production-critical for recovery.** Acceptance: list history with operation IDs/descriptions and affected objects, redo, bounded multi-step undo, named checkpoint/restore, revision checks, and persistence policy. |
+| Capability negotiation and provider readiness | **Unsupported by both MCP and OpenCut** | Connection status only reports authenticated editor and worker state at `packages/mcp-server/src/index.ts:104-112`; server version is static `0.1.0` at `packages/mcp-server/src/index.ts:96-100`. No feature flags, schema version negotiation, provider probes, codecs, GPU, model/cache status, or renderer readiness. | **Protocol/infrastructure; production-critical.** Acceptance: one tool returns server/editor protocol versions, supported tools and operation variants, provider readiness and provenance, installed models/cache, browser/renderer/FFmpeg codecs, acceleration, limits, and degraded reasons. |
+| Operation history and audit trail | **Partially supported** | Export jobs and receipts are durable, but ordinary edits are only process-memory replay entries and native command stacks at `apps/web/src/automation/editor-automation.ts:165-210`. | **Infrastructure; production-critical.** Acceptance: append-only durable ledger records actor, operation ID, input fingerprint, project content hashes, revision before/after, save result, provider provenance, timestamps, status, and undo relationship. |
+
+### B. Project, scene, bookmark, track, and asset lifecycle
+
+These requirements affect template reuse, alternate cuts, project hygiene, and clean platform variants. Establish durable project and scene identity before adding lifecycle mutations, then complete track and media-bin management.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| List/create/open/read projects | **Fully supported** | Tools are registered at `packages/mcp-server/src/index.ts:134-176`; project snapshot includes project identity/settings and active scene at `apps/web/src/automation/types.ts:237-253`. | Baseline project activation is complete. |
+| Rename, duplicate, delete projects | **Unsupported by MCP but present in OpenCut** | Native methods exist at `apps/web/src/core/managers/project-manager.ts:279-307,321-361,363-482`; no registered tool exists after open/read in `packages/mcp-server/src/index.ts:134-176`. | **MCP wiring; production-critical** for template duplication and variant projects. Acceptance: typed rename/duplicate/delete with idempotency, collision rules, active-project behavior, asset cloning semantics, and readback. |
+| Full scene lifecycle | **Unsupported by MCP but present in OpenCut** | Snapshot exposes only one `sceneId` and `sceneName` at `apps/web/src/automation/types.ts:237-253`. Native create/delete/rename/switch/list are at `apps/web/src/core/managers/scenes-manager.ts:33-109,242-265`. No list/create/switch/rename/delete/main-scene/reorder MCP operation exists. | **MCP/read model; production-critical** for alternate cuts and multi-part deliverables. Acceptance: list all scenes with main/current flags and hashes; create, clone, switch, rename, delete, set main, reorder, and scene-select preview/export. |
+| Bookmarks, notes, markers | **Unsupported by MCP but present in OpenCut** | Native bookmark model has time/note/color/duration at `apps/web/src/timeline/types.ts:12-17`; native CRUD is at `apps/web/src/core/managers/scenes-manager.ts:113-158`. Snapshot omits bookmarks. | **MCP/read model; production-critical** for hook/body/CTA markers and review notes. Acceptance: bookmark snapshot and revision-checked CRUD/query with stable IDs, ranges, colors, notes, and scene identity. |
+| Add/configure tracks | **Fully supported** | `add_track` and `set_track_state` support typed track creation plus mute/hidden at `apps/web/src/automation/types.ts:493-502`; snapshots return ID/name/type/role/state at `apps/web/src/automation/types.ts:204-211`. | Baseline track construction is complete. |
+| Remove/reorder/rename/duplicate tracks and main-track control | **Partially supported** | Add/mute/hide exist. Native removal exists at `apps/web/src/commands/timeline/track/remove-track.ts:5-27`; there is no MCP remove. No durable native track rename/reorder/duplicate or main-track replacement command is evident in the current command set. | **MCP plus native model; production-critical.** Acceptance: safe remove with occupied-track policy, rename, deterministic overlay/audio order, duplicate, role changes where legal, main-video replacement, and snapshot order/role readback. |
+| Import local media and timeline placement | **Fully supported** | `opencut_import_media` imports image/audio/video from absolute path and places it, with optional target track and media-setting adoption at `packages/mcp-server/src/index.ts:315-334` and `packages/mcp-server/src/tool-schemas.ts:643-656`. | Meets local Simple Media ingest. |
+| Media-bin-only import, reuse, relink, rename, delete, usage query | **Partially supported** | Current import always places an element. Snapshot lists assets at `apps/web/src/automation/types.ts:223-235`, but no operation inserts a second instance by asset ID or manages bin lifecycle. Native remove exists at `apps/web/src/commands/media/remove-media-asset.ts:12-190`. | **MCP plus some native work; production-critical** for template reuse and clean projects. Acceptance: import without placement; instantiate by asset ID; list usages including matte/replacement/compound references; rename, relink/replace with compatibility validation, and delete-unused or explicit cascade. |
+| Remote/resumable media ingest | **Unsupported by both MCP and OpenCut** | Import accepts only absolute local paths in the public import schema at `packages/mcp-server/src/tool-schemas.ts:643-656`; bridge ticket transfer is local. There is no HTTP/S3/Drive/Dropbox fetch, resumable upload, credential broker, or source manifest. | **Infrastructure; optional for local-only parity, production-critical for remote agents.** Acceptance: authenticated pluggable fetch with allowlists, content hash, resumability, provenance, size/type limits, and local immutable staging. |
+
+### C. Timeline construction and organization
+
+These requirements affect assembly, dialogue cleanup, templating, and safe bulk revision. Complete dry-run and richer timeline selection before high-level bulk transforms so scope expansion can be inspected before mutation.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Typed text/caption/graphic/sticker/adjustment insertion | **Fully supported** | Insert variants are at `apps/web/src/automation/types.ts:459-491,510-517`; visual catalogs are at `apps/web/src/automation/types.ts:132-202`. | Core social-video construction is callable. |
+| Move, trim, split, delete, retime, params | **Fully supported** | Operations are at `apps/web/src/automation/types.ts:527-532,570-604,684-707`; delete/move can expand over element/group/link/all relationships. | Core timeline surgery is callable. |
+| Ripple delete/trim/split | **Fully supported** | Ripple flags are at `apps/web/src/automation/types.ts:527-532,691-707`. | Basic dialogue cleanup sequencing is supported. |
+| Insert/overwrite/lift/extract and close-gap primitives | **Unsupported by both MCP and OpenCut** | There is no edit operation for insert edit, overwrite, lift, extract, close selected gap, or close all gaps in the complete operation union at `apps/web/src/automation/types.ts:458-752`. Existing moves and ripple flags can compose some results but do not express these decisions. | **Automation/native command; production-critical.** Acceptance: deterministic range-based insert/overwrite/lift/extract/gap-close with locked/muted/relationship policies, collision report, and dry-run diff. |
+| Duplication | **Fully supported** | Multi-element relationship-aware `duplicate_elements` exists at `apps/web/src/automation/types.ts:533-537`. | Supports template repetition. |
+| Persistent groups and links | **Fully supported** | Group/link IDs are in snapshots at `apps/web/src/automation/types.ts:27-28`; set/clear operations are at `apps/web/src/automation/types.ts:552-568`. | Basic synchronized editing relationships are complete. |
+| Compound clips | **Fully supported** | Create/break-apart is at `apps/web/src/automation/types.ts:539-550`; recursive snapshot is at `apps/web/src/automation/types.ts:55-59`; native compound model is at `apps/web/src/timeline/types.ts:212-218`. | Current limitation: outer compound transitions are deliberately unsupported. Treat advanced nested-sequence features below separately. |
+| Compound lifecycle beyond create/break apart | **Partially supported** | The compound operation surface only creates and breaks apart compounds at `apps/web/src/automation/types.ts:539-550`; it does not expose rename-in-place, independent nested-timeline editing, content replacement, scene conversion, reusable library components, or compound-to-scene conversion. | **Native model/UI/MCP; optional to production-critical depending template workflow.** Acceptance: stable nested context addressing, edit and save nested content, rename, update membership, nested preview/export, and explicit transition policy. |
+| Align, distribute, batch trim, batch style, batch timing transforms | **Unsupported by both MCP and OpenCut** | Atomic plans can contain many low-level operations, but no predicate selection or alignment/distribution/range transform is returned by the operation union at `apps/web/src/automation/types.ts:458-752`. | **Automation layer; production-critical for efficient templating.** Acceptance: stable selector language, align starts/ends/centers, distribute gaps, offset/scale timing, trim to range, apply style/effect by selector, dry-run diff. |
+| Timeline queries | **Partially supported** | Revision-stable range queries return ordered elements, gaps, overlaps, and cut/gap/overlap relationships at `apps/web/src/automation/timeline-query.ts:60-88,320-358`. Filters only include track IDs and element types at `apps/web/src/automation/timeline-query.ts:8-15`. | **Automation; production-critical.** Acceptance: filters by ID/name/media/effect/mask/group/link/mute/hidden/source fingerprint/role; dependency graph; nearest-cut; caption text search; pagination or bounded output. |
+
+### D. Text, captions, transcription, and subtitle files
+
+These requirements affect social captions, correction passes, subtitle sidecars, and clean versus burned-in masters. Build persistent word provenance before transcript-driven correction and styling automation, then add export-time caption variants.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Caption insertion and direct correction | **Fully supported** | `insert_captions` and `update_caption` are at `apps/web/src/automation/types.ts:510-525`; correction validates text/timing at `apps/web/src/automation/caption-control.ts:30-60`. | Covers direct cue text and timing fixes. |
+| Subtitle import | **Partially supported** | SRT, ASS, and WebVTT import is registered at `packages/mcp-server/src/index.ts:336-362`; source file validation is at `packages/mcp-server/src/subtitle-files.ts:12-46`. ASS parsing maps supported styles and warns for unsupported features at `apps/web/src/subtitles/ass.ts:60-149`. | **Subtitle parser/renderer; production-critical when styled ASS sources are used.** Affected workflow: subtitle migration without silent style loss. Dependency/order: define supported ASS feature coverage and renderer parity before claiming round-trip fidelity. Acceptance: every supported style and timing feature round-trips into preview and export, unsupported features produce a structured loss report, and fixtures verify deterministic rendering. |
+| Subtitle export | **Partially supported** | Only SRT and WebVTT are writable at `packages/mcp-server/src/subtitle-files.ts:49-89`; no ASS export, styled sidecar, transcript JSON, word-timing JSON, or EDL. | **Subtitle codec/MCP; production-critical if styled sidecars are required.** Acceptance: ASS round-trip for supported properties with loss report, plus optional transcript JSON containing stable cue/word IDs and source provenance. |
+| Local timeline transcription | **Fully supported** | Tool renders timeline mix, uses local Whisper, and inserts captions at `packages/mcp-server/src/index.ts:364-375`; caller selects model and caption chunking at `packages/mcp-server/src/tool-schemas.ts:675-691`. | First model use may download files. This is a bundled local path, unlike the external command providers. |
+| Editable transcript model and word provenance | **Unsupported by both MCP and OpenCut** | Transcription becomes text elements. Caption chunking splits segment text heuristically at `apps/web/src/transcription/caption.ts:7-48`; no persistent word objects, speaker IDs, source clip/time mapping, or correction propagation model exists. | **Model/transcription/automation; production-critical** for transcript-based editing. Acceptance: persistent transcript with word timestamps, source asset/clip offsets, stable IDs, speaker labels, confidence, correction history, and reversible mapping to captions and timeline cuts. |
+| Caption restructuring and style workflows | **Partially supported** | A cue can be edited and styled through parameters or import style. Plain `insert_text` has no explicit target track, name, or initial style at `apps/web/src/automation/types.ts:459-464`. There is no merge/split-by-word, global shift, overlap repair, reading-speed enforcement, speaker style, karaoke/word highlight, reusable style preset, clone-style, or selector-based restyle. Font discovery is absent. | **Automation/text renderer/catalog; production-critical** for repeatable social captions. Acceptance: target-track and initial-style text insertion, font catalog/readiness, reusable caption presets, merge/split/rechunk/shift/repair, speaker and word-level highlighting, safe-zone validation, and bulk restyle readback. |
+| Independent per-line caption bubbles | **Unsupported by both MCP and OpenCut** | Current text background layout produces one background rectangle from the maximum measured line width at `apps/web/src/text/layout.ts:112-145`; neither the text model nor MCP represents a separately sized background bubble for each wrapped line. | **Text layout/model/renderer/MCP; production-critical for the canonical social-caption treatment.** Dependency/order: complete font readiness and deterministic wrapping, then expose per-line background geometry and exact-time preview. Acceptance: every rendered line receives an independently measured rounded background with configurable padding, radius, fill and opacity; wrapping changes recompute bubbles deterministically; preview and export match; style is persistent and readable through MCP. |
+| Captions-on/off export variant | **Partially supported** | Caption tracks can be hidden with `set_track_state` at `apps/web/src/automation/types.ts:493-502`, but the batch presets and overrides at `packages/mcp-server/src/export-variants.ts:4-38` do not carry per-variant track visibility overlays. | **Export overlay model; production-critical** for burned-in and clean masters. Acceptance: render-time track inclusion without mutating project, sidecar pairing, receipt records included/excluded tracks. |
+
+### E. Visual effects, masks, transitions, motion, and compositing
+
+These requirements affect the realistic grade, motion polish, graphic overlays, reframing, and compositing. Exact-time preview evidence is the validation dependency for new renderer behavior, motion controls, transition rules, and compositing features.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Complete Simple Media realistic filter | **Fully supported** | Color grade exposes temperature, tint, saturation, exposure, contrast, highlights, shadows, and fade, and includes exact preset values at `apps/web/src/effects/definitions/color-grade.ts:6-15,53-82`. Clip effects and adjustment layers are callable through the edit plan. | Meets the named CapCut parity requirement. |
+| Clip effects and adjustment layers | **Fully supported** | Effect catalog plus upsert/remove/reorder operations are at `apps/web/src/automation/types.ts:125-154,624-643`; adjustment insertion is at `apps/web/src/automation/types.ts:483-491`. Current built-ins include color grade and blur. | Broader effect-library breadth is an enhancement, not an MCP exposure gap. |
+| Exact Simple Media named effects, motion presets, and transitions | **Unsupported by both MCP and OpenCut** | The registered effect definitions contain only blur and color grade at `apps/web/src/effects/definitions/index.ts:1-7`; the transition schema contains crossfade, fade-through-black, slide, wipe, and zoom at `packages/mcp-server/src/tool-schemas.ts:106-112`. There are no exact implementations or stable presets for Film Frame, Play Pendulum, Technicolor Flash, Scanner Bar, Glitch, Chromatic, Dark Night, Mirror, the required body or meme treatments, or the exact Pull In, Pull Out, and Swipe Left behaviors. | **Effect definitions/renderer/preset catalog/MCP; production-critical for exact course reproduction.** Dependency/order: implement exact-time preview and visual regression fixtures first, then add named effect and transition definitions with stable parameters. Acceptance: every named treatment is discoverable by stable ID, has typed defaults and ranges, persists in snapshots, renders identically in preview and export, and passes reference-frame or reference-sequence comparisons at declared tolerances. |
+| Stickers and graphics | **Fully supported** | Catalog/search and insertion paths cited above. | Third-party sticker provider/network availability may still affect individual search results. |
+| Authored masks | **Fully supported** | Mask schemas cover built-ins and freeform at `apps/web/src/automation/types.ts:61-81,719-741`; catalog exposes feature/parameter metadata at `apps/web/src/automation/visual-asset-catalog.ts:27-69`. | No separate mask reorder operation exists because current model is array-based and set-by-ID does not expose order control. |
+| Mask ordering, tracking linkage, and repair paint | **Partially supported** | MCP can set and remove masks through the mask operation surface at `apps/web/src/automation/types.ts:719-741`, but cannot reorder them or bind a mask path to tracker data. No garbage matte, roto brush, paint/erase repair, or per-frame mask correction object exists. | **Model/renderer/MCP; production-critical for difficult background removal.** Acceptance: ordered mask stack; tracker binding; feather/expand/invert; keyframed/freeform control; repair strokes with frame/range scope; preview diagnostics. |
+| Transitions | **Fully supported** | Upsert/remove and snapshot are at `apps/web/src/automation/types.ts:213-221,670-682`. | No transition discovery tool or richer capability rules are exposed, so callers need known enum values. |
+| Transition catalog and compound transitions | **Partially supported** | Tool schema hard-codes supported types at `packages/mcp-server/src/tool-schemas.ts:106-112`; there is no catalog/readiness metadata, and compound outer transitions are not supported by the current compound implementation. | **MCP plus renderer; optional.** Acceptance: catalog with constraints/previews and validated compound-boundary rendering. |
+| Keyframes | **Fully supported** | Operations are at `apps/web/src/automation/types.ts:645-668`; snapshots include flattened element keyframes at `apps/web/src/automation/types.ts:40`. | Basic motion and animated reframing are supported. |
+| Advanced curve editing and reusable motion | **Partially supported** | Native curve types include Bezier handles, tangent modes, and extrapolation at `apps/web/src/animation/types.ts:59-108`; native curve command exists, but MCP only selects interpolation and retimes keys. No handle editing, easing preset, extrapolation, copy/paste, bulk offset/scale, parenting, or reusable animation preset. | **MCP plus model for reusable presets; production-critical for polished motion.** Acceptance: full scalar curve read/write, tangent/extrapolation controls, keyframe copy/paste and time transforms, motion preset CRUD, validation/readback. |
+| Crop/reframe and tracked reframing | **Fully supported** | Static and keyframed reframe state is at `apps/web/src/automation/types.ts:83-106,584-592`; provider tracking can produce crop/focal keyframes at `packages/mcp-server/src/track-subject.ts:230-281`. | Variant-aware automatic composition remains incomplete below. |
+| Advanced compositing | **Unsupported by both MCP and OpenCut** | Current native element model supports blend/visual params, masks, mattes, and effects, but no chroma/luma key, track-matte routing, parenting, motion blur, 3D camera, expressions, particles, vector path animation, text-on-path, or template-variable system appears in `apps/web/src/timeline/types.ts:163-218`. | **Native model/renderer/MCP; mostly optional**, except chroma key and track mattes can be production-critical for green-screen workflows. Acceptance: each implemented feature has model persistence, preview/export parity, typed MCP controls, capability discovery, and reference-based rendering tests. |
+
+### F. Background removal and subject tracking
+
+These requirements affect green-screen and background-replacement workflows. Capability readiness and durable jobs come first, then bundled matte and tracking providers, reusable tracking data, refinement and repair controls, and preview-based edge validation.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Attach a precomputed matte | **Fully supported** | Absolute local matte import, content hash, channel, model ID/version, attachment, persistence, and snapshot are implemented at `packages/mcp-server/src/index.ts:421-442`, `packages/mcp-server/src/tool-schemas.ts:693-708`, and `apps/web/src/automation/types.ts:110-117`. | Works when another system already produced a valid matte. |
+| Generate background-removal matte | **Provider-dependent** | `opencut_generate_matte` is registered, but `createMatteProducerFromEnvironment()` throws unless `OPENCUT_MATTE_PRODUCER_COMMAND` is configured at `packages/mcp-server/src/matte-producer.ts:117-137`. The schema accepts an untyped options record and has no declared edge controls at `packages/mcp-server/src/tool-schemas.ts:710-725`. | **Provider/runtime/MCP; production-critical.** Acceptance: fresh configured installation can download or locate a declared licensed model, run CPU fallback and optional acceleration, cache model/artifacts, generate image/video alpha with model ID/version/hash, and attach it without user-supplied command. |
+| Matte edge refinement | **Unsupported by both MCP and OpenCut** | The matte schema exposes only generic provider options at `packages/mcp-server/src/tool-schemas.ts:710-725`. No typed threshold, feather, expand/contract, decontamination, spill suppression, hair-detail, foreground cleanup, temporal smoothing, or output diagnostics exist; generic options are neither discoverable nor renderer-owned. | **Provider/postprocess/renderer/MCP; production-critical.** Acceptance: typed controls with bounded values, previewable before/after frame evidence, stable defaults, alpha histogram/edge metrics, persistence in provenance, and deterministic re-run. |
+| Matte temporal stability and repair | **Unsupported by both MCP and OpenCut** | Matte attachments can reference video and report staleness through the attachment snapshot at `apps/web/src/automation/types.ts:110-117`, but no temporal flicker metric, stabilization, keyframe correction, propagated repair, or frame-range regenerate operation exists. | **Provider/model/automation; production-critical for video.** Acceptance: temporal consistency controls, per-frame confidence, repair ranges, reusable cache keyed by source/model/options, and preview/export verification. |
+| Subject tracking provider | **Provider-dependent** | Tracking schema supports prompt/initial box, sampling, confidence, smoothing, padding, and crop/focal modes at `packages/mcp-server/src/tool-schemas.ts:760-798`, but adapter throws without `OPENCUT_SUBJECT_TRACKER_COMMAND` at `packages/mcp-server/src/subject-tracker.ts:157-177`. | **Provider/runtime; production-critical for auto-reframe.** Acceptance: bundled tracker with declared model provenance, CPU fallback, deterministic cache, first/last sample validation, readiness reporting, and real video integration evidence. |
+| Tracking data persistence and correction | **Partially supported** | Applied reframe keys persist in the reframe snapshot at `apps/web/src/automation/types.ts:83-106`, but raw boxes, confidence, and provider samples are not a first-class reusable project object. There is no multi-subject identity, occlusion state, manual correction key, re-propagation, confidence visualization, or tracker-to-mask binding. | **Model/MCP/UI; production-critical.** Acceptance: stable tracking object with subjects, samples/confidence, source mapping, corrections, provenance/hash, reuse by reframe/mask/effect, and range re-track. |
+| Background replacement composition | **Partially supported** | The agent can import media and attach a matte through the registered tools at `packages/mcp-server/src/index.ts:315-334,421-451`, then layer the background manually. No one-call replace-background workflow validates stacking, duration, canvas fill, edge settings, or preview. | **Automation; production-critical for the green-screen workflow.** Acceptance: atomic high-level operation creates or reuses background layer, aligns duration, applies matte/refinement, reports changed IDs, and renders comparison frames. |
+
+### G. Audio production
+
+These requirements affect dialogue cleanup, source replacement, sync, ducking, music balance, and delivery loudness. Complete provider readiness and durable jobs before bundled cleanup and stem work, then add editable post processing and receipt-level QC.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Source audio separation and replacement attachment | **Fully supported** | Separation is at `apps/web/src/automation/types.ts:605-609`; cleaned/replacement state is at `apps/web/src/automation/types.ts:743-751`; snapshots include relationship state at `apps/web/src/automation/types.ts:43,45,119-123`. | Core non-destructive source-audio workflow is complete. |
+| Volume, mute, fades, keyframed ducking, uniform mix gain | **Fully supported** | Audio operation types are at `apps/web/src/automation/types.ts:593-622`; fade automation is built at `apps/web/src/automation/audio-control.ts:74-140`; ducking automation at `apps/web/src/automation/audio-ducking.ts:24-74`. | Ducking regions must be supplied by caller. |
+| Audio analysis and normalization | **Fully supported** | Tools are registered at `packages/mcp-server/src/index.ts:218-248`; normalization calculates LUFS/true-peak-limited gain at `packages/mcp-server/src/audio-normalization.ts:7-43`. Renderer also applies fixed mastering limiter behavior at `apps/web/src/media/audio-mastering.ts:28-81`. | No configurable master chain or receipt-level audio QC yet. |
+| Waveform synchronization | **Fully supported** | Cross-correlation and move are registered at `packages/mcp-server/src/index.ts:249-259`; lag calculation is at `apps/web/src/automation/audio-sync.ts:71-137`. | Does not solve drift, timecode, or multicamera grouping. |
+| Drift correction, timecode, multicamera sync | **Unsupported by both MCP and OpenCut** | Current waveform synchronization returns one lag offset and moves one target at `apps/web/src/automation/audio-sync.ts:71-137`. No piecewise warp, clock drift estimate, timecode metadata, or sync-group model exists. | **Model/audio analysis/MCP; optional to production-critical for long takes.** Acceptance: sync N sources, confidence, offset/drift model, maintain-pitch time correction, linked group, and verification at multiple timeline points. |
+| Clean-audio generation | **Provider-dependent** | `opencut_clean_audio` exposes noise reduction, dereverb, de-ess, high pass, normalize, and generic options at `packages/mcp-server/src/tool-schemas.ts:738-758`, but throws without `OPENCUT_AUDIO_CLEANER_COMMAND` at `packages/mcp-server/src/audio-cleaner.ts:123-143`. | **Provider/runtime; production-critical.** Acceptance: bundled local cleanup path with model/tool provenance, CPU fallback, cache, preview A/B, loudness/peak validation, and source/replacement hashes. |
+| Stem separation and voice isolation | **Unsupported by both MCP and OpenCut** | The source-audio separation operation at `apps/web/src/automation/types.ts:605-609` detaches the existing soundtrack; it does not infer music, dialogue, vocals, or effects stems. No stem model, multi-output attachment, or isolation control exists. | **Provider/model/MCP; production-critical for repurposing mixed sources.** Acceptance: bundled or ready provider produces declared stems with hashes/provenance, creates aligned linked elements, supports enable/solo/mix and preview. |
+| Full audio post chain | **Unsupported by both MCP and OpenCut** | The audio operation surface at `apps/web/src/automation/types.ts:593-622` has no per-clip or bus EQ, compressor, limiter settings, noise gate, de-esser effect, pan, channel mapping, phase, pitch shift, plugin stack, sidechain bus, or bus routing. Fixed export mastering at `apps/web/src/media/audio-mastering.ts:28-81` is not editable. | **Native audio model/renderer/MCP; production-critical for consistent dialogue.** Acceptance: ordered parameterized audio effects, track/master buses, metering, automation, preview/export parity, presets, and readback. |
+| Automatic dialogue/activity-derived ducking | **Unsupported by both MCP and OpenCut** | Ducking accepts caller-supplied regions at `apps/web/src/automation/types.ts:611-618`; no VAD/dialogue detector derives them. | **Analysis/automation; production-critical.** Acceptance: analyze selected dialogue sources, return editable activity ranges/confidence, apply attack/release/reduction non-destructively, and preserve provenance. |
+| Audio QC receipt | **Partially supported** | Export validation proves stream presence and codec at `packages/mcp-server/src/export-validator.ts:77-176`, but no integrated loudness, true peak, clipping, silence, channel, sync, or audible-start/end QC is written into the durable receipt. | **Validator/receipt; production-critical.** Acceptance: measured LUFS, true peak, peak/clipping, channel layout, sample rate, silence ranges, expected-audio rule, and pass/warn/fail in hash-locked receipt. |
+
+### H. Retiming
+
+These requirements affect montage pacing, speed ramps, reverse, freeze frames, and pitch-safe timing. Define a durable source-to-timeline time map first, then implement decoder, audio, preview, export, and MCP controls against that model.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Constant speed and maintain pitch | **Fully supported** | Native retime is `rate` plus optional `maintainPitch` at `apps/web/src/timeline/types.ts:82-85`; MCP `set_retime` is at `apps/web/src/automation/types.ts:684-689`. | Baseline speed changes are complete. |
+| Speed ramps | **Unsupported by both MCP and OpenCut** | The native retime model contains only one constant rate and `maintainPitch` flag at `apps/web/src/timeline/types.ts:82-85`; no time-varying source-to-timeline map or rate curve exists. | **Native time model/decoder/audio/renderer/MCP; production-critical for common social edits.** Acceptance: monotonic piecewise speed curve, trim/split/keyframe mapping, audio policy, preview/export equivalence, and source-time readback. |
+| Reverse, freeze frame, frame blend, optical flow | **Unsupported by both MCP and OpenCut** | Current retime model has no direction, hold segment, interpolation mode, or generated still identity at `apps/web/src/timeline/types.ts:82-85`. | **Native renderer/model/MCP; reverse/freeze production-critical, optical flow optional.** Acceptance: durable typed operations, correct source mapping and duration, audio policy, preview/export parity, and fallback diagnostics. |
+
+### I. Preview, review, and validation
+
+These requirements affect every visual approval and QC workflow. Implement exact-time rendering first, then range renders and comparisons, then structured annotations and automated or human review evidence.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Exact-time preview frame tool | **Unsupported by MCP but present in OpenCut** | `CanvasRenderer.renderToCanvas` can render a node at a supplied time at `apps/web/src/services/renderer/canvas-renderer.ts:53-89`; `RendererManager.saveSnapshot()` renders one internally chosen time at `apps/web/src/core/managers/renderer-manager.ts:41-124`. No bridge request or MCP tool renders an exact project/scene time to a hash-locked file. | **MCP/automation; production-critical under the OpenCut skill.** Acceptance: request project/scene/revision/content hash/time/canvas size; render exact frame without mutating playhead; return path, dimensions, timestamp, SHA-256, renderer provenance; validate revision before and after. |
+| Preview sequence or range render | **Unsupported by both MCP and OpenCut** | Only full export formats at `apps/web/src/export/index.ts:12-18` and internal single-canvas rendering at `apps/web/src/services/renderer/canvas-renderer.ts:53-89` exist; no public range-preview artifact workflow exists. | **Renderer/MCP; production-critical for motion, caption, matte, and transition QC.** Acceptance: bounded frame sequence or short review clip over selected range with exact timestamps/hashes and cancellation. |
+| Before/after visual comparison | **Unsupported by both MCP and OpenCut** | The complete bridge request union at `apps/web/src/automation/bridge-client.ts:20-125` has no operation that captures pre-edit and post-edit frames, diff images, or a side-by-side review artifact. | **Automation/renderer; production-critical for filter, matte, and layout verification.** Acceptance: immutable revision/hash pairs, same-time frames, pixel diff metrics plus viewable artifacts, and receipt references. |
+| Review annotations | **Unsupported by both MCP and OpenCut** | Export inspection stores only overall `verified-clean` or `rejected`, optional reviewer/notes, at `packages/mcp-server/src/export-receipts.ts:88-113`. There is no per-frame region, timestamp, severity, category, or project bookmark linkage. | **Receipt/model/MCP; production-critical.** Acceptance: structured annotations tied to hash-locked frame/video and project revision, time/range/normalized region, status, reviewer, resolution link, and immutable history. |
+| Watermark evidence | **Partially supported** | Export validator extracts hash-locked opening/middle/ending samples and inspection recording verifies those files at `packages/mcp-server/src/export-validator.ts:176-273` and `packages/mcp-server/src/export-receipts.ts:149-209`. Detection/review itself is external, and only three positions are stored. | **QC; production-critical.** Acceptance: configurable/full-frame sampling policy, four-corner evidence per required point, optional automated detector with model provenance, human override, and explicit failure if review missing. |
+
+### J. Export, variants, receipts, and delivery
+
+These requirements affect platform masters, clean variants, retry and cancellation, watermark review, and handoff. Canonical content hashes and durable jobs precede immutable variant specifications, structured QC, and delivery packaging.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| MP4/WebM export with validation and SHA-256 | **Fully supported** | Export request and result are at `apps/web/src/automation/types.ts:929-948`; allowed formats are only MP4/WebM at `apps/web/src/export/index.ts:12-18`; validator probes/decode-checks output at `packages/mcp-server/src/export-validator.ts:77-176`. | Baseline delivery master is complete for supported containers. |
+| Durable export jobs and restart recovery | **Fully supported** | Job store is append-versioned and recovers interrupted running jobs to queued at `packages/mcp-server/src/export-job-store.ts:36-130`; runner can start managed editor at `packages/mcp-server/src/export-jobs.ts:125-161`. | Renderer still needs browser. |
+| Platform export batches | **Fully supported** | Batch tools are at `packages/mcp-server/src/index.ts:484-537`; TikTok/Reels/Shorts/square/landscape presets are at `packages/mcp-server/src/export-variants.ts:4-38`. | Current canvas override scales/reframes existing composition globally; it does not calculate per-variant subject-safe layout. |
+| Variant-aware reframe/layout and track overrides | **Partially supported** | Batch can override canvas, format, quality, FPS, and audio through the export request at `apps/web/src/automation/types.ts:929-939`. It cannot apply temporary per-variant reframe policy, safe zones, track inclusion, caption style or position, thumbnail frame, or project snapshot overlay without mutating the project. | **Export overlay/analysis; production-critical.** Acceptance: immutable render specification overlays canvas, per-element reframe/layout, safe zones, caption/track inclusion, and records resolved spec in receipt. |
+| Running-job cancellation | **Partially supported** | Queued cancellation exists; tool explicitly says a running renderer cannot be interrupted at `packages/mcp-server/src/index.ts:562-569`. Native renderer manager can call exporter cancel when export state requests cancellation at `apps/web/src/core/managers/renderer-manager.ts:190-218`, but MCP runner has no live cancel bridge. | **Bridge/job runner; production-critical.** Acceptance: cancel queued or running job, renderer observes signal, partial file cleanup is defined, terminal durable status is recorded, and cancel is idempotent. |
+| Retry, priority, concurrency, resource limits, scheduling, estimates | **Partially supported** | Jobs count attempts and requeue connection failures at `packages/mcp-server/src/export-jobs.ts:168-216`, but no user retry/reset operation, retry policy, priority, concurrency setting, schedule, resource cap, or estimate exists. | **Job infrastructure; optional to production-critical at scale.** Acceptance: typed policy, explicit retry failed job, bounded attempts/backoff, priorities, concurrency/resources, progress/ETA, and durable events. |
+| Codec and format controls | **Unsupported by both MCP and OpenCut** | Export supports format, quality, FPS, audio toggle, and canvas size at `apps/web/src/automation/types.ts:929-939`. No codec/profile/level/bitrate/CRF/pixel format/color space/HDR/audio codec/bitrate/sample rate/GOP/hardware encoder/alpha/GIF/image sequence/still/audio-only/proxy controls. | **Renderer/export/MCP; production-critical only for required delivery specs.** Acceptance: capability-probed typed options, deterministic fallback/refusal, validation against requested codecs/properties, and receipt records actual encoder settings. |
+| Structured QC | **Partially supported** | Container, dimensions, FPS, duration, stream presence, full decode, hash, and sample frames are validated at `packages/mcp-server/src/export-validator.ts:77-273`. No caption safe-zone/text clipping, black frame, frozen frame, audio QC, color range, alpha, transition/matte artifact, or platform constraint validation exists. | **Validator/MCP; production-critical.** Acceptance: policy-driven checks with evidence and pass/warn/fail, exact thresholds, per-issue timestamps/regions, and durable receipt. |
+| Delivery packaging | **Unsupported by both MCP and OpenCut** | The registered export, batch, job, receipt, and inspection surface ends at `packages/mcp-server/src/index.ts:462-618`; no tool builds a package with master, platform variants, subtitle sidecars, cover frames, thumbnails, manifests, filenames, checksums, or review report. | **MCP/infrastructure; production-critical for handoff.** Acceptance: collision-safe package directory, deterministic naming, manifest with hashes/provenance/QC/inspection, optional sidecars/covers, and immutable receipt. |
+
+### K. Runtime, persistence, sessions, and diagnostics
+
+These requirements affect unattended service operation. Capability diagnostics and durable state are prerequisites for generalized jobs and browser-independent rendering; multi-session routing follows only after single-session identity and isolation are reliable.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Hidden managed editor | **Fully supported** | Worker launches hidden headless Chrome/Edge with persistent profile at `packages/mcp-server/src/managed-editor-worker.ts:41-82,93-132`. | Removes manual browser interaction, but does not remove browser dependency. |
+| Browser-independent rendering | **Unsupported by both MCP and OpenCut** | Renderer depends on DOM/OffscreenCanvas/Web APIs and the managed worker is a browser child. Export jobs cannot render without an authenticated editor connection at `packages/mcp-server/src/export-jobs.ts:125-161`. | **Renderer/runtime architecture; production-critical for service deployment.** Acceptance: load project and media from storage in a non-browser worker, run same compositor/audio/export path, produce bitwise or tolerance-tested parity, support cancellation/progress, and no editor socket. |
+| Persistent non-export jobs | **Unsupported by both MCP and OpenCut** | Export jobs and batches are durable in `packages/mcp-server/src/export-job-store.ts:36-130`. Matte, tracking, transcription, cleanup, analysis, sync, and preview work run inline, and non-export provider completion maps are in memory. | **Job infrastructure; production-critical.** Acceptance: durable generic job model with type, input hash, project/revision preconditions, progress, cancellation, retry, logs/artifacts, restart recovery, and final attachment transaction. |
+| Multiple simultaneous editor sessions | **Unsupported by both MCP and OpenCut** | `EditorBridge` owns one `activeSocket` at `packages/mcp-server/src/editor-bridge.ts:20-22` and rejects another editor at `packages/mcp-server/src/editor-bridge.ts:287-307`; bridge requests contain no session ID at `apps/web/src/automation/bridge-client.ts:20-125`. | **Protocol/bridge/worker; optional for one-user local use, production-critical for parallel service.** Acceptance: session registry, project/session routing, independent revisions/job affinity, lifecycle/limits, and no cross-session leakage. |
+| Runtime diagnostics | **Partially supported** | Connection/worker error is visible. Export preflights FFmpeg/FFprobe at `packages/mcp-server/src/export-validator.ts:56-78`. No renderer/WASM health, WebCodecs matrix, GPU/adapter/memory, browser version, model cache, provider probe, disk space, or media decoder diagnostics. | **Infrastructure; production-critical.** Acceptance: structured health tool with actionable degraded reasons and versions, non-mutating sample decode/render/probe, provider/model cache status, storage capacity, and redacted environment reporting. |
+
+### L. Semantic editing and editorial decision systems
+
+These requirements affect agent-driven source selection and reproducible editorial intent. Persistent transcript and analysis objects come before search, silence edits, semantic indexing, reusable decisions, and optional multicamera workflows.
+
+| Capability | Classification | Current implementation and exact gap | Scope, workflow impact, dependencies, acceptance, criticality |
+|---|---|---|---|
+| Transcript search and source-word editing | **Unsupported by both MCP and OpenCut** | Timeline transcription produces caption elements through `packages/mcp-server/src/index.ts:364-375`, but no searchable source transcript index or word provenance exists. | **Model/analysis/MCP; production-critical for agentic dialogue editing.** Acceptance: source and timeline transcript search, word/range selectors, edit-to-timeline mapping, filler removal preview, and reversible decisions. |
+| Silence and speech detection | **Unsupported by both MCP and OpenCut** | Loudness and waveform analysis are registered at `packages/mcp-server/src/index.ts:218-259`, but the tool and operation surfaces expose no VAD or silence-range result and no silence-removal command. | **Analysis/automation; production-critical.** Acceptance: configurable threshold/min duration/padding, returned ranges/confidence, dry-run cut plan, relationship-aware ripple application, and readback. |
+| Shot-boundary and take analysis | **Unsupported by both MCP and OpenCut** | The complete bridge request union at `apps/web/src/automation/bridge-client.ts:20-125` contains no shot detector, scene classifier, take grouping, duplicate-take detector, or quality scorer. | **Analysis/provider; optional to production-critical for long source footage.** Acceptance: cached source-time segments with hashes/provenance/confidence, thumbnails, query API, and timeline insertion selectors. |
+| OCR, object, face, and semantic indexing | **Optional future enhancement** | The project snapshot at `apps/web/src/automation/types.ts:237-253` has no persistent analysis-object model, and the bridge request union at `apps/web/src/automation/bridge-client.ts:20-125` has no semantic search tools. Subject tracking is a one-shot provider workflow and does not index identities. | **Provider/model/index/MCP; optional.** Acceptance: local/privacy-declared providers, asset-hash cache, typed indexed observations with time/box/confidence/model provenance, semantic query, delete/rebuild lifecycle. |
+| Reusable editorial decisions and EDL | **Unsupported by both MCP and OpenCut** | The project and edit-plan contracts at `apps/web/src/automation/types.ts:237-253,754-790` have no first-class edit-decision list import/export, storyboard binding, beat grid, constraints-based layout policy, or persisted agent rationale. | **Domain model/MCP; production-critical for reproducible agent workflows.** Acceptance: durable decision objects reference source ranges, targets, constraints, rationale/provenance, status, and generated edit operations; JSON/EDL import/export and revision-aware reapply/diff. |
+| Multicam switching | **Optional future enhancement** | The complete native timeline element union at `apps/web/src/timeline/types.ts:163-218` has no multicam clip or angle model, switch decisions, or sync-group-aware edit workflow. | **Native model/renderer/MCP; optional unless workflow requires it.** Acceptance: synchronized angles, live angle selection decisions, audio-follow policy, flattening, and preview/export parity. |
+
+## Exact Simple Media workflow gaps
+
+These are the remaining blockers to claiming the canonical OpenCut skill can replace the browser-based CapCut workflow end to end.
+
+1. **Exact-time preview evidence is missing.** The skill requires preview and quality checks, but MCP exposes no frame render or comparison tool. This blocks deterministic inspection of filter, captions, masks, reframing, transitions, and final composition before export.
+2. **Explicit save/readback evidence is incomplete.** Mutations flush saves, but no explicit save barrier, persisted content hash, or durable edit ledger proves the intended project state survived reload.
+3. **Stable editor identity is incomplete.** One active connection exists, but no durable editor or session handle prevents stale work from being redirected after reconnect.
+4. **Background removal is not ready on a fresh setup.** Attachment transport works, but generation needs `OPENCUT_MATTE_PRODUCER_COMMAND`; there is no bundled model, readiness response, typed edge refinement, temporal correction, or repair workflow.
+5. **Subject tracking and cleaned audio are also external command dependencies.** The MCP schemas and application logic are real, but the providers are not bundled or discoverable.
+6. **Caption production remains low-level.** Cue import, transcription, and correction work, but reusable social-caption style presets, independent per-line bubbles, font readiness, word highlighting, safe-zone validation, and clean versus burned-in variant rendering are missing.
+7. **Named course visual treatments cannot be reproduced exactly.** Film Frame, Play Pendulum, Technicolor Flash, Scanner Bar, Glitch, Chromatic, Dark Night, Mirror, the required body or meme treatments, and exact Pull In, Pull Out, and Swipe Left behaviors are absent.
+8. **Audio post is incomplete.** Core levels, ducking, loudness, sync, and replacement audio work, but bundled cleanup, VAD-derived ducking, `Separate Audio > Vocals` style stem isolation, editable EQ/dynamics, and audio QC receipts are absent.
+9. **Course retiming cannot be reproduced exactly.** The Montage speed curve, reverse, freeze-frame construction, independent pitch control, frame blending, and optical flow are missing.
+10. **Platform batches resize the canvas but do not author independent platform layouts.** Safe-zone-aware subject reframe, clean-master duplication, captions-on/off, and per-variant track overrides are missing.
+11. **Required delivery encodings are incomplete.** MP4 and WebM work, but MOV, HEVC, explicit Rec.709 controls, audio-only output, and professional encoder parameters are absent.
+12. **Delivery handoff is incomplete.** Export receipts and watermark inspection exist, but there is no complete structured QC policy or package manifest containing variants, subtitle sidecars, cover frames, inspection, and hashes.
+13. **The runtime is unattended but still browser-based.** A hidden managed browser removes manual interaction, but a service-grade renderer cannot yet run without Chrome/Edge and one active editor WebSocket.
+14. **Agentic source editing is not semantic.** No persistent transcript, silence, shot, OCR/object index, or reusable editorial decision model exists.
+
+## Prioritized requirements backlog
+
+### P0: Required before production-ready MCP parity
+
+1. Exact-time frame/range preview with hash-locked artifacts and before/after comparisons.
+2. Explicit save barrier, canonical project content hash, reload verification, and durable operation ledger.
+3. Capability negotiation and runtime/provider readiness diagnostics.
+4. Bundled background-removal provider with model provenance, cache, temporal handling, and typed edge refinement.
+5. Bundled subject tracker plus persistent/correctable tracking data reusable by masks and reframing.
+6. Bundled audio cleanup, stem separation or voice isolation, VAD-derived ducking, and audio QC.
+7. Persistent generic jobs for matte, tracking, transcription, cleanup, analysis, and previews.
+8. Browser-independent renderer with tested preview/export parity and cancellation.
+9. Scene/project/track/media lifecycle needed for templates and variants.
+10. Transcript word model, search, silence detection, correction propagation, and decision-to-timeline mapping.
+11. Variant render overlays for per-platform reframe, safe zones, caption/track inclusion, and structured QC.
+12. Delivery packaging with manifests, hashes, sidecars, covers, receipts, and inspection state.
+13. Exact named Simple Media effect, motion, and transition presets with reference-based visual verification.
+14. Deterministic caption fonts, social-caption presets, and independently sized per-line caption bubbles.
+
+### P1: Required for efficient high-volume editing
+
+1. Dry-run plan diff and selection/query expansion.
+2. Redo, history listing, checkpoints, and restore.
+3. Insert/overwrite/lift/extract/close-gap plus alignment and bulk timing/style transforms.
+4. Caption presets, font discovery, restructuring, word highlighting, and ASS export.
+5. Editable audio effect stacks and buses.
+6. Speed ramps, reverse, and freeze frame.
+7. Structured review annotations and broader visual/audio/platform QC.
+8. Running export cancellation, retry policy, progress, and estimates.
+
+### P2: Advanced or optional
+
+1. Multiple concurrent editor sessions.
+2. Remote/resumable cloud media ingest.
+3. Advanced nested-sequence and reusable component workflows.
+4. OCR/object/face/semantic indexing and take recommendation.
+5. Multicam.
+6. Chroma/luma key, track mattes, 3D, parenting, motion blur, expressions, particles, and richer motion graphics.
+7. Optical flow and frame interpolation.
+8. Extended professional codec, HDR, alpha, proxy, image-sequence, still, and audio-only formats where delivery requirements justify them.
+
+## Dependency map
+
+```text
+capability/readiness negotiation
+  -> provider selection and runtime diagnostics
+  -> bundled matte, tracking, cleanup, and analysis providers
+
+canonical content hash + explicit save + durable operation ledger
+  -> reliable dry-run/readback
+  -> persistent non-export jobs
+  -> revision/hash-locked preview and review
+  -> reproducible delivery manifests
+
+exact-time renderer API
+  -> preview frames/ranges
+  -> before/after comparison
+  -> named effect and transition visual regression
+  -> per-line caption bubble layout verification
+  -> matte, caption, reframe, transition, and safe-zone QC
+  -> browser-independent render worker parity tests
+
+scene/project/track/media lifecycle
+  -> template duplication
+  -> clean platform variant projects
+  -> reusable assets and compounds
+
+persistent transcript and analysis objects
+  -> transcript search and corrections
+  -> silence removal and VAD ducking
+  -> reusable editorial decisions
+  -> shot/object/OCR indexing
+
+variant render overlays + structured QC
+  -> captions-on/off and safe-zone-aware platform variants
+  -> batch receipts
+  -> delivery package manifest
+```
+
+## Definition of production-ready MCP parity
+
+Production-ready parity is reached only when a fresh documented local installation can, without manual browser editing:
+
+1. Discover editor, renderer, codec, model, and provider capabilities before work begins.
+2. Create or duplicate a project, manage its scenes/tracks/assets, and import source media.
+3. Build and revise the required edit with typed, revision-checked, dry-runnable, idempotent operations.
+4. Apply the exact realistic filter, named course effects and transitions, per-line caption bubbles, and all required audio, graphics, mask, tracking, reframe, retime, and background-removal work.
+5. Save, reload, and prove the same canonical content hash.
+6. Render exact preview evidence and capture structured review annotations.
+7. Run long work as durable, cancellable, recoverable jobs with explicit provider/model provenance.
+8. Render platform variants without destructively rewriting the source edit.
+9. Validate full decode, video properties, audio, captions/safe zones, watermark evidence, and requested platform rules.
+10. Produce a durable delivery package with hashes, sidecars, preview/QC evidence, inspection status, and an operation trail.
+11. Execute preview and export in a service-grade runtime without requiring a manually operated browser.
+
+A registered tool, external-command protocol, synthetic fixture, process-memory replay map, or unverified render path is not sufficient evidence of parity.
 
 ## Exhaustiveness boundary
 
-This audit is exhaustive relative to the checked-out repository's registered MCP tools, bridge methods, automation edit union, native timeline object model, command set, project/scene managers, and export contract. Pure UI concerns such as zoom level, panel visibility, playhead display, selection highlighting, keyboard shortcuts, and snapping indicators are intentionally excluded unless they correspond to durable editorial state or an agent workflow outcome.
+This inventory is exhaustive relative to commit `d4cfdce1` for durable editorial state and agent workflow outcomes represented by the registered tools, bridge union, automation types, timeline/project models, native commands/managers, provider adapters, renderer, and export pipeline. It intentionally excludes transient UI-only behavior such as panel visibility, selection highlight, zoom, scroll, hover previews, keyboard shortcuts, and playhead display unless it must become durable state or evidence for an agent workflow. It also does not claim to enumerate every possible third-party model, professional NLE plugin, codec, or future creative effect. Those become requirements only when a named Simple Media workflow or delivery specification needs them.
