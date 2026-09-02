@@ -409,6 +409,15 @@ export type AutomationEditOperation =
 			elementId: string;
 	  }
 	| {
+			kind: "duck_audio";
+			trackId: string;
+			elementId: string;
+			regions: Array<{ startTime: MediaTime; duration: MediaTime }>;
+			reductionDb: number;
+			attackDuration: MediaTime;
+			releaseDuration: MediaTime;
+	  }
+	| {
 			kind: "adjust_mix_gain";
 			gainDb: number;
 	  }

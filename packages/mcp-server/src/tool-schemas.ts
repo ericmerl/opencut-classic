@@ -298,6 +298,20 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		elementId: z.string().min(1),
 	}),
 	z.object({
+		kind: z.literal("duck_audio"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		regions: z.array(
+			z.object({
+				startTime: z.number().int().nonnegative(),
+				duration: z.number().int().positive(),
+			}),
+		),
+		reductionDb: z.number().positive().max(60).default(12),
+		attackDuration: z.number().int().nonnegative().default(12_000),
+		releaseDuration: z.number().int().nonnegative().default(30_000),
+	}),
+	z.object({
 		kind: z.literal("adjust_mix_gain"),
 		gainDb: z
 			.number()

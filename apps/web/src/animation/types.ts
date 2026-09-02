@@ -8,6 +8,7 @@ export const ANIMATION_PROPERTY_PATHS = [
 	"transform.scaleY",
 	"transform.rotate",
 	"opacity",
+	"ducking",
 	"reframe.cropX",
 	"reframe.cropY",
 	"reframe.cropWidth",

@@ -55,6 +55,7 @@ import { prepareMatteAttachment } from "./attach-matte";
 import { buildAudioControlPatch } from "./audio-control";
 import { buildAudioMixGainCommand } from "./audio-mix-gain";
 import { buildSourceAudioSeparationCommand } from "./source-audio-control";
+import { buildAudioDuckingPatch } from "./audio-ducking";
 import { buildCaptionCorrectionCommand } from "./caption-control";
 import { buildEffectControlCommand, listEffectCatalog } from "./effect-control";
 import { buildKeyframeCommand } from "./keyframe-control";
@@ -1325,6 +1326,17 @@ export class EditorAutomation {
 								.getAssets()
 								.find((asset) => asset.id === element.mediaId) ?? null)
 						: null,
+			});
+		}
+		if (operation.kind === "duck_audio") {
+			return new UpdateElementsCommand({
+				updates: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+						patch: buildAudioDuckingPatch({ element, control: operation }),
+					},
+				],
 			});
 		}
 		if (

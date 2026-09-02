@@ -100,7 +100,7 @@ export function buildSeparatedAudioElement({
 					maintainPitch: sourceElement.retime.maintainPitch,
 				}
 			: undefined,
-		animations: cloneVolumeAnimations({
+		animations: cloneAudioGainAnimations({
 			animations: sourceElement.animations,
 		}),
 	};
@@ -116,18 +116,23 @@ export function getSourceAudioActionLabel({
 		: "Extract audio";
 }
 
-function cloneVolumeAnimations({
+function cloneAudioGainAnimations({
 	animations,
 }: {
 	animations: ElementAnimations | undefined;
 }): ElementAnimations | undefined {
-	const volumeData = animations?.volume;
-	if (!volumeData) {
+	const selected = Object.fromEntries(
+		["volume", "ducking"].flatMap((path) => {
+			const data = animations?.[path];
+			return data ? [[path, data]] : [];
+		}),
+	) as ElementAnimations;
+	if (Object.keys(selected).length === 0) {
 		return undefined;
 	}
 
 	return cloneAnimations({
-		animations: { volume: volumeData },
+		animations: selected,
 		shouldRegenerateKeyframeIds: true,
 	});
 }

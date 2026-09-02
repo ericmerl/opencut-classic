@@ -43,10 +43,12 @@ export function hasAnimatedVolume({
 }: {
 	element: AudioCapableElement;
 }): boolean {
-	return hasKeyframesForPath({
-		animations: element.animations,
-		propertyPath: "volume",
-	});
+	return ["volume", "ducking"].some((propertyPath) =>
+		hasKeyframesForPath({
+			animations: element.animations,
+			propertyPath,
+		}),
+	);
 }
 
 import { TICKS_PER_SECOND } from "@/wasm";
@@ -64,14 +66,20 @@ export function resolveEffectiveAudioGain({
 		return 0;
 	}
 
-	const resolvedDb = resolveNumberAtTime({
+	const resolvedVolumeDb = resolveNumberAtTime({
 		baseValue: getElementVolume({ element }),
 		animations: element.animations,
 		propertyPath: "volume",
 		localTime: Math.round(localTime * TICKS_PER_SECOND),
 	});
+	const duckingDb = resolveNumberAtTime({
+		baseValue: 0,
+		animations: element.animations,
+		propertyPath: "ducking",
+		localTime: Math.round(localTime * TICKS_PER_SECOND),
+	});
 
-	return dBToLinear(resolvedDb);
+	return dBToLinear(resolvedVolumeDb + duckingDb);
 }
 
 export function buildWaveformGainSamples({

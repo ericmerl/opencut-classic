@@ -329,6 +329,48 @@ describe("OpenCut edit-plan MCP contract", () => {
 		).toBe(true);
 	});
 
+	test("accepts additive dialogue ducking and an empty clear operation", () => {
+		const base = {
+			projectId: "project-1",
+			operationId: "audio-duck-1",
+			expectedRevision: 4,
+			description: "Duck music under dialogue",
+		};
+		const parsed = editPlanInputSchema.safeParse({
+			...base,
+			operations: [
+				{
+					kind: "duck_audio",
+					trackId: "music",
+					elementId: "music-1",
+					regions: [{ startTime: 120_000, duration: 240_000 }],
+				},
+			],
+		});
+		expect(parsed.success).toBe(true);
+		if (parsed.success) {
+			expect(parsed.data.operations[0]).toMatchObject({
+				reductionDb: 12,
+				attackDuration: 12_000,
+				releaseDuration: 30_000,
+			});
+		}
+		expect(
+			editPlanInputSchema.safeParse({
+				...base,
+				operationId: "audio-duck-clear-1",
+				operations: [
+					{
+						kind: "duck_audio",
+						trackId: "music",
+						elementId: "music-1",
+						regions: [],
+					},
+				],
+			}).success,
+		).toBe(true);
+	});
+
 	test("rejects an empty audio-control operation", () => {
 		const result = editPlanInputSchema.safeParse({
 			projectId: "project-1",
