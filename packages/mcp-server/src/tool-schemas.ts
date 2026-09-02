@@ -279,6 +279,19 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		relationshipScope: relationshipScopeSchema,
 	}),
 	z.object({
+		kind: z.literal("create_compound"),
+		compoundId: z.string().trim().min(1),
+		name: z.string().trim().min(1).optional(),
+		elements: z.array(elementRefSchema).min(2),
+		relationshipScope: relationshipScopeSchema,
+		targetTrackId: z.string().trim().min(1).optional(),
+	}),
+	z.object({
+		kind: z.literal("break_apart_compound"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+	}),
+	z.object({
 		kind: z.literal("set_group"),
 		groupId: z.string().trim().min(1),
 		elements: z.array(elementRefSchema).min(2),

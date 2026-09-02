@@ -108,6 +108,54 @@ describe("OpenCut visual asset MCP contract", () => {
 	});
 });
 
+describe("OpenCut compound clip MCP contract", () => {
+	test("accepts compound creation and break-apart operations", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "compound-1",
+			expectedRevision: 8,
+			description: "Nest a reusable sequence and restore it",
+			operations: [
+				{
+					kind: "create_compound",
+					compoundId: "compound-a",
+					name: "Presenter composite",
+					elements: [
+						{ trackId: "video-1", elementId: "clip-1" },
+						{ trackId: "graphics-1", elementId: "graphic-1" },
+					],
+					relationshipScope: "all",
+				},
+				{
+					kind: "break_apart_compound",
+					trackId: "compound-track",
+					elementId: "compound-a",
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("requires two elements and a stable compound ID", () => {
+		expect(
+			editPlanInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "compound-invalid",
+				expectedRevision: 8,
+				description: "Reject invalid compound",
+				operations: [
+					{
+						kind: "create_compound",
+						compoundId: "",
+						elements: [{ trackId: "video-1", elementId: "clip-1" }],
+					},
+				],
+			}).success,
+		).toBe(false);
+	});
+});
+
 describe("OpenCut persistent export job contract", () => {
 	test("accepts queue, lookup, filtering, and bounded drain requests", () => {
 		const exportRequest = {

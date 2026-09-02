@@ -21,6 +21,7 @@ import { mediaSupportsAudio } from "@/media/media-utils";
 import { getSourceTimeAtClipTime, renderRetimedBuffer } from "@/retime";
 import { Input, ALL_FORMATS, BlobSource, AudioBufferSink } from "mediabunny";
 import { TICKS_PER_SECOND } from "@/wasm";
+import { mediaTime } from "@/wasm";
 import { computeRmsBuckets, type SampleBucket } from "@/media/waveform-summary";
 
 const MAX_AUDIO_CHANNELS = 2;
@@ -35,6 +36,7 @@ export interface CollectedAudioElement {
 	trimEnd: number;
 	volume: number;
 	muted: boolean;
+	localTimeOffset: number;
 	retime?: RetimeConfig;
 }
 
@@ -86,6 +88,101 @@ export async function decodeAudioToFloat32({
 export interface AudibleElementCandidate {
 	element: AudioElement | VideoElement;
 	mediaAsset: MediaAsset | null;
+	trackMuted: boolean;
+	localTimeOffset: number;
+}
+
+interface FlattenedAudioEntry {
+	element: AudioElement | VideoElement;
+	trackMuted: boolean;
+	localTimeOffset: number;
+}
+
+function flattenAudioEntries({
+	tracks,
+}: {
+	tracks: SceneTracks;
+}): FlattenedAudioEntry[] {
+	return flattenAudioWindow({
+		tracks,
+		windowStart: 0,
+		windowEnd: Number.MAX_SAFE_INTEGER,
+		outputStart: 0,
+		inheritedMuted: false,
+	});
+}
+
+function flattenAudioWindow({
+	tracks,
+	windowStart,
+	windowEnd,
+	outputStart,
+	inheritedMuted,
+}: {
+	tracks: SceneTracks;
+	windowStart: number;
+	windowEnd: number;
+	outputStart: number;
+	inheritedMuted: boolean;
+}): FlattenedAudioEntry[] {
+	const entries: FlattenedAudioEntry[] = [];
+	for (const track of [...tracks.overlay, tracks.main, ...tracks.audio]) {
+		const trackMuted =
+			inheritedMuted || (canTrackHaveAudio(track) && track.muted);
+		for (const element of track.elements) {
+			const elementStart = element.startTime;
+			const elementEnd = element.startTime + element.duration;
+			const visibleStart = Math.max(windowStart, elementStart);
+			const visibleEnd = Math.min(windowEnd, elementEnd);
+			if (visibleEnd <= visibleStart) continue;
+			const absoluteStart = outputStart + visibleStart - windowStart;
+			if (element.type === "compound") {
+				const nestedWindowStart =
+					element.trimStart + visibleStart - element.startTime;
+				entries.push(
+					...flattenAudioWindow({
+						tracks: element.tracks,
+						windowStart: nestedWindowStart,
+						windowEnd: nestedWindowStart + visibleEnd - visibleStart,
+						outputStart: absoluteStart,
+						inheritedMuted: trackMuted,
+					}),
+				);
+				continue;
+			}
+			if (!canElementHaveAudio(element)) continue;
+			const localTimeOffset = visibleStart - element.startTime;
+			const visibleDuration = visibleEnd - visibleStart;
+			const sourceAtStart = getSourceTimeAtClipTime({
+				clipTime: localTimeOffset,
+				retime: element.retime,
+			});
+			const sourceAtEnd = getSourceTimeAtClipTime({
+				clipTime: localTimeOffset + visibleDuration,
+				retime: element.retime,
+			});
+			const sourceAtElementEnd = getSourceTimeAtClipTime({
+				clipTime: element.duration,
+				retime: element.retime,
+			});
+			entries.push({
+				element: {
+					...element,
+					startTime: mediaTime({ ticks: absoluteStart }),
+					duration: mediaTime({ ticks: visibleDuration }),
+					trimStart: mediaTime({
+						ticks: element.trimStart + sourceAtStart,
+					}),
+					trimEnd: mediaTime({
+						ticks: element.trimEnd + sourceAtElementEnd - sourceAtEnd,
+					}),
+				},
+				trackMuted,
+				localTimeOffset,
+			});
+		}
+	}
+	return entries;
 }
 
 export function resolveElementAudioAsset({
@@ -110,38 +207,35 @@ export function collectAudibleCandidates({
 	tracks: SceneTracks;
 	mediaAssets: MediaAsset[];
 }): AudibleElementCandidate[] {
-	const allTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
 	const mediaMap = new Map(mediaAssets.map((a) => [a.id, a]));
 	const candidates: AudibleElementCandidate[] = [];
 
-	for (const track of allTracks) {
-		if (canTrackHaveAudio(track) && track.muted) continue;
+	for (const { element, trackMuted, localTimeOffset } of flattenAudioEntries({
+		tracks,
+	})) {
+		if (trackMuted) continue;
+		if (element.duration <= 0) continue;
 
-		for (const element of track.elements) {
-			if (!canElementHaveAudio(element)) continue;
-			if (element.duration <= 0) continue;
-
-			const sourceMediaAsset = hasMediaId(element)
-				? (mediaMap.get(element.mediaId) ?? null)
-				: null;
-			if (
-				!doesElementHaveEnabledAudio({
-					element,
-					mediaAsset: sourceMediaAsset,
-				})
-			) {
-				continue;
-			}
-			const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
-			if (
-				!mediaAsset &&
-				!(element.type === "audio" && element.sourceType === "library")
-			) {
-				continue;
-			}
-
-			candidates.push({ element, mediaAsset });
+		const sourceMediaAsset = hasMediaId(element)
+			? (mediaMap.get(element.mediaId) ?? null)
+			: null;
+		if (
+			!doesElementHaveEnabledAudio({
+				element,
+				mediaAsset: sourceMediaAsset,
+			})
+		) {
+			continue;
 		}
+		const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
+		if (
+			!mediaAsset &&
+			!(element.type === "audio" && element.sourceType === "library")
+		) {
+			continue;
+		}
+
+		candidates.push({ element, mediaAsset, trackMuted, localTimeOffset });
 	}
 
 	return candidates;
@@ -174,7 +268,7 @@ export async function collectAudioElements({
 	);
 	const pendingElements: Array<Promise<CollectedAudioElement | null>> = [];
 
-	for (const { element, mediaAsset } of candidates) {
+	for (const { element, mediaAsset, localTimeOffset } of candidates) {
 		if (element.type === "audio") {
 			pendingElements.push(
 				resolveAudioBufferForElement({
@@ -193,9 +287,10 @@ export async function collectAudioElements({
 						volume: resolveEffectiveAudioGain({
 							element,
 							trackMuted: false,
-							localTime: 0,
+							localTime: localTimeOffset / TICKS_PER_SECOND,
 						}),
 						muted: isElementMuted({ element }),
+						localTimeOffset: localTimeOffset / TICKS_PER_SECOND,
 						retime: element.retime,
 					};
 				}),
@@ -222,9 +317,10 @@ export async function collectAudioElements({
 						volume: resolveEffectiveAudioGain({
 							element,
 							trackMuted: false,
-							localTime: 0,
+							localTime: localTimeOffset / TICKS_PER_SECOND,
 						}),
 						muted: isElementMuted({ element }),
+						localTimeOffset: localTimeOffset / TICKS_PER_SECOND,
 						retime: element.retime,
 					};
 				}),
@@ -386,6 +482,7 @@ export interface AudioClipSource {
 	trimEnd: number;
 	volume: number;
 	muted: boolean;
+	localTimeOffset: number;
 	retime?: RetimeConfig;
 }
 
@@ -427,10 +524,12 @@ async function fetchLibraryAudioClip({
 	element,
 	muted,
 	volume,
+	localTimeOffset,
 }: {
 	element: LibraryAudioElement;
 	muted: boolean;
 	volume: number;
+	localTimeOffset: number;
 }): Promise<AudioClipSource | null> {
 	try {
 		const response = await fetch(element.sourceUrl);
@@ -448,12 +547,13 @@ async function fetchLibraryAudioClip({
 			id: element.id,
 			sourceKey: element.id,
 			file,
-			startTime: element.startTime,
-			duration: element.duration,
-			trimStart: element.trimStart,
-			trimEnd: element.trimEnd,
+			startTime: element.startTime / TICKS_PER_SECOND,
+			duration: element.duration / TICKS_PER_SECOND,
+			trimStart: element.trimStart / TICKS_PER_SECOND,
+			trimEnd: element.trimEnd / TICKS_PER_SECOND,
 			volume,
 			muted,
+			localTimeOffset,
 			retime: element.retime,
 		};
 	} catch (error) {
@@ -488,11 +588,13 @@ function collectMediaAudioClip({
 	mediaAsset,
 	muted,
 	volume,
+	localTimeOffset,
 }: {
 	element: AudioCapableElement;
 	mediaAsset: MediaAsset;
 	muted: boolean;
 	volume: number;
+	localTimeOffset: number;
 }): AudioClipSource {
 	return {
 		timelineElement: element,
@@ -505,6 +607,7 @@ function collectMediaAudioClip({
 		trimEnd: element.trimEnd / TICKS_PER_SECOND,
 		volume,
 		muted,
+		localTimeOffset,
 		retime: element.retime,
 	};
 }
@@ -516,57 +619,54 @@ export async function collectAudioMixSources({
 	tracks: SceneTracks;
 	mediaAssets: MediaAsset[];
 }): Promise<AudioMixSource[]> {
-	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
 	const audioMixSources: AudioMixSource[] = [];
 	const mediaMap = new Map<string, MediaAsset>(
 		mediaAssets.map((asset) => [asset.id, asset]),
 	);
 	const pendingLibrarySources: Array<Promise<AudioMixSource | null>> = [];
 
-	for (const track of orderedTracks) {
-		if (canTrackHaveAudio(track) && track.muted) continue;
-
-		for (const element of track.elements) {
-			if (!canElementHaveAudio(element)) continue;
-			if (isElementMuted({ element })) continue;
-			const sourceMediaAsset = hasMediaId(element)
-				? (mediaMap.get(element.mediaId) ?? null)
-				: null;
-			if (
-				!doesElementHaveEnabledAudio({
-					element,
-					mediaAsset: sourceMediaAsset,
-				})
-			) {
-				continue;
-			}
-			const volume = resolveEffectiveAudioGain({
+	for (const { element, trackMuted, localTimeOffset } of flattenAudioEntries({
+		tracks,
+	})) {
+		if (trackMuted) continue;
+		if (isElementMuted({ element })) continue;
+		const sourceMediaAsset = hasMediaId(element)
+			? (mediaMap.get(element.mediaId) ?? null)
+			: null;
+		if (
+			!doesElementHaveEnabledAudio({
 				element,
-				localTime: 0,
-			});
+				mediaAsset: sourceMediaAsset,
+			})
+		) {
+			continue;
+		}
+		const volume = resolveEffectiveAudioGain({
+			element,
+			localTime: localTimeOffset / TICKS_PER_SECOND,
+		});
 
-			if (element.type === "audio") {
-				if (element.sourceType === "upload") {
-					const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
-					if (!mediaAsset) continue;
-					audioMixSources.push(
-						collectMediaAudioSource({ element, mediaAsset, volume }),
-					);
-				} else {
-					pendingLibrarySources.push(
-						fetchLibraryAudioSource({ element, volume }),
-					);
-				}
-				continue;
-			}
-
-			if (element.type === "video") {
+		if (element.type === "audio") {
+			if (element.sourceType === "upload") {
 				const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
-				if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
-					audioMixSources.push(
-						collectMediaAudioSource({ element, mediaAsset, volume }),
-					);
-				}
+				if (!mediaAsset) continue;
+				audioMixSources.push(
+					collectMediaAudioSource({ element, mediaAsset, volume }),
+				);
+			} else {
+				pendingLibrarySources.push(
+					fetchLibraryAudioSource({ element, volume }),
+				);
+			}
+			continue;
+		}
+
+		if (element.type === "video") {
+			const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
+			if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
+				audioMixSources.push(
+					collectMediaAudioSource({ element, mediaAsset, volume }),
+				);
 			}
 		}
 	}
@@ -586,69 +686,73 @@ export async function collectAudioClips({
 	tracks: SceneTracks;
 	mediaAssets: MediaAsset[];
 }): Promise<AudioClipSource[]> {
-	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
 	const clips: AudioClipSource[] = [];
 	const mediaMap = new Map<string, MediaAsset>(
 		mediaAssets.map((asset) => [asset.id, asset]),
 	);
 	const pendingLibraryClips: Array<Promise<AudioClipSource | null>> = [];
 
-	for (const track of orderedTracks) {
-		const isTrackMuted = canTrackHaveAudio(track) && track.muted;
+	for (const { element, trackMuted, localTimeOffset } of flattenAudioEntries({
+		tracks,
+	})) {
+		const isTrackMuted = trackMuted;
 
-		for (const element of track.elements) {
-			if (!canElementHaveAudio(element)) continue;
-
-			const sourceMediaAsset = hasMediaId(element)
-				? (mediaMap.get(element.mediaId) ?? null)
-				: null;
-			if (
-				!doesElementHaveEnabledAudio({
-					element,
-					mediaAsset: sourceMediaAsset,
-				})
-			) {
-				continue;
-			}
-			const muted = isTrackMuted || isElementMuted({ element });
-			const volume = resolveEffectiveAudioGain({
+		const sourceMediaAsset = hasMediaId(element)
+			? (mediaMap.get(element.mediaId) ?? null)
+			: null;
+		if (
+			!doesElementHaveEnabledAudio({
 				element,
-				trackMuted: isTrackMuted,
-				localTime: 0,
-			});
+				mediaAsset: sourceMediaAsset,
+			})
+		) {
+			continue;
+		}
+		const muted = isTrackMuted || isElementMuted({ element });
+		const volume = resolveEffectiveAudioGain({
+			element,
+			trackMuted: isTrackMuted,
+			localTime: localTimeOffset / TICKS_PER_SECOND,
+		});
 
-			if (element.type === "audio") {
-				if (element.sourceType === "upload") {
-					const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
-					if (!mediaAsset) continue;
-					clips.push(
-						collectMediaAudioClip({
-							element,
-							mediaAsset,
-							muted,
-							volume,
-						}),
-					);
-				} else {
-					pendingLibraryClips.push(
-						fetchLibraryAudioClip({ element, muted, volume }),
-					);
-				}
-				continue;
-			}
-
-			if (element.type === "video") {
+		if (element.type === "audio") {
+			if (element.sourceType === "upload") {
 				const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
-				if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
-					clips.push(
-						collectMediaAudioClip({
-							element,
-							mediaAsset,
-							muted,
-							volume,
-						}),
-					);
-				}
+				if (!mediaAsset) continue;
+				clips.push(
+					collectMediaAudioClip({
+						element,
+						mediaAsset,
+						muted,
+						volume,
+						localTimeOffset: localTimeOffset / TICKS_PER_SECOND,
+					}),
+				);
+			} else {
+				pendingLibraryClips.push(
+					fetchLibraryAudioClip({
+						element,
+						muted,
+						volume,
+						localTimeOffset: localTimeOffset / TICKS_PER_SECOND,
+					}),
+				);
+			}
+			continue;
+		}
+
+		if (element.type === "video") {
+			const mediaAsset = resolveElementAudioAsset({ element, mediaMap });
+			if (mediaAsset && mediaSupportsAudio({ media: mediaAsset })) {
+				clips.push(
+					collectMediaAudioClip({
+						element,
+						mediaAsset,
+						muted,
+						volume,
+						localTimeOffset: localTimeOffset / TICKS_PER_SECOND,
+					}),
+				);
 			}
 		}
 	}
@@ -898,7 +1002,7 @@ function mixAudioChannels({
 			const gain = hasAnimatedVolume({ element: element.timelineElement })
 				? resolveEffectiveAudioGain({
 						element: element.timelineElement,
-						localTime: clipTime,
+						localTime: element.localTimeOffset + clipTime,
 					})
 				: element.volume;
 			outputData[outputIndex] +=

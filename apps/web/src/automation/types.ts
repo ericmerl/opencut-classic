@@ -49,6 +49,13 @@ export interface AutomationElementSnapshot {
 	stickerIntrinsicHeight?: number;
 	effectType?: string;
 	masks?: AutomationMaskSnapshot[];
+	compound?: AutomationCompoundSnapshot;
+}
+
+export interface AutomationCompoundSnapshot {
+	tracks: AutomationTrackSnapshot[];
+	transitions: AutomationTransitionSnapshot[];
+	elements: AutomationElementSnapshot[];
 }
 
 export interface AutomationFreeformPathPoint {
@@ -527,6 +534,19 @@ export type AutomationEditOperation =
 			kind: "duplicate_elements";
 			elements: Array<{ trackId: string; elementId: string }>;
 			relationshipScope?: AutomationRelationshipScope;
+	  }
+	| {
+			kind: "create_compound";
+			compoundId: string;
+			name?: string;
+			elements: Array<{ trackId: string; elementId: string }>;
+			relationshipScope?: AutomationRelationshipScope;
+			targetTrackId?: string;
+	  }
+	| {
+			kind: "break_apart_compound";
+			trackId: string;
+			elementId: string;
 	  }
 	| {
 			kind: "set_group";

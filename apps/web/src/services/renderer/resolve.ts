@@ -49,6 +49,7 @@ import type {
 	VisualNodeParams,
 } from "./nodes/visual-node";
 import { applyClipTransition } from "./transitions";
+import { CompoundNode } from "./nodes/compound-node";
 
 type ResolveContext = {
 	renderer: CanvasRenderer;
@@ -80,6 +81,22 @@ async function resolveNode({
 	node: AnyBaseNode;
 	context: ResolveContext;
 }): Promise<void> {
+	if (node instanceof CompoundNode) {
+		const clipTime = context.time - node.params.timeOffset;
+		const active = clipTime >= 0 && clipTime < node.params.duration;
+		node.resolved = { active };
+		if (!active) return;
+		const nestedContext = {
+			...context,
+			time: clipTime + node.params.trimStart,
+		};
+		await Promise.all(
+			node.children.map((child) =>
+				resolveNode({ node: child, context: nestedContext }),
+			),
+		);
+		return;
+	}
 	if (node instanceof VideoNode) {
 		node.resolved = await resolveVideoNode({ node, context });
 	} else if (node instanceof ImageNode) {

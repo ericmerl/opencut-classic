@@ -984,6 +984,24 @@ function GraphicElementContent({
 	);
 }
 
+function CompoundElementContent({
+	element,
+}: {
+	element: Extract<TimelineElementType, { type: "compound" }>;
+}) {
+	const childCount = [
+		...element.tracks.overlay,
+		element.tracks.main,
+		...element.tracks.audio,
+	].reduce((count, track) => count + track.elements.length, 0);
+	return (
+		<div className="flex size-full items-center justify-start gap-1 pl-2">
+			<span className="truncate text-xs text-white">{element.name}</span>
+			<span className="text-[0.6rem] text-white/60">({childCount})</span>
+		</div>
+	);
+}
+
 function AudioElementContent({
 	element,
 	trackId,
@@ -1185,6 +1203,8 @@ function ElementContent({ element, track }: ElementContentProps) {
 			return <StickerElementContent element={element} />;
 		case "graphic":
 			return <GraphicElementContent element={element} />;
+		case "compound":
+			return <CompoundElementContent element={element} />;
 		case "audio":
 			return <AudioElementContent element={element} trackId={track.id} />;
 		case "video":

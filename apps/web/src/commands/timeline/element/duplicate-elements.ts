@@ -3,7 +3,7 @@ import {
 	createElementSelectionResult,
 	type CommandResult,
 } from "@/commands/base-command";
-import type { SceneTracks, TimelineElement } from "@/timeline";
+import type { SceneTracks, TimelineElement, TimelineTrack } from "@/timeline";
 import { generateUUID } from "@/utils/id";
 import { EditorCore } from "@/core";
 import { applyPlacement, resolveTrackPlacement } from "@/timeline/placement";
@@ -152,7 +152,7 @@ function buildDuplicateElement({
 	groupId: string | undefined;
 	linkId: string | undefined;
 }): TimelineElement {
-	return {
+	const duplicate: TimelineElement = {
 		...element,
 		id,
 		name: `${element.name} (copy)`,
@@ -163,6 +163,61 @@ function buildDuplicateElement({
 			animations: element.animations,
 			shouldRegenerateKeyframeIds: true,
 		}),
+	};
+	return duplicate.type === "compound"
+		? { ...duplicate, tracks: cloneCompoundTracks(duplicate.tracks) }
+		: duplicate;
+}
+
+export function cloneCompoundTracks(tracks: SceneTracks): SceneTracks {
+	const elements: TimelineElement[] = [
+		...tracks.main.elements,
+		...tracks.overlay.flatMap((track) => [
+			...(track.elements as TimelineElement[]),
+		]),
+		...tracks.audio.flatMap((track) => track.elements),
+	];
+	const elementIds = new Map(
+		elements.map((element) => [element.id, generateUUID()]),
+	);
+	const groupIds = buildDuplicateRelationshipIds({
+		elements,
+		property: "groupId",
+	});
+	const linkIds = buildDuplicateRelationshipIds({
+		elements,
+		property: "linkId",
+	});
+	const cloneTrack = <TTrack extends TimelineTrack>(track: TTrack): TTrack =>
+		({
+			...track,
+			id: generateUUID(),
+			elements: (track.elements as TimelineElement[]).map((element) => {
+				const cloned = buildDuplicateElement({
+					element,
+					id: elementIds.get(element.id)!,
+					startTime: element.startTime,
+					groupId: element.groupId ? groupIds.get(element.groupId) : undefined,
+					linkId: element.linkId ? linkIds.get(element.linkId) : undefined,
+				});
+				return cloned.transitionIn
+					? {
+							...cloned,
+							transitionIn: {
+								...cloned.transitionIn,
+								id: generateUUID(),
+								fromElementId:
+									elementIds.get(cloned.transitionIn.fromElementId) ??
+									cloned.transitionIn.fromElementId,
+							},
+						}
+					: cloned;
+			}),
+		}) as TTrack;
+	return {
+		main: cloneTrack(tracks.main),
+		overlay: tracks.overlay.map(cloneTrack),
+		audio: tracks.audio.map(cloneTrack),
 	};
 }
 

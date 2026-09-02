@@ -15,6 +15,7 @@ import {
 	type SceneTracks,
 	type TimelineElement,
 	type AudioElement,
+	type CompoundElement,
 	type VideoElement,
 	type ImageElement,
 	type MaskableElement,
@@ -60,8 +61,8 @@ export function isRetimableElement(
 
 export function canElementBeHidden(
 	element: TimelineElement,
-): element is VisualElement {
-	return isVisualElement(element);
+): element is VisualElement | CompoundElement {
+	return isVisualElement(element) || element.type === "compound";
 }
 
 export function hasElementEffects({
@@ -393,7 +394,10 @@ export function getElementFontFamilies({
 	const families = new Set<string>();
 	for (const track of [...tracks.overlay, tracks.main, ...tracks.audio]) {
 		for (const element of track.elements) {
-			if (element.type === "text" && typeof element.params.fontFamily === "string") {
+			if (
+				element.type === "text" &&
+				typeof element.params.fontFamily === "string"
+			) {
 				families.add(element.params.fontFamily);
 			}
 			if ("masks" in element) {

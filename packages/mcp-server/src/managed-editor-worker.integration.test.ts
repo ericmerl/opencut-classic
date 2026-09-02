@@ -355,14 +355,82 @@ integrationTest(
 				expect(linkedElement?.groupId).toBeUndefined();
 			}
 
+			const compounded = requireRecord(
+				await bridge.request("apply_edit_plan", {
+					projectId,
+					operationId: "timeline-integration-compound",
+					expectedRevision: requireNumber(linkMoved.revision, "revision"),
+					description: "Create a persistent linked compound clip",
+					operations: [
+						{
+							kind: "create_compound",
+							compoundId: "integration-compound-1",
+							name: "Integration compound",
+							elements: relationshipRefs,
+							relationshipScope: "link",
+						},
+					],
+				}),
+			);
+			const compoundedElements = requireRecords(
+				requireRecord(compounded.snapshot).elements,
+				"elements",
+			);
+			const compound = compoundedElements.find(
+				(element) => element.elementId === "integration-compound-1",
+			);
+			if (!compound) throw new Error("compound integration fixture is missing");
+			const nestedElements = requireRecords(
+				requireRecord(compound.compound).elements,
+				"compound elements",
+			);
+			expect(nestedElements).toHaveLength(2);
+			expect(
+				nestedElements.every(
+					(element) =>
+						element.linkId === "integration-link-1" && element.startTime === 0,
+				),
+			).toBe(true);
+
 			await worker.stop();
 			const restarted = await worker.ensureConnected(projectId);
 			expect(restarted).toMatchObject({ running: true, connected: true });
 			const reloaded = requireRecord(await bridge.request("read_project", {}));
 			const reloadedElements = requireRecords(reloaded.elements, "elements");
+			const reloadedCompound = reloadedElements.find(
+				(element) => element.elementId === "integration-compound-1",
+			);
+			expect(reloadedCompound).toMatchObject({
+				type: "compound",
+				name: "Integration compound",
+			});
+			const reloadedCompoundTrackId = requireString(
+				reloadedCompound?.trackId,
+				"compound trackId",
+			);
+
+			const brokenApart = requireRecord(
+				await bridge.request("apply_edit_plan", {
+					projectId,
+					operationId: "timeline-integration-break-apart",
+					expectedRevision: requireNumber(reloaded.revision, "revision"),
+					description: "Restore the nested linked elements",
+					operations: [
+						{
+							kind: "break_apart_compound",
+							trackId: reloadedCompoundTrackId,
+							elementId: "integration-compound-1",
+						},
+					],
+				}),
+			);
+			const restoredElements = requireRecords(
+				requireRecord(brokenApart.snapshot).elements,
+				"elements",
+			);
 			for (const ref of relationshipRefs) {
 				expect(
-					reloadedElements.find(
+					restoredElements.find(
 						(element) => element.elementId === ref.elementId,
 					),
 				).toMatchObject({
@@ -375,7 +443,7 @@ integrationTest(
 				await bridge.request("apply_edit_plan", {
 					projectId,
 					operationId: "timeline-integration-link-delete",
-					expectedRevision: requireNumber(reloaded.revision, "revision"),
+					expectedRevision: requireNumber(brokenApart.revision, "revision"),
 					description: "Delete the complete persistent link",
 					operations: [
 						{

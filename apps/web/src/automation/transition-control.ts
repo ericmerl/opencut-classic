@@ -50,6 +50,9 @@ export function buildTransitionCommand({
 	if (!fromElement || !toElement) {
 		throw new Error("transition elements must exist on the requested track");
 	}
+	if (fromElement.type === "compound" || toElement.type === "compound") {
+		throw new Error("compound clip transitions are not supported");
+	}
 	if (
 		!Number.isSafeInteger(operation.duration) ||
 		operation.duration <= 0 ||
@@ -87,7 +90,11 @@ export function buildTransitionCommand({
 	if (!state?.isAdjacent) {
 		throw new Error("transition clips must be consecutive and edge-adjacent");
 	}
-	if (operation.transitionType === "wipe" && toElement.masks?.length) {
+	if (
+		operation.transitionType === "wipe" &&
+		"masks" in toElement &&
+		toElement.masks?.length
+	) {
 		throw new Error(
 			"wipe transitions do not yet support masked incoming clips",
 		);

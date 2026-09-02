@@ -35,7 +35,7 @@ interface BaseTrack {
 
 export interface VideoTrack extends BaseTrack {
 	type: "video";
-	elements: (VideoElement | ImageElement)[];
+	elements: (VideoElement | ImageElement | CompoundElement)[];
 	muted: boolean;
 	hidden: boolean;
 }
@@ -209,6 +209,12 @@ export interface EffectElement extends BaseTimelineElement {
 	effectType: string;
 }
 
+export interface CompoundElement extends BaseTimelineElement {
+	type: "compound";
+	tracks: SceneTracks;
+	hidden?: boolean;
+}
+
 export type ElementUpdatePatch = { params?: Partial<ParamValues> };
 
 export type TimelineElement =
@@ -218,7 +224,8 @@ export type TimelineElement =
 	| TextElement
 	| StickerElement
 	| GraphicElement
-	| EffectElement;
+	| EffectElement
+	| CompoundElement;
 
 export type ElementType = TimelineElement["type"];
 
@@ -264,6 +271,7 @@ export type CreateTextElement = Omit<TextElement, "id">;
 export type CreateStickerElement = Omit<StickerElement, "id">;
 export type CreateGraphicElement = Omit<GraphicElement, "id">;
 export type CreateEffectElement = Omit<EffectElement, "id">;
+export type CreateCompoundElement = Omit<CompoundElement, "id">;
 export type CreateTimelineElement =
 	| CreateAudioElement
 	| CreateVideoElement
@@ -271,7 +279,8 @@ export type CreateTimelineElement =
 	| CreateTextElement
 	| CreateStickerElement
 	| CreateGraphicElement
-	| CreateEffectElement;
+	| CreateEffectElement
+	| CreateCompoundElement;
 
 export interface ElementDragState {
 	isDragging: boolean;

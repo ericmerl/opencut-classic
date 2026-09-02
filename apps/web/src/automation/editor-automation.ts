@@ -29,6 +29,7 @@ import {
 import {
 	getTrackTransitionStates,
 	isRetimableElement,
+	type SceneTracks,
 	type TimelineElement,
 	type TimelineTrack,
 } from "@/timeline";
@@ -94,6 +95,7 @@ import {
 	expandElementRelationships,
 } from "./relationship-control";
 import { buildAuthoredMaskCommand } from "./authored-mask-control";
+import { buildCompoundCommand } from "./compound-control";
 import {
 	buildDefinitionParamPatch,
 	buildVisualInsertionCommand,
@@ -118,6 +120,7 @@ import type {
 	AutomationAudioSyncAppliedResult,
 	AutomationAudioSyncRequest,
 	AutomationAudioSyncResult,
+	AutomationCompoundSnapshot,
 	AutomationAttachCleanAudioAppliedResult,
 	AutomationAttachCleanAudioRequest,
 	AutomationAttachCleanAudioResult,
@@ -1596,6 +1599,37 @@ export class EditorAutomation {
 					}),
 			);
 		}
+		if (operation.kind === "create_compound") {
+			const tracks = this.editor.scenes.getActiveScene().tracks;
+			const elements = expandElementRelationships({
+				tracks,
+				refs: operation.elements,
+				scope: operation.relationshipScope,
+			}).map(({ trackId, elementId }) => ({ trackId, elementId }));
+			buildCompoundCommand({
+				tracks,
+				operation: { ...operation, elements },
+			});
+			return deferRelationshipCommand((currentTracks) =>
+				buildCompoundCommand({
+					tracks: currentTracks,
+					operation: {
+						...operation,
+						elements: expandElementRelationships({
+							tracks: currentTracks,
+							refs: operation.elements,
+							scope: operation.relationshipScope,
+						}).map(({ trackId, elementId }) => ({ trackId, elementId })),
+					},
+				}),
+			);
+		}
+		if (operation.kind === "break_apart_compound") {
+			return buildCompoundCommand({
+				tracks: this.editor.scenes.getActiveScene().tracks,
+				operation,
+			});
+		}
 		if (
 			operation.kind === "upsert_transition" ||
 			operation.kind === "remove_transition"
@@ -2005,6 +2039,9 @@ export class EditorAutomation {
 					}
 				: {}),
 			...(element.type === "effect" ? { effectType: element.effectType } : {}),
+			...(element.type === "compound"
+				? { compound: this.buildCompoundSnapshot(element.tracks) }
+				: {}),
 			...("masks" in element && element.masks?.length
 				? {
 						masks: element.masks.map((mask) => ({
@@ -2025,6 +2062,43 @@ export class EditorAutomation {
 						})),
 					}
 				: {}),
+		};
+	}
+
+	private buildCompoundSnapshot(
+		tracks: SceneTracks,
+	): AutomationCompoundSnapshot {
+		const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
+		return {
+			tracks: orderedTracks.map((track) => ({
+				trackId: track.id,
+				name: track.name,
+				type: track.type,
+				role:
+					track.id === tracks.main.id
+						? "main"
+						: track.type === "audio"
+							? "audio"
+							: "overlay",
+				...("muted" in track ? { muted: track.muted } : {}),
+				...("hidden" in track ? { hidden: track.hidden } : {}),
+			})),
+			transitions: orderedTracks.flatMap((track) =>
+				getTrackTransitionStates({ track }).map((state) => ({
+					transitionId: state.transition.id,
+					trackId: track.id,
+					fromElementId: state.transition.fromElementId,
+					toElementId: state.toElement.id,
+					type: state.transition.type,
+					duration: state.transition.duration,
+					valid: state.isAdjacent,
+				})),
+			),
+			elements: orderedTracks.flatMap((track) =>
+				track.elements.map((element) =>
+					this.buildElementSnapshot(track.id, element),
+				),
+			),
 		};
 	}
 

@@ -496,19 +496,20 @@ export class AudioManager {
 
 		const points = buildAudioGainAutomation({
 			element: clip.timelineElement,
-			fromLocalTime: startLocalTime,
-			toLocalTime: clip.duration,
+			fromLocalTime: clip.localTimeOffset + startLocalTime,
+			toLocalTime: clip.localTimeOffset + clip.duration,
 		});
 
 		if (points.length === 0) {
 			return;
 		}
 
+		const sourceLocalStart = clip.localTimeOffset + startLocalTime;
 		clipGain.gain.setValueAtTime(points[0].gain, startTimestamp);
 		for (let index = 1; index < points.length; index++) {
 			const point = points[index];
 			const pointTimestamp =
-				startTimestamp + (point.localTime - startLocalTime);
+				startTimestamp + (point.localTime - sourceLocalStart);
 			if (pointTimestamp < audioContext.currentTime) {
 				continue;
 			}

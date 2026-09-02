@@ -10,6 +10,7 @@ import { EffectLayerNode } from "../nodes/effect-layer-node";
 import { GraphicNode } from "../nodes/graphic-node";
 import { ImageNode } from "../nodes/image-node";
 import { RootNode } from "../nodes/root-node";
+import { CompoundNode } from "../nodes/compound-node";
 import { StickerNode } from "../nodes/sticker-node";
 import { renderTextToContext, TextNode } from "../nodes/text-node";
 import { VideoNode } from "../nodes/video-node";
@@ -75,7 +76,8 @@ async function collectNode({
 	items: FrameItemDescriptor[];
 	textures: Map<string, TextureUploadDescriptor>;
 }): Promise<void> {
-	if (node instanceof RootNode) {
+	if (node instanceof RootNode || node instanceof CompoundNode) {
+		if (node instanceof CompoundNode && !node.resolved?.active) return;
 		for (let index = 0; index < node.children.length; index++) {
 			await collectNode({
 				node: node.children[index],

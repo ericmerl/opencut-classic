@@ -15,6 +15,7 @@ import {
 	roundMediaTime,
 	subMediaTime,
 } from "@/wasm";
+import { cloneCompoundTracks } from "./duplicate-elements";
 
 export class SplitElementsCommand extends Command {
 	private savedState: SceneTracks | null = null;
@@ -148,6 +149,9 @@ export class SplitElementsCommand extends Command {
 					splitResult = [
 						{
 							...element,
+							...(element.type === "compound"
+								? { tracks: cloneCompoundTracks(element.tracks) }
+								: {}),
 							id: newId,
 							startTime: this.splitTime,
 							duration: rightVisibleDuration,
@@ -167,6 +171,9 @@ export class SplitElementsCommand extends Command {
 					splitResult = [
 						{
 							...element,
+							...(element.type === "compound"
+								? { tracks: cloneCompoundTracks(element.tracks) }
+								: {}),
 							duration: leftVisibleDuration,
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,

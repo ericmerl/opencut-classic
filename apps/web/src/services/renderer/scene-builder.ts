@@ -13,6 +13,7 @@ import { GraphicNode } from "./nodes/graphic-node";
 import { ColorNode } from "./nodes/color-node";
 import { BlurBackgroundNode } from "./nodes/blur-background-node";
 import { EffectLayerNode } from "./nodes/effect-layer-node";
+import { CompoundNode } from "./nodes/compound-node";
 import type { AnyBaseNode } from "./nodes/base-node";
 import type { TBackground, TCanvasSize } from "@/project/types";
 import { DEFAULT_BACKGROUND_BLUR_INTENSITY } from "@/background/blur";
@@ -61,6 +62,29 @@ function buildTrackNodes({
 			const transitionOut = transitionStates.find(
 				(state) => state.fromElement?.id === element.id,
 			)?.transition;
+			if (element.type === "compound") {
+				const compoundNode = new CompoundNode({
+					timeOffset: element.startTime,
+					duration: element.duration,
+					trimStart: element.trimStart,
+				});
+				const visibleNestedTracks = [
+					...element.tracks.overlay.filter(
+						(track) => !("hidden" in track && track.hidden),
+					),
+					...(!element.tracks.main.hidden ? [element.tracks.main] : []),
+				].reverse();
+				for (const child of buildTrackNodes({
+					tracks: visibleNestedTracks,
+					mediaMap,
+					canvasSize,
+					isPreview,
+				})) {
+					compoundNode.add(child);
+				}
+				nodes.push(compoundNode);
+				continue;
+			}
 			if (element.type === "effect") {
 				nodes.push(
 					new EffectLayerNode({
