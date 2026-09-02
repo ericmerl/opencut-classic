@@ -9,6 +9,10 @@ import {
 } from "./export-project";
 import { ExportReceiptStore } from "./export-receipts";
 import type { ExportValidator } from "./export-validator";
+import {
+	BridgeProtocolError,
+	type BridgeConnectionIdentity,
+} from "./editor-bridge";
 
 describe("ExportProjectService", () => {
 	let directory: string;
@@ -37,6 +41,7 @@ describe("ExportProjectService", () => {
 				if (method === "read_project") {
 					return {
 						projectId: "project-1",
+						sceneId: "scene-1",
 						revision: 2,
 						settings: {
 							canvasSize: { width: 1080, height: 1920 },
@@ -49,6 +54,8 @@ describe("ExportProjectService", () => {
 					return {
 						status: "exported",
 						operationId: "export-1",
+						projectId: "project-1",
+						sceneId: "scene-1",
 						revision: 2,
 						outputPath: join(directory, "video.mp4"),
 						bytesWritten: 123,
@@ -112,6 +119,125 @@ describe("ExportProjectService", () => {
 			expectedHeight: 1080,
 		});
 	});
+
+	test("rejects stale v2 affinity before the automatic project read", async () => {
+		const expectedIdentity = identity("editor-1");
+		const actualIdentity = identity("editor-2");
+		let readStarted = false;
+		let ticketsCreated = 0;
+		const bridge: ExportProjectBridge = {
+			exportTickets: {
+				async create(path) {
+					ticketsCreated += 1;
+					return { url: "http://fixture", outputPath: path };
+				},
+			},
+			async request(_method, _params, _timeout, requestIdentity) {
+				if (
+					requestIdentity?.editorInstanceId !== actualIdentity.editorInstanceId
+				) {
+					throw new BridgeProtocolError(
+						"STALE_CONNECTION",
+						"Editor connection identity changed before request dispatch",
+					);
+				}
+				readStarted = true;
+				return {};
+			},
+		};
+		const validator = {
+			preflight: async () => undefined,
+			verifyOutput: async () => undefined,
+			validate: async () => {
+				throw new Error("validation should not run");
+			},
+		} as unknown as ExportValidator;
+		const service = new ExportProjectService(
+			bridge,
+			new ExportReceiptStore(join(directory, "stale-receipts")),
+			validator,
+		);
+
+		await expect(
+			service.export({
+				...input(directory),
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: expectedIdentity,
+			}),
+		).rejects.toMatchObject({ code: "STALE_CONNECTION" });
+		expect(readStarted).toBe(false);
+		expect(ticketsCreated).toBe(0);
+	});
+
+	test("preserves the immutable envelope on project mismatch and revision conflict", async () => {
+		const connectionIdentity = identity("editor-1");
+		const bridge: ExportProjectBridge = {
+			exportTickets: {
+				async create(path) {
+					return { url: "http://fixture", outputPath: path };
+				},
+			},
+			async request() {
+				return {
+					projectId: "active-project",
+					sceneId: "scene-1",
+					revision: 4,
+					bridgeProtocolVersion: 2,
+					connectionIdentity,
+					requestConnectionIdentity: connectionIdentity,
+					settings: {
+						canvasSize: { width: 1080, height: 1920 },
+						fps: { numerator: 30, denominator: 1 },
+					},
+				};
+			},
+		};
+		const validator = {
+			preflight: async () => undefined,
+			verifyOutput: async () => undefined,
+			validate: async () => {
+				throw new Error("validation should not run");
+			},
+		} as unknown as ExportValidator;
+		const service = new ExportProjectService(
+			bridge,
+			new ExportReceiptStore(join(directory, "terminal-receipts")),
+			validator,
+		);
+		const mismatch = await service.export({
+			...input(directory),
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: connectionIdentity,
+		});
+		const conflict = await service.export({
+			...input(directory),
+			projectId: "active-project",
+			operationId: "export-conflict",
+			expectedRevision: 3,
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: connectionIdentity,
+		});
+
+		for (const result of [mismatch, conflict]) {
+			expect(result).toMatchObject({
+				sceneId: "scene-1",
+				bridgeProtocolVersion: 2,
+				connectionIdentity,
+				requestConnectionIdentity: connectionIdentity,
+			});
+		}
+		expect(mismatch).toMatchObject({
+			status: "rejected",
+			projectId: "project-1",
+			activeProjectId: "active-project",
+		});
+		expect(conflict).toMatchObject({
+			status: "conflict",
+			projectId: "active-project",
+			expectedRevision: 3,
+			actualRevision: 4,
+		});
+	});
 });
 
 function input(directory: string): ExportProjectInput {
@@ -124,5 +250,14 @@ function input(directory: string): ExportProjectInput {
 		quality: "high",
 		includeAudio: true,
 		canvasSize: { width: 1080, height: 1080 },
+	};
+}
+
+function identity(editorInstanceId: string): BridgeConnectionIdentity {
+	return {
+		serverInstanceId: "server-1",
+		editorInstanceId,
+		editorSessionId: "session-1",
+		connectionGeneration: 1,
 	};
 }

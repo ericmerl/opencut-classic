@@ -6,6 +6,7 @@ export interface ManagedEditorBridge {
 	getStatus(): { connected: boolean; port: number };
 	createBootstrapTicket(): { id: string; expiresAt: string };
 	waitForConnection(timeoutMs?: number): Promise<void>;
+	waitForDisconnection?(timeoutMs?: number): Promise<void>;
 }
 
 export interface ManagedEditorWorkerStatus {
@@ -86,7 +87,10 @@ export class ManagedEditorWorker {
 		const child = this.child;
 		this.child = null;
 		this.projectId = null;
-		if (child) await stopChild(child);
+		if (child) {
+			await stopChild(child);
+			await this.bridge.waitForDisconnection?.(5_000);
+		}
 		return this.getStatus();
 	}
 

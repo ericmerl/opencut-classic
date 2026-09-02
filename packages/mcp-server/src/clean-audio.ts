@@ -11,10 +11,14 @@ import {
 	asTransferResult,
 	sanitizeFileName,
 	stableSerialize,
+	withProjectEnvelope,
 } from "./matte-generation-data";
 import { hashSourceFile } from "./matte-producer";
+import type { BridgeConnectionIdentity } from "./editor-bridge";
 
 export interface CleanAudioInput {
+	bridgeProtocolVersion?: 1 | 2;
+	expectedConnectionIdentity?: BridgeConnectionIdentity;
 	projectId: string;
 	operationId: string;
 	expectedRevision: number;
@@ -40,6 +44,7 @@ export interface AudioCleanupBridge {
 		method: string,
 		params: unknown,
 		timeoutMs?: number,
+		expectedIdentity?: BridgeConnectionIdentity,
 	): Promise<unknown>;
 	sourceTickets: {
 		create(path: string): Promise<{ url: string; outputPath: string }>;
@@ -80,6 +85,7 @@ export class AudioCleanupService {
 	) {}
 
 	async clean(input: CleanAudioInput): Promise<Record<string, unknown>> {
+		const expectedIdentity = expectedV2Identity(input);
 		const fingerprint = stableSerialize(input);
 		const prior = this.completed.get(input.operationId);
 		if (prior) {
@@ -92,22 +98,36 @@ export class AudioCleanupService {
 		}
 
 		const snapshot = asProjectSnapshot(
-			await this.bridge.request("read_project", {}),
+			await this.bridge.request(
+				"read_project",
+				{},
+				undefined,
+				expectedIdentity,
+			),
 		);
 		if (snapshot.projectId !== input.projectId) {
-			return {
-				status: "rejected",
-				operationId: input.operationId,
-				reason: `active project is ${snapshot.projectId}`,
-			};
+			return withProjectEnvelope(
+				{
+					status: "rejected",
+					operationId: input.operationId,
+					activeProjectId: snapshot.projectId,
+					reason: `active project is ${snapshot.projectId}`,
+				},
+				snapshot,
+				input.projectId,
+			);
 		}
 		if (snapshot.revision !== input.expectedRevision) {
-			return {
-				status: "conflict",
-				operationId: input.operationId,
-				expectedRevision: input.expectedRevision,
-				actualRevision: snapshot.revision,
-			};
+			return withProjectEnvelope(
+				{
+					status: "conflict",
+					operationId: input.operationId,
+					expectedRevision: input.expectedRevision,
+					actualRevision: snapshot.revision,
+				},
+				snapshot,
+				input.projectId,
+			);
 		}
 
 		const clip = findAudioProjectClip({ snapshot, input });
@@ -133,9 +153,12 @@ export class AudioCleanupService {
 						url: sourceTicket.url,
 					},
 					10 * 60_000,
+					expectedIdentity,
 				),
 			);
-			if (transfer.status !== "transferred") return transfer;
+			if (transfer.status !== "transferred") {
+				return withProjectEnvelope(transfer, snapshot, input.projectId);
+			}
 
 			const sourceContentHash = await hashSourceFile(sourcePath);
 			const cleanerResult = await cleaner.clean(
@@ -202,10 +225,29 @@ export class AudioCleanupService {
 						modelVersion: cleanerResult.modelVersion,
 					},
 					10 * 60_000,
+					expectedIdentity,
 				),
 			);
 			if (attachment.status !== "applied" && attachment.status !== "replayed") {
-				return attachment;
+				return withProjectEnvelope(
+					{
+						...attachment,
+						source: {
+							mediaId: transfer.mediaId,
+							contentHash: sourceContentHash,
+							sourceFingerprint: transfer.sourceFingerprint,
+							bytesTransferred: transfer.bytesTransferred,
+						},
+						cleaner: {
+							type: "command",
+							modelId: cleanerResult.modelId,
+							modelVersion: cleanerResult.modelVersion,
+							warnings: cleanerResult.warnings,
+						},
+					},
+					snapshot,
+					input.projectId,
+				);
 			}
 
 			const result = {
@@ -225,11 +267,21 @@ export class AudioCleanupService {
 				},
 			};
 			this.completed.set(input.operationId, { fingerprint, result });
-			return result;
+			return withProjectEnvelope(result, snapshot, input.projectId);
 		} finally {
 			await rm(jobDirectory, { recursive: true, force: true });
 		}
 	}
+}
+
+function expectedV2Identity(
+	input: CleanAudioInput,
+): BridgeConnectionIdentity | undefined {
+	if (input.bridgeProtocolVersion !== 2) return undefined;
+	if (!input.expectedConnectionIdentity) {
+		throw new Error("bridge protocol v2 requires expectedConnectionIdentity");
+	}
+	return input.expectedConnectionIdentity;
 }
 
 function findAudioProjectClip({

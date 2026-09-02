@@ -165,7 +165,13 @@ describe("timeline query", () => {
 				snapshot: buildSnapshot(),
 				request: { projectId: "project-1", expectedRevision: 6 },
 			}),
-		).toEqual({ status: "conflict", expectedRevision: 6, actualRevision: 7 });
+		).toEqual({
+			status: "conflict",
+			projectId: "project-1",
+			sceneId: "scene-1",
+			expectedRevision: 6,
+			actualRevision: 7,
+		});
 		expect(
 			queryTimelineSnapshot({
 				snapshot: buildSnapshot(),
@@ -175,6 +181,11 @@ describe("timeline query", () => {
 					trackIds: ["missing"],
 				},
 			}),
-		).toEqual({ status: "rejected", reason: "unknown trackIds: missing" });
+		).toEqual({
+			status: "rejected",
+			projectId: "project-1",
+			sceneId: "scene-1",
+			reason: "unknown trackIds: missing",
+		});
 	});
 });

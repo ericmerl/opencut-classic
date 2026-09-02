@@ -837,6 +837,8 @@ export class EditorAutomation {
 
 		return {
 			status: "serialized",
+			projectId: request.projectId,
+			sceneId: this.editor.scenes.getActiveScene().id,
 			revision: this.revision,
 			format: request.format,
 			trackIds: tracks.map((track) => track.id),
@@ -1395,6 +1397,8 @@ export class EditorAutomation {
 		const result: AutomationExportCompletedResult = {
 			status: "exported",
 			operationId: request.operationId,
+			projectId: request.projectId,
+			sceneId: this.editor.scenes.getActiveScene().id,
 			revision: this.revision,
 			outputPath: receipt.outputPath,
 			bytesWritten: receipt.bytesWritten,

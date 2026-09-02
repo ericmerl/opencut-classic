@@ -8,10 +8,14 @@ import {
 	type ExportProjectBridge,
 	type ExportProjectInput,
 } from "./export-project";
+import type { BridgeConnectionIdentity } from "./editor-bridge";
 import { stableSerialize } from "./matte-generation-data";
 
 export interface PersistentExportJobBridge extends ExportProjectBridge {
-	getStatus(): { connected: boolean };
+	getStatus(): {
+		connected: boolean;
+		connectionIdentity?: BridgeConnectionIdentity | null;
+	};
 	onConnectionChange(listener: (connected: boolean) => void): () => void;
 }
 
@@ -179,10 +183,23 @@ export class ExportJobQueue {
 		if (running.status !== "running") return running;
 
 		try {
-			const opened = await this.bridge.request("open_project", {
-				operationId: `export-job:${job.jobId}:open:${attempt}`,
-				projectId: job.input.projectId,
-			});
+			const executionInput = bindJobToConnectedEditor(job.input, this.bridge);
+			const executionIdentity = executionInput.expectedConnectionIdentity;
+			const opened = await this.bridge.request(
+				"open_project",
+				{
+					operationId: `export-job:${job.jobId}:open:${attempt}`,
+					projectId: job.input.projectId,
+					...(executionInput.bridgeProtocolVersion === 2
+						? {
+								bridgeProtocolVersion: 2 as const,
+								expectedConnectionIdentity: executionIdentity,
+							}
+						: {}),
+				},
+				undefined,
+				executionIdentity,
+			);
 			if (!isProjectOpened(opened)) {
 				return this.finish(
 					job.jobId,
@@ -191,7 +208,7 @@ export class ExportJobQueue {
 					resultReason(opened),
 				);
 			}
-			const result = await this.exports.export(job.input);
+			const result = await this.exports.export(executionInput);
 			const status = result.status;
 			if (status === "exported" || status === "replayed") {
 				return this.finish(job.jobId, "completed", result, null);
@@ -225,6 +242,32 @@ export class ExportJobQueue {
 			completedAt: new Date().toISOString(),
 		}));
 	}
+}
+
+function bindJobToConnectedEditor(
+	input: ExportProjectInput,
+	bridge: PersistentExportJobBridge,
+): ExportProjectInput {
+	if (input.bridgeProtocolVersion !== 2) return input;
+	const queuedIdentity =
+		input.requestConnectionIdentity ?? input.expectedConnectionIdentity;
+	if (!queuedIdentity) {
+		throw new Error("bridge protocol v2 requires durable job affinity");
+	}
+	const currentIdentity = bridge.getStatus().connectionIdentity;
+	if (!currentIdentity) {
+		throw new Error("No authenticated OpenCut editor is connected");
+	}
+	if (currentIdentity.editorInstanceId !== queuedIdentity.editorInstanceId) {
+		throw new Error(
+			"STALE_CONNECTION: queued export belongs to a different editor affinity",
+		);
+	}
+	return {
+		...input,
+		expectedConnectionIdentity: currentIdentity,
+		requestConnectionIdentity: queuedIdentity,
+	};
 }
 
 function isProjectOpened(value: unknown): value is Record<string, unknown> {

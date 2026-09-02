@@ -87,6 +87,10 @@ describe("AudioCleanupService", () => {
 
 		expect(first).toMatchObject({
 			status: "cleaned-and-attached",
+			projectId: "project-1",
+			sceneId: "scene-1",
+			bridgeProtocolVersion: 2,
+			connectionIdentity,
 			cleaner: { modelId: "fixture", modelVersion: "1" },
 			source: { mediaId: "media-1", bytesTransferred: 3 },
 		});
@@ -120,7 +124,11 @@ function input(): CleanAudioInput {
 function snapshot(): Record<string, unknown> {
 	return {
 		projectId: "project-1",
+		sceneId: "scene-1",
 		revision: 2,
+		bridgeProtocolVersion: 2,
+		connectionIdentity,
+		requestConnectionIdentity: connectionIdentity,
 		elements: [
 			{
 				trackId: "audio-1",
@@ -144,3 +152,10 @@ function snapshot(): Record<string, unknown> {
 		],
 	};
 }
+
+const connectionIdentity = {
+	serverInstanceId: "server-1",
+	editorInstanceId: "editor-1",
+	editorSessionId: "session-1",
+	connectionGeneration: 1,
+};

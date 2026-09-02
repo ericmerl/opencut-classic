@@ -388,6 +388,8 @@ export interface AutomationExportSubtitlesRequest {
 export type AutomationExportSubtitlesResult =
 	| {
 			status: "serialized";
+			projectId: string;
+			sceneId: string;
 			revision: number;
 			format: "srt" | "vtt";
 			trackIds: string[];
@@ -942,6 +944,8 @@ export interface AutomationExportRequest {
 export interface AutomationExportCompletedResult {
 	status: "exported";
 	operationId: string;
+	projectId: string;
+	sceneId: string;
 	revision: number;
 	outputPath: string;
 	bytesWritten: number;

@@ -1,5 +1,36 @@
 import * as z from "zod/v4";
 
+export const connectionIdentitySchema = z.object({
+	serverInstanceId: z.string().min(1).describe("MCP bridge process affinity"),
+	editorInstanceId: z
+		.string()
+		.min(1)
+		.describe("Durable browser editor affinity"),
+	editorSessionId: z.string().min(1).describe("Browser-session affinity"),
+	connectionGeneration: z
+		.number()
+		.int()
+		.positive()
+		.describe("Monotonic connection affinity generation"),
+});
+
+const connectionAffinitySchema = z.union([
+	z.object({
+		bridgeProtocolVersion: z.literal(1).optional(),
+		expectedConnectionIdentity: z.undefined().optional(),
+	}),
+	z.object({
+		bridgeProtocolVersion: z.literal(2),
+		expectedConnectionIdentity: connectionIdentitySchema.describe(
+			"Required v2 routing affinity. This detects retargeting; it is not an authorization credential.",
+		),
+	}),
+]);
+
+export function withConnectionAffinity<T extends z.ZodType>(schema: T) {
+	return z.intersection(schema, connectionAffinitySchema);
+}
+
 const frameRateSchema = z.object({
 	numerator: z.number().int().positive(),
 	denominator: z.number().int().positive(),

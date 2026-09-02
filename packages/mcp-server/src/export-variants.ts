@@ -1,5 +1,6 @@
 import { extname, isAbsolute, resolve } from "node:path";
 import type { ExportProjectInput } from "./export-project";
+import type { BridgeConnectionIdentity } from "./editor-bridge";
 
 export const PLATFORM_EXPORT_PRESETS = {
 	tiktok_9_16: {
@@ -53,6 +54,8 @@ export interface ExportBatchVariantInput {
 }
 
 export interface ExportBatchInput {
+	bridgeProtocolVersion?: 1 | 2;
+	expectedConnectionIdentity?: BridgeConnectionIdentity;
 	batchId: string;
 	projectId: string;
 	expectedRevision: number;
@@ -98,6 +101,12 @@ export function expandExportBatch(
 			preset: variant.preset,
 			jobId: `batch:${input.batchId}:${variant.variantId}`,
 			input: {
+				...(input.bridgeProtocolVersion !== undefined
+					? { bridgeProtocolVersion: input.bridgeProtocolVersion }
+					: {}),
+				...(input.expectedConnectionIdentity
+					? { expectedConnectionIdentity: input.expectedConnectionIdentity }
+					: {}),
 				projectId: input.projectId,
 				operationId: `export-batch:${input.batchId}:${variant.variantId}`,
 				expectedRevision: input.expectedRevision,

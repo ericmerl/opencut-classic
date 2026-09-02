@@ -4,8 +4,12 @@ import type {
 	ExportValidator,
 } from "./export-validator";
 import { stableSerialize } from "./matte-generation-data";
+import type { BridgeConnectionIdentity } from "./editor-bridge";
 
 export interface ExportProjectInput {
+	bridgeProtocolVersion?: 1 | 2;
+	expectedConnectionIdentity?: BridgeConnectionIdentity;
+	requestConnectionIdentity?: BridgeConnectionIdentity;
 	projectId: string;
 	operationId: string;
 	expectedRevision: number;
@@ -22,6 +26,7 @@ export interface ExportProjectBridge {
 		method: string,
 		params: unknown,
 		timeoutMs?: number,
+		expectedIdentity?: BridgeConnectionIdentity,
 	): Promise<unknown>;
 	exportTickets: {
 		create(
@@ -39,7 +44,14 @@ export class ExportProjectService {
 	) {}
 
 	async export(input: ExportProjectInput): Promise<Record<string, unknown>> {
-		const fingerprint = stableSerialize(input);
+		const expectedIdentity = expectedV2Identity(input);
+		const requestIdentity =
+			input.requestConnectionIdentity ?? expectedIdentity ?? null;
+		const fingerprint = stableSerialize({
+			...input,
+			expectedConnectionIdentity: requestIdentity,
+			requestConnectionIdentity: undefined,
+		});
 		const prior = await this.receipts.get(input.operationId);
 		if (prior) {
 			if (prior.fingerprint !== fingerprint) {
@@ -62,12 +74,23 @@ export class ExportProjectService {
 		}
 
 		const snapshot = readProjectSnapshot(
-			await this.bridge.request("read_project", {}),
+			await this.bridge.request(
+				"read_project",
+				{},
+				undefined,
+				expectedIdentity,
+			),
 		);
 		if (snapshot.projectId !== input.projectId) {
 			return {
 				status: "rejected",
 				operationId: input.operationId,
+				projectId: input.projectId,
+				sceneId: snapshot.sceneId,
+				activeProjectId: snapshot.projectId,
+				bridgeProtocolVersion: snapshot.bridgeProtocolVersion,
+				connectionIdentity: snapshot.connectionIdentity,
+				requestConnectionIdentity: requestIdentity,
 				reason: `active project is ${snapshot.projectId}`,
 			};
 		}
@@ -75,6 +98,11 @@ export class ExportProjectService {
 			return {
 				status: "conflict",
 				operationId: input.operationId,
+				projectId: input.projectId,
+				sceneId: snapshot.sceneId,
+				bridgeProtocolVersion: snapshot.bridgeProtocolVersion,
+				connectionIdentity: snapshot.connectionIdentity,
+				requestConnectionIdentity: requestIdentity,
 				expectedRevision: input.expectedRevision,
 				actualRevision: snapshot.revision,
 			};
@@ -101,6 +129,7 @@ export class ExportProjectService {
 					url: ticket.url,
 				},
 				30 * 60_000,
+				expectedIdentity,
 			),
 		);
 		if (
@@ -133,6 +162,10 @@ export class ExportProjectService {
 
 		const result: Record<string, unknown> = {
 			...editorResult,
+			projectId: snapshot.projectId,
+			sceneId: snapshot.sceneId,
+			requestConnectionIdentity: requestIdentity,
+			bridgeProtocolVersion: editorResult.bridgeProtocolVersion,
 			status:
 				validation.status === "validated" ? "exported" : "validation-failed",
 			validation,
@@ -157,12 +190,26 @@ export class ExportProjectService {
 	}
 }
 
+function expectedV2Identity(
+	input: ExportProjectInput,
+): BridgeConnectionIdentity | undefined {
+	if (input.bridgeProtocolVersion !== 2) return undefined;
+	if (!input.expectedConnectionIdentity) {
+		throw new Error("bridge protocol v2 requires expectedConnectionIdentity");
+	}
+	return input.expectedConnectionIdentity;
+}
+
 function readProjectSnapshot(value: unknown): {
 	projectId: string;
+	sceneId: string;
 	revision: number;
 	width: number;
 	height: number;
 	fps: { numerator: number; denominator: number };
+	bridgeProtocolVersion: unknown;
+	connectionIdentity: unknown;
+	requestConnectionIdentity: unknown;
 } {
 	if (!isRecord(value) || !isRecord(value.settings)) {
 		throw new Error("editor returned an invalid project snapshot");
@@ -171,6 +218,7 @@ function readProjectSnapshot(value: unknown): {
 	const fps = value.settings.fps;
 	if (
 		typeof value.projectId !== "string" ||
+		typeof value.sceneId !== "string" ||
 		typeof value.revision !== "number" ||
 		!isRecord(canvas) ||
 		!isRecord(fps) ||
@@ -183,10 +231,14 @@ function readProjectSnapshot(value: unknown): {
 	}
 	return {
 		projectId: value.projectId,
+		sceneId: value.sceneId,
 		revision: value.revision,
 		width: canvas.width,
 		height: canvas.height,
 		fps: { numerator: fps.numerator, denominator: fps.denominator },
+		bridgeProtocolVersion: value.bridgeProtocolVersion ?? null,
+		connectionIdentity: value.connectionIdentity ?? null,
+		requestConnectionIdentity: value.requestConnectionIdentity ?? null,
 	};
 }
 

@@ -6,6 +6,7 @@ import {
 	asTransferResult,
 	sanitizeFileName,
 	stableSerialize,
+	withProjectEnvelope,
 } from "./matte-generation-data";
 import { hashSourceFile } from "./matte-producer";
 import {
@@ -15,10 +16,13 @@ import {
 	type SubjectTrackerResult,
 	type SubjectTrackingSample,
 } from "./subject-tracker";
+import type { BridgeConnectionIdentity } from "./editor-bridge";
 
 const TICKS_PER_SECOND = 120_000;
 
 export interface TrackSubjectInput {
+	bridgeProtocolVersion?: 1 | 2;
+	expectedConnectionIdentity?: BridgeConnectionIdentity;
 	projectId: string;
 	operationId: string;
 	expectedRevision: number;
@@ -50,6 +54,7 @@ export interface SubjectTrackingBridge {
 		method: string,
 		params: unknown,
 		timeoutMs?: number,
+		expectedIdentity?: BridgeConnectionIdentity,
 	): Promise<unknown>;
 	sourceTickets: {
 		create(path: string): Promise<{ url: string; outputPath: string }>;
@@ -101,6 +106,7 @@ export class SubjectTrackingService {
 	) {}
 
 	async track(input: TrackSubjectInput): Promise<Record<string, unknown>> {
+		const expectedIdentity = expectedV2Identity(input);
 		const fingerprint = stableSerialize(input);
 		const prior = this.completed.get(input.operationId);
 		if (prior) {
@@ -113,22 +119,36 @@ export class SubjectTrackingService {
 		}
 
 		const snapshot = asProjectSnapshot(
-			await this.bridge.request("read_project", {}),
+			await this.bridge.request(
+				"read_project",
+				{},
+				undefined,
+				expectedIdentity,
+			),
 		);
 		if (snapshot.projectId !== input.projectId) {
-			return {
-				status: "rejected",
-				operationId: input.operationId,
-				reason: `active project is ${snapshot.projectId}`,
-			};
+			return withProjectEnvelope(
+				{
+					status: "rejected",
+					operationId: input.operationId,
+					activeProjectId: snapshot.projectId,
+					reason: `active project is ${snapshot.projectId}`,
+				},
+				snapshot,
+				input.projectId,
+			);
 		}
 		if (snapshot.revision !== input.expectedRevision) {
-			return {
-				status: "conflict",
-				operationId: input.operationId,
-				expectedRevision: input.expectedRevision,
-				actualRevision: snapshot.revision,
-			};
+			return withProjectEnvelope(
+				{
+					status: "conflict",
+					operationId: input.operationId,
+					expectedRevision: input.expectedRevision,
+					actualRevision: snapshot.revision,
+				},
+				snapshot,
+				input.projectId,
+			);
 		}
 
 		const clip = findTrackingClip({ snapshot, input });
@@ -151,9 +171,12 @@ export class SubjectTrackingService {
 						url: sourceTicket.url,
 					},
 					10 * 60_000,
+					expectedIdentity,
 				),
 			);
-			if (transfer.status !== "transferred") return transfer;
+			if (transfer.status !== "transferred") {
+				return withProjectEnvelope(transfer, snapshot, input.projectId);
+			}
 
 			const sourceContentHash = await hashSourceFile(sourcePath);
 			const trackerResult = await tracker.track(
@@ -172,11 +195,27 @@ export class SubjectTrackingService {
 				samples: trackerResult.samples,
 			});
 			if (operations.length === 1) {
-				return {
-					status: "rejected",
-					operationId: input.operationId,
-					reason: "tracker returned no visible samples above minConfidence",
-				};
+				return withProjectEnvelope(
+					{
+						status: "rejected",
+						operationId: input.operationId,
+						reason: "tracker returned no visible samples above minConfidence",
+						source: {
+							mediaId: transfer.mediaId,
+							contentHash: sourceContentHash,
+							sourceFingerprint: transfer.sourceFingerprint,
+							bytesTransferred: transfer.bytesTransferred,
+						},
+						tracker: {
+							type: "command",
+							modelId: trackerResult.modelId,
+							modelVersion: trackerResult.modelVersion,
+							warnings: trackerResult.warnings,
+						},
+					},
+					snapshot,
+					input.projectId,
+				);
 			}
 
 			const mutation = asMutationResult(
@@ -190,10 +229,29 @@ export class SubjectTrackingService {
 						operations,
 					},
 					10 * 60_000,
+					expectedIdentity,
 				),
 			);
 			if (mutation.status !== "applied" && mutation.status !== "replayed") {
-				return mutation;
+				return withProjectEnvelope(
+					{
+						...mutation,
+						source: {
+							mediaId: transfer.mediaId,
+							contentHash: sourceContentHash,
+							sourceFingerprint: transfer.sourceFingerprint,
+							bytesTransferred: transfer.bytesTransferred,
+						},
+						tracker: {
+							type: "command",
+							modelId: trackerResult.modelId,
+							modelVersion: trackerResult.modelVersion,
+							warnings: trackerResult.warnings,
+						},
+					},
+					snapshot,
+					input.projectId,
+				);
 			}
 
 			const keyframeCount = operations.length - 1;
@@ -217,11 +275,21 @@ export class SubjectTrackingService {
 				},
 			};
 			this.completed.set(input.operationId, { fingerprint, result });
-			return result;
+			return withProjectEnvelope(result, snapshot, input.projectId);
 		} finally {
 			await rm(jobDirectory, { recursive: true, force: true });
 		}
 	}
+}
+
+function expectedV2Identity(
+	input: TrackSubjectInput,
+): BridgeConnectionIdentity | undefined {
+	if (input.bridgeProtocolVersion !== 2) return undefined;
+	if (!input.expectedConnectionIdentity) {
+		throw new Error("bridge protocol v2 requires expectedConnectionIdentity");
+	}
+	return input.expectedConnectionIdentity;
 }
 
 export function buildTrackingEditOperations({

@@ -103,6 +103,85 @@ describe("ExportJobQueue", () => {
 		expect(processed[0]).toMatchObject({ status: "completed" });
 		queue.stop();
 	});
+
+	test("rebinds a durable v2 job only to a reconnect of the same editor", async () => {
+		const queuedIdentity = identity("editor-1", "session-1", 1);
+		const reconnectedIdentity = identity("editor-1", "session-2", 2);
+		let openedWith: unknown;
+		let exportedWith: unknown;
+		const bridge = fakeBridge({
+			connected: true,
+			connectionIdentity: reconnectedIdentity,
+			request: async (_method, _params, _timeout, expectedIdentity) => {
+				openedWith = expectedIdentity;
+				return { status: "opened", projectId: "project-1" };
+			},
+		});
+		const queue = new ExportJobQueue(
+			bridge,
+			{
+				export: async (input) => {
+					exportedWith = input;
+					return { status: "exported" };
+				},
+			},
+			new ExportJobStore(directory),
+			{ autoRun: false },
+		);
+		await queue.enqueue({
+			jobId: "job-affinity",
+			input: {
+				...exportInput(directory),
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: queuedIdentity,
+			},
+		});
+
+		const [processed] = await queue.runQueued(1);
+
+		expect(processed).toMatchObject({ status: "completed" });
+		expect(openedWith).toEqual(reconnectedIdentity);
+		expect(exportedWith).toMatchObject({
+			expectedConnectionIdentity: reconnectedIdentity,
+			requestConnectionIdentity: queuedIdentity,
+		});
+		queue.stop();
+	});
+
+	test("rejects a durable v2 job when another editor is connected", async () => {
+		let requests = 0;
+		const bridge = fakeBridge({
+			connected: true,
+			connectionIdentity: identity("editor-2", "session-2", 2),
+			request: async () => {
+				requests += 1;
+				return {};
+			},
+		});
+		const queue = new ExportJobQueue(
+			bridge,
+			{ export: async () => ({ status: "exported" }) },
+			new ExportJobStore(directory),
+			{ autoRun: false },
+		);
+		await queue.enqueue({
+			jobId: "job-other-editor",
+			input: {
+				...exportInput(directory),
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: identity("editor-1", "session-1", 1),
+			},
+		});
+
+		const [processed] = await queue.runQueued(1);
+
+		expect(processed).toMatchObject({
+			status: "failed",
+			lastError: expect.stringContaining("STALE_CONNECTION"),
+		});
+		expect(requests).toBe(0);
+		queue.stop();
+	});
 });
 
 function exportInput(directory: string) {
@@ -119,17 +198,32 @@ function exportInput(directory: string) {
 
 function fakeBridge({
 	connected,
+	connectionIdentity,
 	request = async () => ({}),
 }: {
 	connected: boolean;
+	connectionIdentity?: ReturnType<typeof identity>;
 	request?: PersistentExportJobBridge["request"];
 }): PersistentExportJobBridge {
 	return {
-		getStatus: () => ({ connected }),
+		getStatus: () => ({ connected, connectionIdentity }),
 		onConnectionChange: () => () => undefined,
 		request,
 		exportTickets: {
 			create: async (path) => ({ url: "http://fixture", outputPath: path }),
 		},
+	};
+}
+
+function identity(
+	editorInstanceId: string,
+	editorSessionId: string,
+	connectionGeneration: number,
+) {
+	return {
+		serverInstanceId: "server-1",
+		editorInstanceId,
+		editorSessionId,
+		connectionGeneration,
 	};
 }

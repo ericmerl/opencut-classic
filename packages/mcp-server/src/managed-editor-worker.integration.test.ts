@@ -75,7 +75,19 @@ integrationTest(
 				throw error;
 			});
 			expect(status).toMatchObject({ running: true, connected: true });
-			expect(bridge.getStatus().connected).toBe(true);
+			const initialBridgeStatus = bridge.getStatus();
+			expect(initialBridgeStatus).toMatchObject({
+				connected: true,
+				negotiatedProtocolVersion: 2,
+				connectionIdentity: {
+					serverInstanceId: initialBridgeStatus.serverInstanceId,
+					connectionGeneration: 1,
+				},
+			});
+			const initialConnectionIdentity = initialBridgeStatus.connectionIdentity;
+			if (!initialConnectionIdentity) {
+				throw new Error("negotiated editor identity is missing");
+			}
 
 			const catalog = requireRecord(
 				await bridge.request("list_visual_assets", {}),
@@ -91,32 +103,49 @@ integrationTest(
 				]),
 			);
 
-			const initial = requireRecord(await bridge.request("read_project", {}));
+			const initial = requireRecord(
+				await bridge.request(
+					"read_project",
+					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: initialConnectionIdentity,
+					},
+					undefined,
+					initialConnectionIdentity,
+				),
+			);
 			const projectId = requireString(initial.projectId, "projectId");
 			const revision = requireNumber(initial.revision, "revision");
 			const inserted = requireRecord(
-				await bridge.request("apply_edit_plan", {
-					projectId,
-					operationId: "visual-integration-insert",
-					expectedRevision: revision,
-					description: "Insert native visual automation fixtures",
-					operations: [
-						{
-							kind: "insert_graphic",
-							definitionId: "rectangle",
-							startTime: 0,
-							duration: 120_000,
-							params: { fill: "#ff0000", cornerRadius: 24 },
-						},
-						{
-							kind: "insert_adjustment_layer",
-							effectType: "color-grade",
-							startTime: 0,
-							duration: 120_000,
-							params: { contrast: 12, highlights: -35 },
-						},
-					],
-				}),
+				await bridge.request(
+					"apply_edit_plan",
+					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: initialConnectionIdentity,
+						projectId,
+						operationId: "visual-integration-insert",
+						expectedRevision: revision,
+						description: "Insert native visual automation fixtures",
+						operations: [
+							{
+								kind: "insert_graphic",
+								definitionId: "rectangle",
+								startTime: 0,
+								duration: 120_000,
+								params: { fill: "#ff0000", cornerRadius: 24 },
+							},
+							{
+								kind: "insert_adjustment_layer",
+								effectType: "color-grade",
+								startTime: 0,
+								duration: 120_000,
+								params: { contrast: 12, highlights: -35 },
+							},
+						],
+					},
+					undefined,
+					initialConnectionIdentity,
+				),
 			);
 			expect(inserted.status).toBe("applied");
 			const insertedSnapshot = requireRecord(inserted.snapshot);
@@ -397,7 +426,38 @@ integrationTest(
 			await worker.stop();
 			const restarted = await worker.ensureConnected(projectId);
 			expect(restarted).toMatchObject({ running: true, connected: true });
-			const reloaded = requireRecord(await bridge.request("read_project", {}));
+			const restartedBridgeStatus = bridge.getStatus();
+			expect(restartedBridgeStatus).toMatchObject({
+				negotiatedProtocolVersion: 2,
+				connectionIdentity: {
+					serverInstanceId: initialConnectionIdentity.serverInstanceId,
+					editorInstanceId: initialConnectionIdentity.editorInstanceId,
+					connectionGeneration:
+						initialConnectionIdentity.connectionGeneration + 1,
+				},
+			});
+			expect(
+				restartedBridgeStatus.connectionIdentity?.editorSessionId,
+			).not.toBe(initialConnectionIdentity.editorSessionId);
+			const restartedConnectionIdentity =
+				restartedBridgeStatus.connectionIdentity;
+			if (!restartedConnectionIdentity) {
+				throw new Error("restarted editor identity is missing");
+			}
+			const reloaded = requireRecord(
+				await bridge.request(
+					"read_project",
+					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: restartedConnectionIdentity,
+					},
+					undefined,
+					restartedConnectionIdentity,
+				),
+			);
+			expect(reloaded.connectionIdentity).toEqual(
+				restartedBridgeStatus.connectionIdentity,
+			);
 			const reloadedElements = requireRecords(reloaded.elements, "elements");
 			const reloadedCompound = reloadedElements.find(
 				(element) => element.elementId === "integration-compound-1",
@@ -412,19 +472,26 @@ integrationTest(
 			);
 
 			const brokenApart = requireRecord(
-				await bridge.request("apply_edit_plan", {
-					projectId,
-					operationId: "timeline-integration-break-apart",
-					expectedRevision: requireNumber(reloaded.revision, "revision"),
-					description: "Restore the nested linked elements",
-					operations: [
-						{
-							kind: "break_apart_compound",
-							trackId: reloadedCompoundTrackId,
-							elementId: "integration-compound-1",
-						},
-					],
-				}),
+				await bridge.request(
+					"apply_edit_plan",
+					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: restartedConnectionIdentity,
+						projectId,
+						operationId: "timeline-integration-break-apart",
+						expectedRevision: requireNumber(reloaded.revision, "revision"),
+						description: "Restore the nested linked elements",
+						operations: [
+							{
+								kind: "break_apart_compound",
+								trackId: reloadedCompoundTrackId,
+								elementId: "integration-compound-1",
+							},
+						],
+					},
+					undefined,
+					restartedConnectionIdentity,
+				),
 			);
 			const restoredElements = requireRecords(
 				requireRecord(brokenApart.snapshot).elements,
@@ -450,6 +517,8 @@ integrationTest(
 				await bridge.request(
 					"export_project",
 					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: restartedConnectionIdentity,
 						projectId,
 						operationId: "timeline-integration-square-export",
 						expectedRevision: requireNumber(brokenApart.revision, "revision"),
@@ -462,6 +531,7 @@ integrationTest(
 						url: variantTicket.url,
 					},
 					5 * 60_000,
+					restartedConnectionIdentity,
 				),
 			);
 			if (variantExport.status !== "exported") {
@@ -474,6 +544,9 @@ integrationTest(
 					`variant export failed: ${JSON.stringify(variantExport)}\n${diagnostics}`,
 				);
 			}
+			expect(variantExport.connectionIdentity).toEqual(
+				restartedBridgeStatus.connectionIdentity,
+			);
 			expect((await stat(variantPath)).size).toBeGreaterThan(0);
 			const variantValidation = await new ExportValidator(
 				new ExportReceiptStore(join(directory, "variant-receipts")),

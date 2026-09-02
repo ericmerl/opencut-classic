@@ -76,6 +76,9 @@ describe("SubjectTrackingService", () => {
 
 		expect(first).toMatchObject({
 			status: "tracked-and-reframed",
+			projectId: "project-1",
+			sceneId: "scene-1",
+			bridgeProtocolVersion: 2,
 			keyframeCount: 6,
 			sampleCount: 3,
 			tracker: { modelId: "fixture", modelVersion: "1" },
@@ -99,6 +102,60 @@ describe("SubjectTrackingService", () => {
 				.filter((operation) => operation.propertyPath === "reframe.focalX")
 				.map((operation) => operation.time),
 		).toEqual([0, 120_000, 240_000]);
+	});
+
+	test("preserves provider provenance and affinity on a no-sample rejection", async () => {
+		let sourcePath = "";
+		const bridge: SubjectTrackingBridge = {
+			sourceTickets: {
+				async create(path) {
+					sourcePath = path;
+					return { url: "http://127.0.0.1/source/fixture", outputPath: path };
+				},
+			},
+			async request(method) {
+				if (method === "read_project") return snapshot();
+				if (method === "transfer_source_media") {
+					await writeFile(sourcePath, new Uint8Array([4, 5, 6]));
+					return {
+						status: "transferred",
+						mediaId: "media-1",
+						name: "source.mp4",
+						mimeType: "video/mp4",
+						bytesTransferred: 3,
+						sourceFingerprint: "source-fingerprint",
+					};
+				}
+				throw new Error(`unexpected method: ${method}`);
+			},
+		};
+		const service = new SubjectTrackingService(bridge, () => ({
+			async track() {
+				return {
+					samples: [],
+					modelId: "fixture-tracker",
+					modelVersion: "2",
+					warnings: ["no confident samples"],
+				};
+			},
+		}));
+
+		const result = await service.track(input());
+
+		expect(result).toMatchObject({
+			status: "rejected",
+			projectId: "project-1",
+			sceneId: "scene-1",
+			bridgeProtocolVersion: 2,
+			connectionIdentity: connectionIdentity,
+			requestConnectionIdentity: connectionIdentity,
+			source: { mediaId: "media-1", bytesTransferred: 3 },
+			tracker: {
+				modelId: "fixture-tracker",
+				modelVersion: "2",
+				warnings: ["no confident samples"],
+			},
+		});
 	});
 
 	test("builds padded crop channels and filters low-confidence samples", () => {
@@ -179,7 +236,11 @@ function input(): TrackSubjectInput {
 function snapshot(): Record<string, unknown> {
 	return {
 		projectId: "project-1",
+		sceneId: "scene-1",
 		revision: 2,
+		bridgeProtocolVersion: 2,
+		connectionIdentity,
+		requestConnectionIdentity: connectionIdentity,
 		elements: [
 			{
 				trackId: "main",
@@ -204,3 +265,10 @@ function snapshot(): Record<string, unknown> {
 		],
 	};
 }
+
+const connectionIdentity = {
+	serverInstanceId: "server-1",
+	editorInstanceId: "editor-1",
+	editorSessionId: "session-1",
+	connectionGeneration: 1,
+};

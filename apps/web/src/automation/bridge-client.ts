@@ -18,7 +18,13 @@ import type {
 import type { AutomationTimelineQueryRequest } from "./timeline-query";
 
 type BridgeRequest =
-	| { kind: "request"; id: string; method: "read_project"; params: object }
+	| {
+			kind: "request";
+			id: string;
+			method: "read_project";
+			params: object;
+			target?: AutomationConnectionIdentity;
+	  }
 	| {
 			kind: "request";
 			id: string;
@@ -117,19 +123,50 @@ type BridgeRequest =
 			method: "apply_edit_plan";
 			params: AutomationEditPlan;
 	  }
-	| {
+	| ({
 			kind: "request";
 			id: string;
 			method: "undo";
 			params: { projectId: string; expectedRevision: number };
+	  } & { target?: AutomationConnectionIdentity });
+
+type BridgeRequestWithTarget = BridgeRequest & {
+	target?: AutomationConnectionIdentity;
+};
+
+type BridgeServerMessage =
+	| BridgeRequestWithTarget
+	| {
+			kind: "authenticated";
+			protocolVersion?: number;
+			identity?: AutomationConnectionIdentity;
 	  };
 
-type BridgeServerMessage = BridgeRequest | { kind: "authenticated" };
+export interface AutomationConnectionIdentity {
+	serverInstanceId: string;
+	editorInstanceId: string;
+	editorSessionId: string;
+	connectionGeneration: number;
+}
+
+export const AUTOMATION_BRIDGE_PROTOCOL_VERSION = 2;
+export const AUTOMATION_EDITOR_INSTANCE_STORAGE_KEY =
+	"opencut.automation.editor-instance-id";
+
+interface IdentityStorage {
+	getItem(key: string): string | null;
+	setItem(key: string, value: string): void;
+}
 
 export class AutomationBridgeClient {
 	private socket: WebSocket | null = null;
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private stopped = true;
+	private connectionIdentity: AutomationConnectionIdentity | null = null;
+	private negotiatedProtocolVersion: 1 | 2 | null = null;
+	private editorInstanceId: string;
+	private readonly editorSessionId: string;
+	private readonly identityReady: Promise<void>;
 
 	constructor(
 		private automation: EditorAutomation,
@@ -137,21 +174,54 @@ export class AutomationBridgeClient {
 			url: string;
 			token: string;
 			onActiveProjectChange?: (projectId: string) => void;
+			identityStorage?: IdentityStorage;
+			createId?: () => string;
 		},
-	) {}
+	) {
+		const createId = options.createId ?? (() => crypto.randomUUID());
+		const usesBrowserStorage = options.identityStorage === undefined;
+		this.editorInstanceId = getOrCreateEditorInstanceId(
+			options.identityStorage ?? window.localStorage,
+			createId,
+		);
+		this.editorSessionId = createId();
+		this.identityReady = usesBrowserStorage
+			? reconcileIndexedDbIdentity(this.editorInstanceId)
+					.catch(() => this.editorInstanceId)
+					.then((identity) => {
+						this.editorInstanceId = identity;
+						window.localStorage.setItem(
+							AUTOMATION_EDITOR_INSTANCE_STORAGE_KEY,
+							identity,
+						);
+					})
+			: Promise.resolve();
+	}
 
 	start(): void {
 		if (!this.stopped) return;
 		this.stopped = false;
-		this.connect();
+		void this.connectAfterIdentity();
 	}
 
 	stop(): void {
 		this.stopped = true;
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 		this.reconnectTimer = null;
+		this.connectionIdentity = null;
+		this.negotiatedProtocolVersion = null;
 		this.socket?.close(1000, "editor unmounted");
 		this.socket = null;
+	}
+
+	getStatus(): {
+		protocolVersion: 1 | 2 | null;
+		connectionIdentity: AutomationConnectionIdentity | null;
+	} {
+		return {
+			protocolVersion: this.negotiatedProtocolVersion,
+			connectionIdentity: this.connectionIdentity,
+		};
 	}
 
 	private connect(): void {
@@ -161,28 +231,43 @@ export class AutomationBridgeClient {
 
 		socket.addEventListener("open", () => {
 			socket.send(
-				JSON.stringify({ kind: "authenticate", token: this.options.token }),
+				JSON.stringify({
+					kind: "authenticate",
+					token: this.options.token,
+					protocolVersions: [AUTOMATION_BRIDGE_PROTOCOL_VERSION, 1],
+					editorInstanceId: this.editorInstanceId,
+					editorSessionId: this.editorSessionId,
+				}),
 			);
 		});
 		socket.addEventListener("message", (event) => {
 			void this.handleMessage(socket, event.data);
 		});
 		socket.addEventListener("close", () => {
-			if (this.socket === socket) this.socket = null;
+			if (this.socket === socket) {
+				this.socket = null;
+				this.connectionIdentity = null;
+			}
 			this.scheduleReconnect();
 		});
 		socket.addEventListener("error", () => socket.close());
+	}
+
+	private async connectAfterIdentity(): Promise<void> {
+		await this.identityReady;
+		this.connect();
 	}
 
 	private scheduleReconnect(): void {
 		if (this.stopped || this.reconnectTimer) return;
 		this.reconnectTimer = setTimeout(() => {
 			this.reconnectTimer = null;
-			this.connect();
+			void this.connectAfterIdentity();
 		}, 1500);
 	}
 
 	private async handleMessage(socket: WebSocket, raw: unknown): Promise<void> {
+		if (this.socket !== socket || this.stopped) return;
 		if (typeof raw !== "string") return;
 		let message: BridgeServerMessage;
 		try {
@@ -190,15 +275,28 @@ export class AutomationBridgeClient {
 		} catch {
 			return;
 		}
+		if (message.kind === "authenticated") {
+			try {
+				this.acceptAuthentication(message);
+			} catch {
+				socket.close(1002, "unsupported bridge protocol version");
+			}
+			return;
+		}
 		if (message.kind !== "request") return;
 
 		try {
+			this.validateRequestTarget(message.target);
 			const result = await this.dispatch(message);
+			if (this.socket !== socket || this.stopped) return;
 			this.sendResponse(socket, {
 				kind: "response",
 				id: message.id,
 				ok: true,
 				result,
+				...(this.connectionIdentity
+					? { identity: this.connectionIdentity }
+					: {}),
 			});
 			const activatedProjectId = getActivatedProjectId(result);
 			if (
@@ -215,8 +313,78 @@ export class AutomationBridgeClient {
 				kind: "response",
 				id: message.id,
 				ok: false,
-				error: error instanceof Error ? error.message : "unknown editor error",
+				error: asProtocolError(error),
+				...(this.connectionIdentity
+					? { identity: this.connectionIdentity }
+					: {}),
 			});
+		}
+	}
+
+	private acceptAuthentication(message: {
+		protocolVersion?: number;
+		identity?: AutomationConnectionIdentity;
+	}): void {
+		if (
+			message.protocolVersion === undefined &&
+			message.identity === undefined
+		) {
+			this.negotiatedProtocolVersion = 1;
+			this.connectionIdentity = null;
+			return;
+		}
+		if (message.protocolVersion === 1) {
+			this.negotiatedProtocolVersion = 1;
+			this.connectionIdentity = null;
+			return;
+		}
+		if (message.protocolVersion !== AUTOMATION_BRIDGE_PROTOCOL_VERSION) {
+			throw new AutomationBridgeProtocolError(
+				"PROTOCOL_MISMATCH",
+				`Server negotiated unsupported bridge protocol ${String(message.protocolVersion)}`,
+			);
+		}
+		if (
+			!isConnectionIdentity(message.identity) ||
+			message.identity.editorInstanceId !== this.editorInstanceId ||
+			message.identity.editorSessionId !== this.editorSessionId
+		) {
+			throw new AutomationBridgeProtocolError(
+				"STALE_CONNECTION",
+				"Server authenticated a different editor identity",
+			);
+		}
+		this.negotiatedProtocolVersion = AUTOMATION_BRIDGE_PROTOCOL_VERSION;
+		this.connectionIdentity = message.identity;
+	}
+
+	private validateRequestTarget(
+		target: AutomationConnectionIdentity | undefined,
+	): void {
+		if (this.negotiatedProtocolVersion === 1) {
+			if (target) {
+				throw new AutomationBridgeProtocolError(
+					"PROTOCOL_MISMATCH",
+					"Legacy bridge protocol requests cannot carry a v2 target",
+				);
+			}
+			return;
+		}
+		if (!this.connectionIdentity) {
+			throw new AutomationBridgeProtocolError(
+				"PROTOCOL_MISMATCH",
+				"Editor received a request before protocol authentication completed",
+			);
+		}
+		if (!target || !identitiesEqual(target, this.connectionIdentity)) {
+			throw new AutomationBridgeProtocolError(
+				"STALE_CONNECTION",
+				"Request target does not match this editor connection",
+				{
+					expectedIdentity: this.connectionIdentity,
+					actualIdentity: target ?? null,
+				},
+			);
 		}
 	}
 
@@ -266,9 +434,125 @@ export class AutomationBridgeClient {
 	}
 
 	private sendResponse(socket: WebSocket, response: object): void {
-		if (socket.readyState === WebSocket.OPEN)
+		if (this.socket === socket && socket.readyState === WebSocket.OPEN)
 			socket.send(JSON.stringify(response));
 	}
+}
+
+export class AutomationBridgeProtocolError extends Error {
+	constructor(
+		readonly code:
+			| "STALE_CONNECTION"
+			| "EDITOR_DISCONNECTED"
+			| "PROTOCOL_MISMATCH",
+		message: string,
+		readonly details?: Record<string, unknown>,
+	) {
+		super(message);
+		this.name = "AutomationBridgeProtocolError";
+	}
+}
+
+export function getOrCreateEditorInstanceId(
+	storage: IdentityStorage,
+	createId: () => string = () => crypto.randomUUID(),
+): string {
+	const existing = storage.getItem(AUTOMATION_EDITOR_INSTANCE_STORAGE_KEY);
+	if (existing?.trim()) return existing;
+	const created = createId();
+	if (!created.trim()) throw new Error("Generated editor instance ID is empty");
+	storage.setItem(AUTOMATION_EDITOR_INSTANCE_STORAGE_KEY, created);
+	if (storage.getItem(AUTOMATION_EDITOR_INSTANCE_STORAGE_KEY) !== created) {
+		throw new Error("Editor instance identity could not be persisted");
+	}
+	return created;
+}
+
+async function reconcileIndexedDbIdentity(
+	localIdentity: string,
+): Promise<string> {
+	if (typeof indexedDB === "undefined") return localIdentity;
+	return new Promise((resolve, reject) => {
+		const open = indexedDB.open("opencut-automation", 1);
+		open.onerror = () =>
+			reject(open.error ?? new Error("identity database failed"));
+		open.onupgradeneeded = () => {
+			if (!open.result.objectStoreNames.contains("identity")) {
+				open.result.createObjectStore("identity");
+			}
+		};
+		open.onsuccess = () => {
+			const database = open.result;
+			const transaction = database.transaction("identity", "readwrite");
+			const store = transaction.objectStore("identity");
+			const read = store.get("editor-instance-id");
+			let resolvedIdentity = localIdentity;
+			read.onerror = () =>
+				reject(read.error ?? new Error("identity read failed"));
+			read.onsuccess = () => {
+				if (typeof read.result === "string" && read.result.trim()) {
+					resolvedIdentity = read.result;
+				} else {
+					store.put(localIdentity, "editor-instance-id");
+				}
+			};
+			transaction.oncomplete = () => {
+				database.close();
+				resolve(resolvedIdentity);
+			};
+			transaction.onerror = () => {
+				database.close();
+				reject(transaction.error ?? new Error("identity write failed"));
+			};
+		};
+	});
+}
+
+function isConnectionIdentity(
+	value: unknown,
+): value is AutomationConnectionIdentity {
+	if (!value || typeof value !== "object") return false;
+	const record = value as Record<string, unknown>;
+	return (
+		typeof record.serverInstanceId === "string" &&
+		!!record.serverInstanceId &&
+		typeof record.editorInstanceId === "string" &&
+		!!record.editorInstanceId &&
+		typeof record.editorSessionId === "string" &&
+		!!record.editorSessionId &&
+		typeof record.connectionGeneration === "number" &&
+		Number.isSafeInteger(record.connectionGeneration) &&
+		record.connectionGeneration > 0
+	);
+}
+
+function identitiesEqual(
+	left: AutomationConnectionIdentity,
+	right: AutomationConnectionIdentity,
+): boolean {
+	return (
+		left.serverInstanceId === right.serverInstanceId &&
+		left.editorInstanceId === right.editorInstanceId &&
+		left.editorSessionId === right.editorSessionId &&
+		left.connectionGeneration === right.connectionGeneration
+	);
+}
+
+function asProtocolError(error: unknown):
+	| string
+	| {
+			code: string;
+			message: string;
+			details?: Record<string, unknown>;
+	  } {
+	if (error instanceof AutomationBridgeProtocolError) {
+		return {
+			code: error.code,
+			message: error.message,
+			...(error.details ? { details: error.details } : {}),
+		};
+	}
+	return error instanceof Error ? error.message : "unknown editor error";
 }
 
 function getActivatedProjectId(value: unknown): string | null {

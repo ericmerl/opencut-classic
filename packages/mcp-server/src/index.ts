@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
-import { EditorBridge } from "./editor-bridge";
+import { EditorBridge, type BridgeConnectionIdentity } from "./editor-bridge";
 import { AudioCleanupService } from "./clean-audio";
 import { ExportBatchQueue } from "./export-batches";
 import { ExportJobQueue } from "./export-jobs";
@@ -40,6 +40,7 @@ import {
 	timelineQueryInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
+	withConnectionAffinity,
 } from "./tool-schemas";
 
 const token =
@@ -136,8 +137,9 @@ function createServer(): McpServer {
 		{
 			description:
 				"List saved OpenCut projects in descending update order and identify the active project.",
+			inputSchema: withConnectionAffinity(z.object({})),
 		},
-		async () => toolResult(await bridge.request("list_projects", {})),
+		async (params) => toolResult(await bridge.request("list_projects", params)),
 	);
 
 	server.registerTool(
@@ -145,7 +147,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Create and activate a new OpenCut project, then navigate the connected editor to it.",
-			inputSchema: createProjectInputSchema,
+			inputSchema: withConnectionAffinity(createProjectInputSchema),
 		},
 		async (params) =>
 			toolResult(
@@ -158,7 +160,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Open an existing OpenCut project and navigate the connected editor to it.",
-			inputSchema: openProjectInputSchema,
+			inputSchema: withConnectionAffinity(openProjectInputSchema),
 		},
 		async (params) =>
 			toolResult(
@@ -171,8 +173,9 @@ function createServer(): McpServer {
 		{
 			description:
 				"Read the active project, canvas settings, scene, revision, track roles, media assets, and parameterized timeline elements in canonical media ticks.",
+			inputSchema: withConnectionAffinity(z.object({})),
 		},
-		async () => toolResult(await bridge.request("read_project", {})),
+		async (params) => toolResult(await bridge.request("read_project", params)),
 	);
 
 	server.registerTool(
@@ -180,7 +183,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Query a revision-stable time range of the active timeline and return compact ordered elements, uncovered gaps, pairwise overlaps, and cut, gap, or overlap relationships per track.",
-			inputSchema: timelineQueryInputSchema,
+			inputSchema: withConnectionAffinity(timelineQueryInputSchema),
 		},
 		async (params) =>
 			toolResult(await bridge.request("query_timeline", params)),
@@ -191,8 +194,9 @@ function createServer(): McpServer {
 		{
 			description:
 				"List effects registered by the connected OpenCut editor for clip-effect stacks and adjustment layers, including validated parameter types, ranges, defaults, named presets, and keyframe support.",
+			inputSchema: withConnectionAffinity(z.object({})),
 		},
-		async () => toolResult(await bridge.request("list_effects", {})),
+		async (params) => toolResult(await bridge.request("list_effects", params)),
 	);
 
 	server.registerTool(
@@ -200,8 +204,10 @@ function createServer(): McpServer {
 		{
 			description:
 				"List native graphic definitions, authored mask types, their validated parameter schemas, and sticker categories available in the connected editor.",
+			inputSchema: withConnectionAffinity(z.object({})),
 		},
-		async () => toolResult(await bridge.request("list_visual_assets", {})),
+		async (params) =>
+			toolResult(await bridge.request("list_visual_assets", params)),
 	);
 
 	server.registerTool(
@@ -209,7 +215,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Search native sticker providers and return stable sticker IDs, provider names, previews, and metadata for insertion through an edit plan.",
-			inputSchema: searchStickersInputSchema,
+			inputSchema: withConnectionAffinity(searchStickersInputSchema),
 		},
 		async (params) =>
 			toolResult(await bridge.request("search_stickers", params)),
@@ -220,10 +226,12 @@ function createServer(): McpServer {
 		{
 			description:
 				"Measure the active timeline mix before export mastering, including integrated LUFS, sample peak, estimated true peak, and the uniform gain range available without clipping OpenCut volume controls.",
-			inputSchema: z.object({
-				projectId: z.string().min(1),
-				expectedRevision: z.number().int().nonnegative(),
-			}),
+			inputSchema: withConnectionAffinity(
+				z.object({
+					projectId: z.string().min(1),
+					expectedRevision: z.number().int().nonnegative(),
+				}),
+			),
 		},
 		async (params) =>
 			toolResult(await bridge.request("analyze_audio", params, 5 * 60_000)),
@@ -234,14 +242,16 @@ function createServer(): McpServer {
 		{
 			description:
 				"Measure and normalize the active timeline mix to a target integrated loudness while respecting a true-peak ceiling and preserving relative clip levels and volume automation.",
-			inputSchema: z.object({
-				projectId: z.string().min(1),
-				operationId: z.string().min(1),
-				expectedRevision: z.number().int().nonnegative(),
-				targetLufs: z.number().min(-36).max(-5).default(-14),
-				maxTruePeakDbtp: z.number().min(-9).max(0).default(-1),
-				maxGainDb: z.number().min(0).max(20).default(20),
-			}),
+			inputSchema: withConnectionAffinity(
+				z.object({
+					projectId: z.string().min(1),
+					operationId: z.string().min(1),
+					expectedRevision: z.number().int().nonnegative(),
+					targetLufs: z.number().min(-36).max(-5).default(-14),
+					maxTruePeakDbtp: z.number().min(-9).max(0).default(-1),
+					maxGainDb: z.number().min(0).max(20).default(20),
+				}),
+			),
 		},
 		async (input) => toolResult(await normalizeAudio(input)),
 	);
@@ -251,7 +261,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Synchronize a target video or audio clip to a reference clip by decoding both sources locally, estimating waveform lag with bounded normalized cross-correlation, and moving the target on the current track.",
-			inputSchema: syncAudioInputSchema,
+			inputSchema: withConnectionAffinity(syncAudioInputSchema),
 		},
 		async (input) =>
 			toolResult(await bridge.request("sync_audio", input, 10 * 60_000)),
@@ -262,7 +272,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Attach a precomputed cleaned-audio file to an uploaded audio or video clip while preserving the clip's timing, trim, retime, fades, ducking, mute, and volume automation. Use apply_edit_plan to enable, disable, or detach it.",
-			inputSchema: attachCleanAudioInputSchema,
+			inputSchema: withConnectionAffinity(attachCleanAudioInputSchema),
 		},
 		async ({ path, ...params }) => {
 			const ticket = await bridge.mediaTickets.create(path);
@@ -284,7 +294,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Clean the complete uploaded source audio through the configured external provider and attach the result non-destructively to the selected audio or video clip. Existing trim, retime, fades, ducking, mute, and volume automation remain on the clip.",
-			inputSchema: cleanAudioInputSchema,
+			inputSchema: withConnectionAffinity(cleanAudioInputSchema),
 		},
 		async (input) => toolResult(await audioCleanup.clean(input)),
 	);
@@ -294,7 +304,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Atomically update project settings; create or configure tracks; insert native graphics, stickers, adjustment layers, text, or timed captions; author or remove visual masks; create, break apart, or inspect persistent compound clips; create or clear persistent element groups and links; crop or reframe clips; separate and automatically link video source audio; enable or detach a cleaned source; apply dialogue ducking; set audio gain, mute, fades, or uniform mix gain; manage clip effects, keyframes, and transitions; duplicate, delete, or move relationship sets; or retime, parameterize, split, and trim elements with optional ripple behavior. Read the project first and use its current revision.",
-			inputSchema: editPlanInputSchema,
+			inputSchema: withConnectionAffinity(editPlanInputSchema),
 		},
 		async (plan) => toolResult(await bridge.request("apply_edit_plan", plan)),
 	);
@@ -304,10 +314,12 @@ function createServer(): McpServer {
 		{
 			description:
 				"Undo one OpenCut command after checking the current revision.",
-			inputSchema: z.object({
-				projectId: z.string().min(1),
-				expectedRevision: z.number().int().nonnegative(),
-			}),
+			inputSchema: withConnectionAffinity(
+				z.object({
+					projectId: z.string().min(1),
+					expectedRevision: z.number().int().nonnegative(),
+				}),
+			),
 		},
 		async (params) => toolResult(await bridge.request("undo", params)),
 	);
@@ -317,7 +329,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Import an image, audio file, or video from an absolute local path and place it automatically or on an explicit compatible track without a browser file picker. Project canvas and frame rate are preserved unless adoptMediaSettings is true.",
-			inputSchema: importMediaInputSchema,
+			inputSchema: withConnectionAffinity(importMediaInputSchema),
 		},
 		async ({ path, ...params }) => {
 			const ticket = await bridge.mediaTickets.create(path);
@@ -338,7 +350,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Import SRT, ASS, or WebVTT captions from an absolute local UTF-8 file onto a new text track without a browser file picker. Parsed ASS styling is preserved where OpenCut supports it, and an optional shared style can override imported styling.",
-			inputSchema: importSubtitlesInputSchema,
+			inputSchema: withConnectionAffinity(importSubtitlesInputSchema),
 		},
 		async ({ path, ...params }) => {
 			const source = await subtitleFiles.read(path);
@@ -366,7 +378,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Render the active timeline audio mix, transcribe it with OpenCut's local Whisper worker, chunk the result into captions, and atomically insert a new text track. The first model use may download model files and can take several minutes.",
-			inputSchema: transcribeTimelineInputSchema,
+			inputSchema: withConnectionAffinity(transcribeTimelineInputSchema),
 		},
 		async (input) =>
 			toolResult(
@@ -379,7 +391,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Export caption text elements from all text tracks, or selected text tracks, to a new absolute local SRT or WebVTT file with a SHA-256 receipt.",
-			inputSchema: exportSubtitlesInputSchema,
+			inputSchema: withConnectionAffinity(exportSubtitlesInputSchema),
 		},
 		async (input) => {
 			const fingerprint = JSON.stringify(input);
@@ -404,10 +416,15 @@ function createServer(): McpServer {
 			const completed = {
 				status: "exported",
 				operationId,
+				projectId: result.projectId,
+				sceneId: result.sceneId,
 				revision: result.revision,
 				format: result.format,
 				trackIds: result.trackIds,
 				cueCount: result.cueCount,
+				bridgeProtocolVersion: result.bridgeProtocolVersion,
+				connectionIdentity: result.connectionIdentity,
+				requestConnectionIdentity: result.requestConnectionIdentity,
 				...receipt,
 			};
 			completedSubtitleExports.set(operationId, {
@@ -423,7 +440,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Attach a precomputed image or video foreground matte to a video clip. The artifact must match the source aspect ratio; video mattes must cover the full source duration. Use apply_edit_plan to enable, disable, or detach it.",
-			inputSchema: attachMatteInputSchema,
+			inputSchema: withConnectionAffinity(attachMatteInputSchema),
 		},
 		async ({ path, ...params }) => {
 			const ticket = await bridge.mediaTickets.create(path);
@@ -445,7 +462,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Generate and attach a foreground matte for one video clip through the configured external provider. The source stays local, model provenance is persisted, and the current project revision is required.",
-			inputSchema: generateMatteInputSchema,
+			inputSchema: withConnectionAffinity(generateMatteInputSchema),
 		},
 		async (input) => toolResult(await matteGeneration.generate(input)),
 	);
@@ -455,7 +472,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Track a subject through a video clip with the configured local provider, map source samples through trim and retime, smooth the motion, and atomically create focal-point or crop reframe keyframes.",
-			inputSchema: trackSubjectInputSchema,
+			inputSchema: withConnectionAffinity(trackSubjectInputSchema),
 		},
 		async (input) => toolResult(await subjectTracking.track(input)),
 	);
@@ -465,7 +482,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Render the active project to a new absolute local file, fully decode and probe it, extract hash-locked opening, middle, and ending frame samples, and persist a durable receipt for watermark inspection.",
-			inputSchema: exportProjectInputSchema,
+			inputSchema: withConnectionAffinity(exportProjectInputSchema),
 		},
 		async (input) => toolResult(await projectExports.export(input)),
 	);
@@ -475,7 +492,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Persist an export job and run it automatically when an authenticated editor worker is connected. The job survives MCP restarts.",
-			inputSchema: queueExportInputSchema,
+			inputSchema: withConnectionAffinity(queueExportInputSchema),
 		},
 		async ({ jobId, ...input }) =>
 			toolResult(await exportJobs.enqueue({ jobId, input })),
@@ -486,7 +503,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Persist and enqueue a restart-safe matrix of platform-specific export variants. Each variant gets an independent durable job, validation receipt, canvas override, and output path.",
-			inputSchema: queueExportBatchInputSchema,
+			inputSchema: withConnectionAffinity(queueExportBatchInputSchema),
 		},
 		async (input) => toolResult(await exportBatches.enqueue(input)),
 	);
@@ -639,8 +656,28 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 function toolResult(value: unknown) {
+	const status = bridge.getStatus();
+	const record =
+		value && typeof value === "object" && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: { value };
+	const resultIdentity = readConnectionIdentity(record.connectionIdentity);
+	const enriched = {
+		...record,
+		serverInstanceId:
+			resultIdentity?.serverInstanceId ?? status.serverInstanceId,
+		bridgeProtocolVersion:
+			typeof record.bridgeProtocolVersion === "number"
+				? record.bridgeProtocolVersion
+				: typeof record.negotiatedProtocolVersion === "number"
+					? record.negotiatedProtocolVersion
+					: null,
+		connectionIdentity: resultIdentity,
+	};
 	return {
-		content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+		content: [
+			{ type: "text" as const, text: JSON.stringify(enriched, null, 2) },
+		],
 	};
 }
 
@@ -673,6 +710,8 @@ async function runProjectOperation({
 }
 
 async function normalizeAudio(input: {
+	bridgeProtocolVersion?: 1 | 2;
+	expectedConnectionIdentity?: BridgeConnectionIdentity;
 	projectId: string;
 	operationId: string;
 	expectedRevision: number;
@@ -680,6 +719,7 @@ async function normalizeAudio(input: {
 	maxTruePeakDbtp: number;
 	maxGainDb: number;
 }): Promise<unknown> {
+	const expectedIdentity = expectedV2Identity(input);
 	const fingerprint = JSON.stringify(input);
 	const prior = completedNormalizations.get(input.operationId);
 	if (prior) {
@@ -697,12 +737,19 @@ async function normalizeAudio(input: {
 			expectedRevision: input.expectedRevision,
 		},
 		5 * 60_000,
+		expectedIdentity,
 	);
 	if (!isAnalyzedAudio(beforeResult)) return beforeResult;
 	const before = beforeResult.analysis;
 	if (before.integratedLufs === null || before.estimatedTruePeakDbtp === null) {
 		return {
 			status: "rejected",
+			projectId: input.projectId,
+			sceneId:
+				typeof beforeResult.sceneId === "string" ? beforeResult.sceneId : null,
+			bridgeProtocolVersion: beforeResult.bridgeProtocolVersion ?? null,
+			connectionIdentity: beforeResult.connectionIdentity ?? null,
+			requestConnectionIdentity: expectedIdentity ?? null,
 			reason: "audible timeline mix is silent or below the loudness gate",
 			analysis: before,
 		};
@@ -726,17 +773,28 @@ async function normalizeAudio(input: {
 			operations: [{ kind: "adjust_mix_gain", gainDb: appliedGainDb }],
 		},
 		5 * 60_000,
+		expectedIdentity,
 	);
 	if (!isAppliedMutation(mutation)) return mutation;
 	const afterResult = await bridge.request(
 		"analyze_audio",
 		{ projectId: input.projectId, expectedRevision: mutation.revision },
 		5 * 60_000,
+		expectedIdentity,
 	);
+	const snapshot = isRecord(mutation.snapshot) ? mutation.snapshot : null;
 	const result = {
 		status: "normalized",
 		operationId: input.operationId,
+		projectId: input.projectId,
+		sceneId:
+			snapshot && typeof snapshot.sceneId === "string"
+				? snapshot.sceneId
+				: null,
 		revision: mutation.revision,
+		bridgeProtocolVersion: mutation.bridgeProtocolVersion ?? null,
+		connectionIdentity: mutation.connectionIdentity ?? null,
+		requestConnectionIdentity: expectedIdentity ?? null,
 		targetLufs: input.targetLufs,
 		maxTruePeakDbtp: input.maxTruePeakDbtp,
 		appliedGainDb,
@@ -761,22 +819,56 @@ function parsePort(value: string): number {
 
 function isSerializedSubtitles(value: unknown): value is {
 	status: "serialized";
+	projectId: string;
+	sceneId: string;
 	revision: number;
 	format: "srt" | "vtt";
 	trackIds: string[];
 	cueCount: number;
 	content: string;
+	bridgeProtocolVersion?: 1 | 2;
+	connectionIdentity?: BridgeConnectionIdentity;
+	requestConnectionIdentity?: BridgeConnectionIdentity;
 } {
 	if (!value || typeof value !== "object") return false;
 	const record = value as Record<string, unknown>;
 	return (
 		record.status === "serialized" &&
+		typeof record.projectId === "string" &&
+		typeof record.sceneId === "string" &&
 		typeof record.revision === "number" &&
 		(record.format === "srt" || record.format === "vtt") &&
 		Array.isArray(record.trackIds) &&
 		typeof record.cueCount === "number" &&
 		typeof record.content === "string"
 	);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readConnectionIdentity(
+	value: unknown,
+): BridgeConnectionIdentity | null {
+	if (!isRecord(value)) return null;
+	return typeof value.serverInstanceId === "string" &&
+		typeof value.editorInstanceId === "string" &&
+		typeof value.editorSessionId === "string" &&
+		typeof value.connectionGeneration === "number"
+		? (value as unknown as BridgeConnectionIdentity)
+		: null;
+}
+
+function expectedV2Identity(input: {
+	bridgeProtocolVersion?: 1 | 2;
+	expectedConnectionIdentity?: BridgeConnectionIdentity;
+}): BridgeConnectionIdentity | undefined {
+	if (input.bridgeProtocolVersion !== 2) return undefined;
+	if (!input.expectedConnectionIdentity) {
+		throw new Error("bridge protocol v2 requires expectedConnectionIdentity");
+	}
+	return input.expectedConnectionIdentity;
 }
 
 function isActivatedProject(

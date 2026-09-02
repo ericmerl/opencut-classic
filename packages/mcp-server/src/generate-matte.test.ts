@@ -73,6 +73,10 @@ describe("MatteGenerationService", () => {
 
 		expect(first).toMatchObject({
 			status: "generated-and-attached",
+			projectId: "project-1",
+			sceneId: "scene-1",
+			bridgeProtocolVersion: 2,
+			connectionIdentity,
 			producer: { modelId: "fixture", modelVersion: "1" },
 			source: { mediaId: "media-1", bytesTransferred: 3 },
 		});
@@ -101,7 +105,11 @@ function input(): GenerateMatteInput {
 function snapshot(): Record<string, unknown> {
 	return {
 		projectId: "project-1",
+		sceneId: "scene-1",
 		revision: 2,
+		bridgeProtocolVersion: 2,
+		connectionIdentity,
+		requestConnectionIdentity: connectionIdentity,
 		elements: [
 			{
 				trackId: "main",
@@ -122,3 +130,10 @@ function snapshot(): Record<string, unknown> {
 		],
 	};
 }
+
+const connectionIdentity = {
+	serverInstanceId: "server-1",
+	editorInstanceId: "editor-1",
+	editorSessionId: "session-1",
+	connectionGeneration: 1,
+};

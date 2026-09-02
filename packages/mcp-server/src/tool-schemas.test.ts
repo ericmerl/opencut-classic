@@ -26,7 +26,50 @@ import {
 	syncAudioInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
+	withConnectionAffinity,
 } from "./tool-schemas";
+
+const connectionIdentity = {
+	serverInstanceId: "server-1",
+	editorInstanceId: "editor-1",
+	editorSessionId: "session-1",
+	connectionGeneration: 1,
+};
+
+describe("OpenCut bridge affinity contract", () => {
+	const schema = withConnectionAffinity(timelineQueryInputSchema);
+	const request = {
+		projectId: "project-1",
+		expectedRevision: 1,
+	};
+
+	test("requires exact affinity for v2 project calls", () => {
+		expect(
+			schema.safeParse({ ...request, bridgeProtocolVersion: 2 }).success,
+		).toBe(false);
+		expect(
+			schema.safeParse({
+				...request,
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: connectionIdentity,
+			}).success,
+		).toBe(true);
+	});
+
+	test("preserves explicit degraded v1 and old-client defaults", () => {
+		expect(schema.parse(request)).toEqual(request);
+		expect(
+			schema.safeParse({ ...request, bridgeProtocolVersion: 1 }).success,
+		).toBe(true);
+		expect(
+			schema.safeParse({
+				...request,
+				bridgeProtocolVersion: 1,
+				expectedConnectionIdentity: connectionIdentity,
+			}).success,
+		).toBe(false);
+	});
+});
 
 describe("OpenCut visual asset MCP contract", () => {
 	test("accepts graphic, sticker, adjustment-layer, and authored-mask edits", () => {

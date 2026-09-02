@@ -7,15 +7,47 @@ import { SourceTickets } from "./source-tickets";
 interface SocketData {
 	authenticated: boolean;
 	authTimer: ReturnType<typeof setTimeout> | null;
+	protocolVersion: number | null;
+	identity: BridgeConnectionIdentity | null;
+	observedProjectRevisions: Map<string, number>;
 }
 
 interface PendingRequest {
 	resolve: (value: unknown) => void;
 	reject: (error: Error) => void;
 	timer: ReturnType<typeof setTimeout>;
+	socket: EditorSocket;
+	identity: BridgeConnectionIdentity;
+	requestIdentity: BridgeConnectionIdentity | null;
+	protocolVersion: 1 | 2;
+	method: string;
 }
 
 type EditorSocket = Bun.ServerWebSocket<SocketData>;
+
+export const CURRENT_BRIDGE_PROTOCOL_VERSION = 2;
+export const SUPPORTED_BRIDGE_PROTOCOL_VERSIONS = [2, 1] as const;
+
+export interface BridgeConnectionIdentity {
+	serverInstanceId: string;
+	editorInstanceId: string;
+	editorSessionId: string;
+	connectionGeneration: number;
+}
+
+export class BridgeProtocolError extends Error {
+	constructor(
+		readonly code:
+			| "STALE_CONNECTION"
+			| "EDITOR_DISCONNECTED"
+			| "PROTOCOL_MISMATCH",
+		message: string,
+		readonly details?: Record<string, unknown>,
+	) {
+		super(message);
+		this.name = "BridgeProtocolError";
+	}
+}
 
 export class EditorBridge {
 	private activeSocket: EditorSocket | null = null;
@@ -23,13 +55,21 @@ export class EditorBridge {
 	private pending = new Map<string, PendingRequest>();
 	private server: Bun.Server<SocketData>;
 	private bootstrapTickets = new BootstrapTickets();
+	private connectionGeneration = 0;
+	private readonly serverInstanceId: string;
 	readonly exportTickets: ExportTickets;
 	readonly mediaTickets: MediaTickets;
 	readonly sourceTickets: SourceTickets;
 
 	constructor(
-		private options: { token: string; port: number; requestTimeoutMs?: number },
+		private options: {
+			token: string;
+			port: number;
+			requestTimeoutMs?: number;
+			serverInstanceId?: string;
+		},
 	) {
+		this.serverInstanceId = options.serverInstanceId ?? randomUUID();
 		this.exportTickets = new ExportTickets(options.port);
 		this.mediaTickets = new MediaTickets(options.port);
 		this.sourceTickets = new SourceTickets(options.port);
@@ -45,11 +85,24 @@ export class EditorBridge {
 		});
 	}
 
-	getStatus(): { connected: boolean; host: "127.0.0.1"; port: number } {
+	getStatus(): {
+		connected: boolean;
+		host: "127.0.0.1";
+		port: number;
+		serverInstanceId: string;
+		supportedProtocolVersions: readonly number[];
+		negotiatedProtocolVersion: number | null;
+		connectionIdentity: BridgeConnectionIdentity | null;
+	} {
 		return {
 			connected: this.activeSocket !== null,
 			host: "127.0.0.1",
 			port: this.options.port,
+			serverInstanceId: this.serverInstanceId,
+			supportedProtocolVersions: SUPPORTED_BRIDGE_PROTOCOL_VERSIONS,
+			negotiatedProtocolVersion:
+				this.activeSocket?.data.protocolVersion ?? null,
+			connectionIdentity: this.activeSocket?.data.identity ?? null,
 		};
 	}
 
@@ -84,22 +137,121 @@ export class EditorBridge {
 		});
 	}
 
+	waitForDisconnection(timeoutMs = 5_000): Promise<void> {
+		if (!this.activeSocket) return Promise.resolve();
+		return new Promise((resolve, reject) => {
+			let unsubscribe: () => void = () => undefined;
+			const timer = setTimeout(() => {
+				unsubscribe();
+				reject(
+					new Error("Timed out waiting for the OpenCut editor to disconnect"),
+				);
+			}, timeoutMs);
+			unsubscribe = this.onConnectionChange((connected) => {
+				if (connected) return;
+				clearTimeout(timer);
+				unsubscribe();
+				resolve();
+			});
+			if (!this.activeSocket) {
+				clearTimeout(timer);
+				unsubscribe();
+				resolve();
+			}
+		});
+	}
+
 	request(
 		method: string,
 		params: unknown,
 		timeoutMs = this.options.requestTimeoutMs ?? 30_000,
+		expectedIdentity?: BridgeConnectionIdentity,
 	): Promise<unknown> {
 		const socket = this.activeSocket;
 		if (!socket)
-			throw new Error("No authenticated OpenCut editor is connected");
+			throw new BridgeProtocolError(
+				"EDITOR_DISCONNECTED",
+				"No authenticated OpenCut editor is connected",
+			);
+		const identity = socket.data.identity;
+		const protocolVersion = socket.data.protocolVersion;
+		if (!identity) {
+			throw new BridgeProtocolError(
+				"PROTOCOL_MISMATCH",
+				"Authenticated editor connection has no identity",
+			);
+		}
+		if (protocolVersion !== 1 && protocolVersion !== 2) {
+			throw new BridgeProtocolError(
+				"PROTOCOL_MISMATCH",
+				"Authenticated editor connection has no negotiated protocol",
+			);
+		}
+		const declaredProtocolVersion = readDeclaredProtocolVersion(params);
+		if (
+			declaredProtocolVersion !== null &&
+			declaredProtocolVersion !== protocolVersion
+		) {
+			throw new BridgeProtocolError(
+				"PROTOCOL_MISMATCH",
+				`Request declares bridge protocol v${declaredProtocolVersion}, but the editor negotiated v${protocolVersion}`,
+				{ declaredProtocolVersion, negotiatedProtocolVersion: protocolVersion },
+			);
+		}
+		if (declaredProtocolVersion === 1 && expectedIdentity) {
+			throw new BridgeProtocolError(
+				"PROTOCOL_MISMATCH",
+				"Bridge protocol v1 requests cannot declare v2 connection affinity",
+			);
+		}
+		const declaredIdentity = readDeclaredConnectionIdentity(params);
+		if (
+			expectedIdentity &&
+			declaredIdentity &&
+			!identitiesEqual(expectedIdentity, declaredIdentity)
+		) {
+			throw new BridgeProtocolError(
+				"STALE_CONNECTION",
+				"Request identity arguments disagree",
+				{ expectedIdentity, declaredIdentity },
+			);
+		}
+		const requestIdentity = expectedIdentity ?? declaredIdentity;
+		if (requestIdentity && !identitiesEqual(requestIdentity, identity)) {
+			throw new BridgeProtocolError(
+				"STALE_CONNECTION",
+				"Editor connection identity changed before request dispatch",
+				{ expectedIdentity: requestIdentity, actualIdentity: identity },
+			);
+		}
+		this.assertObservedRevision(socket, params);
 		const id = randomUUID();
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
 				reject(new Error(`Editor request timed out: ${method}`));
 			}, timeoutMs);
-			this.pending.set(id, { resolve, reject, timer });
-			socket.send(JSON.stringify({ kind: "request", id, method, params }));
+			this.pending.set(id, {
+				resolve,
+				reject,
+				timer,
+				socket,
+				identity,
+				requestIdentity,
+				protocolVersion,
+				method,
+			});
+			socket.send(
+				JSON.stringify({
+					kind: "request",
+					id,
+					method,
+					params,
+					...(socket.data.protocolVersion === CURRENT_BRIDGE_PROTOCOL_VERSION
+						? { target: identity }
+						: {}),
+				}),
+			);
 		});
 	}
 
@@ -146,7 +298,13 @@ export class EditorBridge {
 			return new Response("Not found", { status: 404 });
 		}
 		return server.upgrade(request, {
-			data: { authenticated: false, authTimer: null },
+			data: {
+				authenticated: false,
+				authTimer: null,
+				protocolVersion: null,
+				identity: null,
+				observedProjectRevisions: new Map(),
+			},
 		})
 			? undefined
 			: new Response("WebSocket upgrade failed", { status: 400 });
@@ -274,13 +432,44 @@ export class EditorBridge {
 		if (message.kind !== "response" || typeof message.id !== "string") return;
 		const pending = this.pending.get(message.id);
 		if (!pending) return;
+		if (pending.socket !== socket) return;
 		this.pending.delete(message.id);
 		clearTimeout(pending.timer);
-		if (message.ok === true) pending.resolve(message.result);
-		else
+		if (
+			socket.data.protocolVersion === CURRENT_BRIDGE_PROTOCOL_VERSION &&
+			(!isConnectionIdentity(message.identity) ||
+				!identitiesEqual(message.identity, pending.identity))
+		) {
 			pending.reject(
-				new Error(String(message.error ?? "unknown editor error")),
+				new BridgeProtocolError(
+					"STALE_CONNECTION",
+					"Editor response identity did not match the dispatched request",
+					{
+						expectedIdentity: pending.identity,
+						actualIdentity: message.identity,
+					},
+				),
 			);
+			return;
+		}
+		if (message.ok === true) {
+			this.recordObservedRevision(socket, message.result);
+			pending.resolve(
+				withConnectionIdentity(
+					message.result,
+					pending.identity,
+					pending.requestIdentity,
+					pending.protocolVersion,
+				),
+			);
+			return;
+		}
+		const error = readProtocolError(message.error);
+		pending.reject(
+			error
+				? new BridgeProtocolError(error.code, error.message, error.details)
+				: new Error(String(message.error ?? "unknown editor error")),
+		);
 	}
 
 	private authenticate(
@@ -295,6 +484,23 @@ export class EditorBridge {
 			socket.close(1008, "authentication failed");
 			return;
 		}
+		const protocolVersion = negotiateProtocolVersion(message);
+		if (protocolVersion === null) {
+			socket.close(1002, "unsupported bridge protocol version");
+			return;
+		}
+		const editorInstanceId =
+			protocolVersion === CURRENT_BRIDGE_PROTOCOL_VERSION
+				? readNonEmptyString(message.editorInstanceId)
+				: `legacy-editor-${randomUUID()}`;
+		const editorSessionId =
+			protocolVersion === CURRENT_BRIDGE_PROTOCOL_VERSION
+				? readNonEmptyString(message.editorSessionId)
+				: `legacy-session-${randomUUID()}`;
+		if (!editorInstanceId || !editorSessionId) {
+			socket.close(1002, "bridge protocol v2 requires editor identity");
+			return;
+		}
 		if (this.activeSocket && this.activeSocket !== socket) {
 			socket.close(1013, "an editor already owns this session");
 			return;
@@ -302,8 +508,21 @@ export class EditorBridge {
 		if (socket.data.authTimer) clearTimeout(socket.data.authTimer);
 		socket.data.authTimer = null;
 		socket.data.authenticated = true;
+		socket.data.protocolVersion = protocolVersion;
+		socket.data.identity = {
+			serverInstanceId: this.serverInstanceId,
+			editorInstanceId,
+			editorSessionId,
+			connectionGeneration: ++this.connectionGeneration,
+		};
 		this.activeSocket = socket;
-		socket.send(JSON.stringify({ kind: "authenticated" }));
+		socket.send(
+			JSON.stringify({
+				kind: "authenticated",
+				protocolVersion,
+				identity: socket.data.identity,
+			}),
+		);
 		this.emitConnectionChange(true);
 	}
 
@@ -318,14 +537,188 @@ export class EditorBridge {
 	private rejectPending(reason: string): void {
 		for (const pending of this.pending.values()) {
 			clearTimeout(pending.timer);
-			pending.reject(new Error(reason));
+			pending.reject(new BridgeProtocolError("EDITOR_DISCONNECTED", reason));
 		}
 		this.pending.clear();
+	}
+
+	private assertObservedRevision(socket: EditorSocket, params: unknown): void {
+		if (
+			socket.data.protocolVersion !== CURRENT_BRIDGE_PROTOCOL_VERSION ||
+			!params ||
+			typeof params !== "object"
+		) {
+			return;
+		}
+		const record = params as Record<string, unknown>;
+		if (
+			typeof record.projectId !== "string" ||
+			typeof record.expectedRevision !== "number"
+		) {
+			return;
+		}
+		const observed = socket.data.observedProjectRevisions.get(record.projectId);
+		if (observed === record.expectedRevision) return;
+		throw new BridgeProtocolError(
+			"STALE_CONNECTION",
+			"Project revision was not observed on this editor connection",
+			{
+				projectId: record.projectId,
+				expectedRevision: record.expectedRevision,
+				observedRevision: observed ?? null,
+				connectionIdentity: socket.data.identity,
+			},
+		);
+	}
+
+	private recordObservedRevision(socket: EditorSocket, result: unknown): void {
+		const version = readProjectVersion(result);
+		if (version) {
+			socket.data.observedProjectRevisions.set(
+				version.projectId,
+				version.revision,
+			);
+		}
 	}
 
 	private emitConnectionChange(connected: boolean): void {
 		for (const listener of this.connectionListeners) listener(connected);
 	}
+}
+
+function negotiateProtocolVersion(
+	message: Record<string, unknown>,
+): number | null {
+	if (message.protocolVersions === undefined) return 1;
+	const requestedVersions = message.protocolVersions;
+	if (!Array.isArray(requestedVersions)) return null;
+	return (
+		SUPPORTED_BRIDGE_PROTOCOL_VERSIONS.find((version) =>
+			requestedVersions.includes(version),
+		) ?? null
+	);
+}
+
+function readNonEmptyString(value: unknown): string | null {
+	return typeof value === "string" && value.trim() ? value : null;
+}
+
+function isConnectionIdentity(
+	value: unknown,
+): value is BridgeConnectionIdentity {
+	if (!value || typeof value !== "object") return false;
+	const record = value as Record<string, unknown>;
+	return (
+		readNonEmptyString(record.serverInstanceId) !== null &&
+		readNonEmptyString(record.editorInstanceId) !== null &&
+		readNonEmptyString(record.editorSessionId) !== null &&
+		typeof record.connectionGeneration === "number" &&
+		Number.isSafeInteger(record.connectionGeneration) &&
+		record.connectionGeneration > 0
+	);
+}
+
+function identitiesEqual(
+	left: BridgeConnectionIdentity,
+	right: BridgeConnectionIdentity,
+): boolean {
+	return (
+		left.serverInstanceId === right.serverInstanceId &&
+		left.editorInstanceId === right.editorInstanceId &&
+		left.editorSessionId === right.editorSessionId &&
+		left.connectionGeneration === right.connectionGeneration
+	);
+}
+
+function withConnectionIdentity(
+	value: unknown,
+	connectionIdentity: BridgeConnectionIdentity,
+	requestConnectionIdentity: BridgeConnectionIdentity | null,
+	bridgeProtocolVersion: 1 | 2,
+): unknown {
+	const identityFields = {
+		bridgeProtocolVersion,
+		connectionIdentity,
+		...(requestConnectionIdentity ? { requestConnectionIdentity } : {}),
+	};
+	return value && typeof value === "object" && !Array.isArray(value)
+		? { ...(value as Record<string, unknown>), ...identityFields }
+		: { value, ...identityFields };
+}
+
+function readDeclaredConnectionIdentity(
+	params: unknown,
+): BridgeConnectionIdentity | null {
+	if (!params || typeof params !== "object") return null;
+	const record = params as Record<string, unknown>;
+	if (record.bridgeProtocolVersion !== CURRENT_BRIDGE_PROTOCOL_VERSION)
+		return null;
+	if (!isConnectionIdentity(record.expectedConnectionIdentity)) {
+		throw new BridgeProtocolError(
+			"PROTOCOL_MISMATCH",
+			"Bridge protocol v2 requires expectedConnectionIdentity",
+		);
+	}
+	return record.expectedConnectionIdentity;
+}
+
+function readDeclaredProtocolVersion(params: unknown): 1 | 2 | null {
+	if (!params || typeof params !== "object") return null;
+	const version = (params as Record<string, unknown>).bridgeProtocolVersion;
+	if (version === undefined) return null;
+	if (version === 1 || version === 2) return version;
+	throw new BridgeProtocolError(
+		"PROTOCOL_MISMATCH",
+		"Request declares an unsupported bridge protocol version",
+		{ declaredProtocolVersion: version },
+	);
+}
+
+function readProtocolError(value: unknown): {
+	code: "STALE_CONNECTION" | "EDITOR_DISCONNECTED" | "PROTOCOL_MISMATCH";
+	message: string;
+	details?: Record<string, unknown>;
+} | null {
+	if (!value || typeof value !== "object") return null;
+	const record = value as Record<string, unknown>;
+	if (
+		(record.code !== "STALE_CONNECTION" &&
+			record.code !== "EDITOR_DISCONNECTED" &&
+			record.code !== "PROTOCOL_MISMATCH") ||
+		typeof record.message !== "string"
+	) {
+		return null;
+	}
+	return {
+		code: record.code,
+		message: record.message,
+		...(record.details && typeof record.details === "object"
+			? { details: record.details as Record<string, unknown> }
+			: {}),
+	};
+}
+
+function readProjectVersion(
+	value: unknown,
+): { projectId: string; revision: number } | null {
+	if (!value || typeof value !== "object") return null;
+	const record = value as Record<string, unknown>;
+	if (
+		typeof record.projectId === "string" &&
+		typeof record.revision === "number"
+	) {
+		return { projectId: record.projectId, revision: record.revision };
+	}
+	const snapshot = record.snapshot;
+	if (!snapshot || typeof snapshot !== "object") return null;
+	const snapshotRecord = snapshot as Record<string, unknown>;
+	return typeof snapshotRecord.projectId === "string" &&
+		typeof snapshotRecord.revision === "number"
+		? {
+				projectId: snapshotRecord.projectId,
+				revision: snapshotRecord.revision,
+			}
+		: null;
 }
 
 function exportCorsHeaders(origin: string | null): Record<string, string> {

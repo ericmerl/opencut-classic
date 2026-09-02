@@ -8,6 +8,33 @@ interface ProjectSnapshot extends Record<string, unknown> {
 	mediaAssets: unknown[];
 }
 
+export function withProjectEnvelope(
+	result: Record<string, unknown>,
+	snapshot: ProjectSnapshot,
+	projectId: string,
+): Record<string, unknown> {
+	return {
+		...result,
+		projectId,
+		sceneId:
+			typeof result.sceneId === "string"
+				? result.sceneId
+				: typeof snapshot.sceneId === "string"
+					? snapshot.sceneId
+					: null,
+		bridgeProtocolVersion:
+			typeof result.bridgeProtocolVersion === "number"
+				? result.bridgeProtocolVersion
+				: (snapshot.bridgeProtocolVersion ?? null),
+		connectionIdentity:
+			result.connectionIdentity ?? snapshot.connectionIdentity ?? null,
+		requestConnectionIdentity:
+			result.requestConnectionIdentity ??
+			snapshot.requestConnectionIdentity ??
+			null,
+	};
+}
+
 export function asProjectSnapshot(value: unknown): ProjectSnapshot {
 	if (!isRecord(value))
 		throw new Error("Editor returned an invalid project snapshot");

@@ -74,6 +74,7 @@ export type AutomationTimelineQueryResult =
 	| {
 			status: "queried";
 			projectId: string;
+			sceneId: string;
 			revision: number;
 			projectDuration: MediaTime;
 			range: { startTime: MediaTime; endTime: MediaTime };
@@ -82,10 +83,18 @@ export type AutomationTimelineQueryResult =
 	  }
 	| {
 			status: "conflict";
+			projectId: string;
+			sceneId: string;
 			expectedRevision: number;
 			actualRevision: number;
 	  }
-	| { status: "rejected"; reason: string };
+	| {
+			status: "rejected";
+			projectId: string;
+			sceneId: string;
+			activeProjectId?: string;
+			reason: string;
+	  };
 
 function elementEnd(element: AutomationElementSnapshot): MediaTime {
 	return mediaTime({ ticks: element.startTime + element.duration });
@@ -264,12 +273,17 @@ export function queryTimelineSnapshot({
 	if (request.projectId !== snapshot.projectId) {
 		return {
 			status: "rejected",
+			projectId: request.projectId,
+			sceneId: snapshot.sceneId,
+			activeProjectId: snapshot.projectId,
 			reason: "projectId does not match active project",
 		};
 	}
 	if (request.expectedRevision !== snapshot.revision) {
 		return {
 			status: "conflict",
+			projectId: request.projectId,
+			sceneId: snapshot.sceneId,
 			expectedRevision: request.expectedRevision,
 			actualRevision: snapshot.revision,
 		};
@@ -285,14 +299,26 @@ export function queryTimelineSnapshot({
 	if (!isValidTick(requestedStart) || !isValidTick(requestedEnd)) {
 		return {
 			status: "rejected",
+			projectId: request.projectId,
+			sceneId: snapshot.sceneId,
 			reason: "startTime and endTime must be non-negative safe integer ticks",
 		};
 	}
 	if (requestedEnd < requestedStart) {
-		return { status: "rejected", reason: "endTime must not precede startTime" };
+		return {
+			status: "rejected",
+			projectId: request.projectId,
+			sceneId: snapshot.sceneId,
+			reason: "endTime must not precede startTime",
+		};
 	}
 	if (request.trackIds?.length === 0 || request.elementTypes?.length === 0) {
-		return { status: "rejected", reason: "query filters must not be empty" };
+		return {
+			status: "rejected",
+			projectId: request.projectId,
+			sceneId: snapshot.sceneId,
+			reason: "query filters must not be empty",
+		};
 	}
 	if (
 		(request.trackIds &&
@@ -302,6 +328,8 @@ export function queryTimelineSnapshot({
 	) {
 		return {
 			status: "rejected",
+			projectId: request.projectId,
+			sceneId: snapshot.sceneId,
 			reason: "query filters must not contain duplicates",
 		};
 	}
@@ -312,6 +340,8 @@ export function queryTimelineSnapshot({
 	if (unknownTrackIds.length > 0) {
 		return {
 			status: "rejected",
+			projectId: request.projectId,
+			sceneId: snapshot.sceneId,
 			reason: `unknown trackIds: ${unknownTrackIds.join(", ")}`,
 		};
 	}
@@ -350,6 +380,7 @@ export function queryTimelineSnapshot({
 	return {
 		status: "queried",
 		projectId: snapshot.projectId,
+		sceneId: snapshot.sceneId,
 		revision: snapshot.revision,
 		projectDuration,
 		range: { startTime, endTime },
