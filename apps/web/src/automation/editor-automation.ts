@@ -47,7 +47,11 @@ import { buildAudioControlPatch } from "./audio-control";
 import { buildAudioMixGainCommand } from "./audio-mix-gain";
 import { buildEffectControlCommand, listEffectCatalog } from "./effect-control";
 import { buildKeyframeCommand } from "./keyframe-control";
-import { buildMatteControlCommand, buildMatteSnapshot } from "./matte-control";
+import {
+	buildMatteControlCommand,
+	buildMatteSnapshot,
+	findVideoElement,
+} from "./matte-control";
 import { buildTransitionCommand } from "./transition-control";
 import {
 	buildTrimPatch,
@@ -84,6 +88,8 @@ import type {
 	AutomationProjectActivatedResult,
 	AutomationProjectListResult,
 	AutomationProjectSnapshot,
+	AutomationTransferSourceRequest,
+	AutomationTransferSourceResult,
 	AutomationUndoResult,
 } from "./types";
 
@@ -180,6 +186,12 @@ export class EditorAutomation {
 		request: AutomationAttachMatteRequest,
 	): Promise<AutomationAttachMatteResult> {
 		return this.enqueue(() => this.attachMatteNow(request));
+	}
+
+	transferSourceMedia(
+		request: AutomationTransferSourceRequest,
+	): Promise<AutomationTransferSourceResult> {
+		return this.enqueue(() => this.transferSourceMediaNow(request));
 	}
 
 	exportProject(
@@ -617,6 +629,62 @@ export class EditorAutomation {
 				operationId: request.operationId,
 				reason:
 					error instanceof Error ? error.message : "matte attachment failed",
+			};
+		}
+	}
+
+	private async transferSourceMediaNow(
+		request: AutomationTransferSourceRequest,
+	): Promise<AutomationTransferSourceResult> {
+		this.reconcileExternalChanges();
+		if (request.projectId !== this.getProjectId()) {
+			return {
+				status: "rejected",
+				reason: `active project is ${this.getProjectId()}`,
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+
+		try {
+			const element = findVideoElement({
+				tracks: this.editor.scenes.getActiveScene().tracks,
+				trackId: request.trackId,
+				elementId: request.elementId,
+			});
+			const asset = this.editor.media
+				.getAssets()
+				.find((candidate) => candidate.id === element.mediaId);
+			if (!asset) throw new Error(`source media not found: ${element.mediaId}`);
+			const mimeType = asset.file.type || "application/octet-stream";
+			const upload = await fetch(request.url, {
+				method: "PUT",
+				headers: { "Content-Type": mimeType },
+				body: asset.file,
+			});
+			if (!upload.ok) {
+				throw new Error(`source transfer failed with HTTP ${upload.status}`);
+			}
+			const receipt = (await upload.json()) as { bytesWritten: number };
+			return {
+				status: "transferred",
+				revision: this.revision,
+				mediaId: asset.id,
+				name: asset.name,
+				mimeType,
+				bytesTransferred: receipt.bytesWritten,
+				sourceFingerprint: asset.sourceFingerprint ?? null,
+			};
+		} catch (error) {
+			return {
+				status: "rejected",
+				reason:
+					error instanceof Error ? error.message : "source transfer failed",
 			};
 		}
 	}

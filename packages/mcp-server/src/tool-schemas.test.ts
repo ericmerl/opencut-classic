@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	attachMatteInputSchema,
+	generateMatteInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
 	importMediaInputSchema,
@@ -22,6 +23,27 @@ describe("OpenCut matte MCP contract", () => {
 			modelVersion: "2.1",
 		});
 		expect(result.success).toBe(true);
+	});
+
+	test("accepts a provider-driven matte generation request", () => {
+		const result = generateMatteInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "generate-matte-1",
+			expectedRevision: 4,
+			trackId: "main",
+			elementId: "clip-1",
+			modelId: "person-segmenter",
+			options: { quality: "draft", refineEdges: true },
+		});
+
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.timeoutSeconds).toBe(1800);
+			expect(result.data.options).toEqual({
+				quality: "draft",
+				refineEdges: true,
+			});
+		}
 	});
 
 	test("accepts matte state changes and detachment", () => {

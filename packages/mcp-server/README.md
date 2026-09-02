@@ -14,6 +14,15 @@ The bridge defaults to `127.0.0.1:32191`. Override both sides with `OPENCUT_BRID
 
 Background removal is intentionally staged separately. See [BACKGROUND_REMOVAL_SCOPE.md](./BACKGROUND_REMOVAL_SCOPE.md) for the model-independent matte foundation, browser prototype boundary, production inference requirements, and acceptance criteria.
 
+`opencut_generate_matte` uses an external command provider so OpenCut does not bundle or license a particular segmentation model. Configure the provider executable and optional arguments before starting the MCP server:
+
+```powershell
+$env:OPENCUT_MATTE_PRODUCER_COMMAND = "C:\path\to\python.exe"
+$env:OPENCUT_MATTE_PRODUCER_ARGS = '["C:\path\to\provider.py"]'
+```
+
+The provider receives one JSON request on stdin and must return one JSON response on stdout. Write diagnostics to stderr. See [MATTE_PRODUCER_PROTOCOL.md](./MATTE_PRODUCER_PROTOCOL.md) for the versioned contract.
+
 Available tools:
 
 - `opencut_connection_status`
@@ -29,6 +38,8 @@ Available tools:
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track. Imports preserve project canvas and frame rate by default; set `adoptMediaSettings` to `true` to adopt them from the first visual asset.
 - `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path
+- `opencut_attach_matte`, attaching an existing image or video matte with explicit model provenance
+- `opencut_generate_matte`, securely transferring a selected clip source to the configured provider, generating a matte, and attaching it in one revision-safe operation
 
 The editor must be open with a project loaded. Creating or opening a project automatically updates the connected editor route. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.
 

@@ -467,6 +467,31 @@ export type AutomationAttachMatteResult =
 	  }
 	| { status: "rejected"; operationId: string; reason: string };
 
+export interface AutomationTransferSourceRequest {
+	projectId: string;
+	expectedRevision: number;
+	trackId: string;
+	elementId: string;
+	url: string;
+}
+
+export type AutomationTransferSourceResult =
+	| {
+			status: "transferred";
+			revision: number;
+			mediaId: string;
+			name: string;
+			mimeType: string;
+			bytesTransferred: number;
+			sourceFingerprint: string | null;
+	  }
+	| {
+			status: "conflict";
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; reason: string };
+
 export interface AutomationExportRequest {
 	projectId: string;
 	operationId: string;

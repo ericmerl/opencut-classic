@@ -7,6 +7,7 @@ import type {
 	AutomationExportRequest,
 	AutomationImportRequest,
 	AutomationOpenProjectRequest,
+	AutomationTransferSourceRequest,
 } from "./types";
 import type { AutomationTimelineQueryRequest } from "./timeline-query";
 
@@ -49,6 +50,12 @@ type BridgeRequest =
 			id: string;
 			method: "attach_matte";
 			params: AutomationAttachMatteRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "transfer_source_media";
+			params: AutomationTransferSourceRequest;
 	  }
 	| {
 			kind: "request";
@@ -189,6 +196,8 @@ export class AutomationBridgeClient {
 				return this.automation.importMedia(message.params);
 			case "attach_matte":
 				return this.automation.attachMatte(message.params);
+			case "transfer_source_media":
+				return this.automation.transferSourceMedia(message.params);
 			case "undo":
 				return this.automation.undo(message.params);
 		}

@@ -2,11 +2,13 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
+import { MatteGenerationService } from "./generate-matte";
 import { calculateNormalizationGain } from "./audio-normalization";
 import {
 	attachMatteInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
+	generateMatteInputSchema,
 	importMediaInputSchema,
 	openProjectInputSchema,
 	timelineQueryInputSchema,
@@ -18,6 +20,7 @@ if (!token || token.length < 32) {
 }
 const port = parsePort(process.env.OPENCUT_BRIDGE_PORT ?? "32191");
 const bridge = new EditorBridge({ token, port });
+const matteGeneration = new MatteGenerationService(bridge);
 const completedExports = new Map<
 	string,
 	{ fingerprint: string; result: Record<string, unknown> }
@@ -208,6 +211,16 @@ function createServer(): McpServer {
 				}),
 			);
 		},
+	);
+
+	server.registerTool(
+		"opencut_generate_matte",
+		{
+			description:
+				"Generate and attach a foreground matte for one video clip through the configured external provider. The source stays local, model provenance is persisted, and the current project revision is required.",
+			inputSchema: generateMatteInputSchema,
+		},
+		async (input) => toolResult(await matteGeneration.generate(input)),
 	);
 
 	server.registerTool(

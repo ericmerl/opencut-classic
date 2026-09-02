@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { ExportTickets } from "./export-tickets";
 import { MediaTickets } from "./media-tickets";
+import { SourceTickets } from "./source-tickets";
 
 interface SocketData {
 	authenticated: boolean;
@@ -21,12 +22,14 @@ export class EditorBridge {
 	private server: Bun.Server<SocketData>;
 	readonly exportTickets: ExportTickets;
 	readonly mediaTickets: MediaTickets;
+	readonly sourceTickets: SourceTickets;
 
 	constructor(
 		private options: { token: string; port: number; requestTimeoutMs?: number },
 	) {
 		this.exportTickets = new ExportTickets(options.port);
 		this.mediaTickets = new MediaTickets(options.port);
+		this.sourceTickets = new SourceTickets(options.port);
 		this.server = Bun.serve<SocketData>({
 			hostname: "127.0.0.1",
 			port: options.port,
@@ -84,6 +87,9 @@ export class EditorBridge {
 		if (url.pathname.startsWith("/export/")) {
 			return this.handleExportRequest(request, url, origin);
 		}
+		if (url.pathname.startsWith("/source/")) {
+			return this.handleSourceRequest(request, url, origin);
+		}
 		if (url.pathname.startsWith("/media/")) {
 			const ticket = this.mediaTickets.take(
 				url.pathname.slice("/media/".length),
@@ -107,6 +113,38 @@ export class EditorBridge {
 		})
 			? undefined
 			: new Response("WebSocket upgrade failed", { status: 400 });
+	}
+
+	private async handleSourceRequest(
+		request: Request,
+		url: URL,
+		origin: string | null,
+	): Promise<Response> {
+		const id = url.pathname.slice("/source/".length);
+		const headers = transferCorsHeaders(origin);
+		if (request.method === "OPTIONS") {
+			return this.sourceTickets.has(id)
+				? new Response(null, { status: 204, headers })
+				: new Response("Expired or invalid source ticket", {
+						status: 404,
+						headers,
+					});
+		}
+		if (request.method !== "PUT") {
+			return new Response("Method not allowed", {
+				status: 405,
+				headers: { ...headers, Allow: "PUT, OPTIONS" },
+			});
+		}
+		try {
+			const result = await this.sourceTickets.receive(id, request);
+			return Response.json(result, { headers });
+		} catch (error) {
+			return new Response(
+				error instanceof Error ? error.message : "Source upload failed",
+				{ status: 409, headers },
+			);
+		}
 	}
 
 	private async handleExportRequest(
@@ -215,6 +253,10 @@ export class EditorBridge {
 }
 
 function exportCorsHeaders(origin: string | null): Record<string, string> {
+	return transferCorsHeaders(origin);
+}
+
+function transferCorsHeaders(origin: string | null): Record<string, string> {
 	return {
 		"Access-Control-Allow-Origin": origin ?? "http://127.0.0.1",
 		"Access-Control-Allow-Methods": "PUT, OPTIONS",

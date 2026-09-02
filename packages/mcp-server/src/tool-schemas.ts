@@ -431,6 +431,23 @@ export const attachMatteInputSchema = z.object({
 	modelVersion: z.string().trim().min(1),
 });
 
+export const generateMatteInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	trackId: z.string().min(1),
+	elementId: z.string().min(1),
+	modelId: z.string().trim().min(1).optional(),
+	modelVersion: z.string().trim().min(1).optional(),
+	options: z
+		.record(
+			z.string(),
+			z.union([z.string(), z.number(), z.boolean(), z.null()]),
+		)
+		.default({}),
+	timeoutSeconds: z.number().int().min(1).max(7200).default(1800),
+});
+
 export const createProjectInputSchema = z.object({
 	operationId: z.string().min(1),
 	name: z.string().trim().min(1),
