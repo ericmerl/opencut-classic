@@ -66,6 +66,8 @@ Available tools:
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track. Imports preserve project canvas and frame rate by default; set `adoptMediaSettings` to `true` to adopt them from the first visual asset.
 - `opencut_export_project`, rendering in the connected editor, writing to a new absolute local `.mp4` or `.webm` path, fully decoding and probing it, extracting opening, middle, and ending frame samples, and persisting a durable SHA-256 receipt
+- `opencut_queue_export`, persisting an export job that survives MCP restarts and runs automatically when an authenticated editor worker connects
+- `opencut_get_export_job`, `opencut_list_export_jobs`, `opencut_cancel_export_job`, and `opencut_run_export_jobs`, for durable queue inspection and control
 - `opencut_get_export_receipt`, reading a durable validation and watermark-inspection receipt after an MCP restart
 - `opencut_record_export_inspection`, recording a hash-locked verified-clean or rejected watermark review after the sampled full frames and all four corners have been inspected
 - `opencut_attach_matte`, attaching an existing image or video matte with explicit model provenance
@@ -89,3 +91,5 @@ Transitions link two consecutive, edge-adjacent video or image clips on one vide
 Caption `fontSize` values use OpenCut app units rather than output pixels. Typical captions use values from `4` through `8`; the default is `5`.
 
 Exports never overwrite an existing file. FFmpeg and FFprobe are preflighted before rendering. A completed export is accepted only after its container and stream metadata match the request, the complete file decodes without an FFmpeg error, and opening, middle, and ending full-frame PNG samples have been extracted and hashed. The immutable core receipt and separately updateable watermark-inspection record are stored under `OPENCUT_RECEIPT_DIR`. Retrying the same operation ID and identical arguments after an MCP restart verifies the output size and SHA-256 before returning the durable result.
+
+Persistent export jobs use append-only revisions under the receipt directory. A queued job opens its target project before rendering, runs in FIFO order, and returns to the queue if the editor disconnects. A job found in the running state after an MCP restart is also recovered to queued. Job state does not require an open editor tab, but rendering currently waits for an authenticated editor worker to connect.

@@ -707,3 +707,34 @@ export const recordExportInspectionInputSchema = z.object({
 	reviewer: z.string().trim().min(1).optional(),
 	notes: z.string().trim().min(1).optional(),
 });
+
+export const exportProjectInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	outputPath: z.string().min(1),
+	format: z.enum(["mp4", "webm"]),
+	quality: z.enum(["low", "medium", "high", "very_high"]).default("high"),
+	fps: frameRateSchema.optional(),
+	includeAudio: z.boolean().default(true),
+});
+
+export const queueExportInputSchema = exportProjectInputSchema.extend({
+	jobId: z.string().min(1),
+});
+
+export const getExportJobInputSchema = z.object({
+	jobId: z.string().min(1),
+});
+
+export const listExportJobsInputSchema = z.object({
+	statuses: z
+		.array(z.enum(["queued", "running", "completed", "failed", "cancelled"]))
+		.min(1)
+		.optional(),
+	limit: z.number().int().min(1).max(100).default(25),
+});
+
+export const runExportJobsInputSchema = z.object({
+	limit: z.number().int().min(1).max(100).default(1),
+});

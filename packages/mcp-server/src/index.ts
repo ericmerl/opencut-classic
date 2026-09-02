@@ -3,6 +3,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
 import { AudioCleanupService } from "./clean-audio";
+import { ExportJobQueue } from "./export-jobs";
 import { ExportProjectService } from "./export-project";
 import { ExportReceiptStore } from "./export-receipts";
 import { ExportValidator } from "./export-validator";
@@ -16,13 +17,18 @@ import {
 	cleanAudioInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
+	exportProjectInputSchema,
 	generateMatteInputSchema,
+	getExportJobInputSchema,
 	getExportReceiptInputSchema,
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
+	listExportJobsInputSchema,
 	exportSubtitlesInputSchema,
 	openProjectInputSchema,
+	queueExportInputSchema,
 	recordExportInspectionInputSchema,
+	runExportJobsInputSchema,
 	syncAudioInputSchema,
 	timelineQueryInputSchema,
 	trackSubjectInputSchema,
@@ -48,6 +54,11 @@ const projectExports = new ExportProjectService(
 	bridge,
 	exportReceipts,
 	exportValidator,
+);
+const exportJobs = new ExportJobQueue(
+	bridge,
+	projectExports,
+	ExportJobQueue.storeForReceiptDirectory(exportReceipts.directory),
 );
 const matteGeneration = new MatteGenerationService(bridge);
 const subtitleFiles = new SubtitleFiles();
@@ -397,23 +408,67 @@ function createServer(): McpServer {
 		{
 			description:
 				"Render the active project to a new absolute local file, fully decode and probe it, extract hash-locked opening, middle, and ending frame samples, and persist a durable receipt for watermark inspection.",
-			inputSchema: z.object({
-				projectId: z.string().min(1),
-				operationId: z.string().min(1),
-				expectedRevision: z.number().int().nonnegative(),
-				outputPath: z.string().min(1),
-				format: z.enum(["mp4", "webm"]),
-				quality: z.enum(["low", "medium", "high", "very_high"]).default("high"),
-				fps: z
-					.object({
-						numerator: z.number().int().positive(),
-						denominator: z.number().int().positive(),
-					})
-					.optional(),
-				includeAudio: z.boolean().default(true),
-			}),
+			inputSchema: exportProjectInputSchema,
 		},
 		async (input) => toolResult(await projectExports.export(input)),
+	);
+
+	server.registerTool(
+		"opencut_queue_export",
+		{
+			description:
+				"Persist an export job and run it automatically when an authenticated editor worker is connected. The job survives MCP restarts.",
+			inputSchema: queueExportInputSchema,
+		},
+		async ({ jobId, ...input }) =>
+			toolResult(await exportJobs.enqueue({ jobId, input })),
+	);
+
+	server.registerTool(
+		"opencut_get_export_job",
+		{
+			description: "Read the latest durable state of one export job.",
+			inputSchema: getExportJobInputSchema,
+		},
+		async ({ jobId }) => {
+			const job = await exportJobs.get(jobId);
+			return toolResult(
+				job ? { status: "found", job } : { status: "not-found", jobId },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_export_jobs",
+		{
+			description: "List durable export jobs, optionally filtered by status.",
+			inputSchema: listExportJobsInputSchema,
+		},
+		async (input) => toolResult({ jobs: await exportJobs.list(input) }),
+	);
+
+	server.registerTool(
+		"opencut_cancel_export_job",
+		{
+			description:
+				"Cancel a queued export job. A running renderer cannot yet be interrupted.",
+			inputSchema: getExportJobInputSchema,
+		},
+		async ({ jobId }) => toolResult(await exportJobs.cancel(jobId)),
+	);
+
+	server.registerTool(
+		"opencut_run_export_jobs",
+		{
+			description:
+				"Run queued export jobs now through the connected editor worker, up to the requested limit.",
+			inputSchema: runExportJobsInputSchema,
+		},
+		async ({ limit }) =>
+			toolResult({
+				connected: bridge.getStatus().connected,
+				processed: await exportJobs.runQueued(limit),
+			}),
 	);
 
 	server.registerTool(
@@ -462,6 +517,7 @@ console.error(
 );
 
 process.on("SIGINT", () => {
+	exportJobs.stop();
 	bridge.stop();
 	void handle.close();
 });

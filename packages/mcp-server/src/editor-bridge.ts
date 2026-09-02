@@ -18,6 +18,7 @@ type EditorSocket = Bun.ServerWebSocket<SocketData>;
 
 export class EditorBridge {
 	private activeSocket: EditorSocket | null = null;
+	private connectionListeners = new Set<(connected: boolean) => void>();
 	private pending = new Map<string, PendingRequest>();
 	private server: Bun.Server<SocketData>;
 	readonly exportTickets: ExportTickets;
@@ -48,6 +49,11 @@ export class EditorBridge {
 			host: "127.0.0.1",
 			port: this.options.port,
 		};
+	}
+
+	onConnectionChange(listener: (connected: boolean) => void): () => void {
+		this.connectionListeners.add(listener);
+		return () => this.connectionListeners.delete(listener);
 	}
 
 	request(
@@ -234,6 +240,7 @@ export class EditorBridge {
 		socket.data.authenticated = true;
 		this.activeSocket = socket;
 		socket.send(JSON.stringify({ kind: "authenticated" }));
+		this.emitConnectionChange(true);
 	}
 
 	private handleClose(socket: EditorSocket): void {
@@ -241,6 +248,7 @@ export class EditorBridge {
 		if (this.activeSocket !== socket) return;
 		this.activeSocket = null;
 		this.rejectPending("OpenCut editor disconnected");
+		this.emitConnectionChange(false);
 	}
 
 	private rejectPending(reason: string): void {
@@ -249,6 +257,10 @@ export class EditorBridge {
 			pending.reject(new Error(reason));
 		}
 		this.pending.clear();
+	}
+
+	private emitConnectionChange(connected: boolean): void {
+		for (const listener of this.connectionListeners) listener(connected);
 	}
 }
 

@@ -6,17 +6,58 @@ import {
 	generateMatteInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
+	exportProjectInputSchema,
 	exportSubtitlesInputSchema,
+	getExportJobInputSchema,
 	getExportReceiptInputSchema,
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
 	openProjectInputSchema,
+	listExportJobsInputSchema,
+	queueExportInputSchema,
 	recordExportInspectionInputSchema,
+	runExportJobsInputSchema,
 	timelineQueryInputSchema,
 	syncAudioInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut persistent export job contract", () => {
+	test("accepts queue, lookup, filtering, and bounded drain requests", () => {
+		const exportRequest = {
+			projectId: "project-1",
+			operationId: "export-1",
+			expectedRevision: 3,
+			outputPath: "C:\\exports\\video.mp4",
+			format: "mp4",
+		};
+		expect(exportProjectInputSchema.safeParse(exportRequest).success).toBe(
+			true,
+		);
+		expect(
+			queueExportInputSchema.safeParse({ jobId: "job-1", ...exportRequest })
+				.success,
+		).toBe(true);
+		expect(getExportJobInputSchema.safeParse({ jobId: "job-1" }).success).toBe(
+			true,
+		);
+		expect(
+			listExportJobsInputSchema.safeParse({ statuses: ["queued", "failed"] })
+				.success,
+		).toBe(true);
+		expect(runExportJobsInputSchema.safeParse({ limit: 5 }).success).toBe(true);
+	});
+
+	test("rejects unknown job states and an unbounded drain", () => {
+		expect(
+			listExportJobsInputSchema.safeParse({ statuses: ["unknown"] }).success,
+		).toBe(false);
+		expect(runExportJobsInputSchema.safeParse({ limit: 101 }).success).toBe(
+			false,
+		);
+	});
+});
 
 describe("OpenCut durable export receipt contract", () => {
 	test("accepts receipt lookup and hash-locked watermark inspection", () => {
