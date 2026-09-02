@@ -71,6 +71,38 @@ describe("ExportJobQueue", () => {
 		expect(await queue.get("job-1")).toMatchObject({ status: "queued" });
 		queue.stop();
 	});
+
+	test("starts a managed editor for queued work", async () => {
+		let connected = false;
+		const ensuredProjectIds: string[] = [];
+		const bridge: PersistentExportJobBridge = {
+			getStatus: () => ({ connected }),
+			onConnectionChange: () => () => undefined,
+			request: async () => ({ status: "opened", projectId: "project-1" }),
+			exportTickets: {
+				create: async (path) => ({ url: "http://fixture", outputPath: path }),
+			},
+		};
+		const queue = new ExportJobQueue(
+			bridge,
+			{ export: async () => ({ status: "exported" }) },
+			new ExportJobStore(directory),
+			{
+				autoRun: false,
+				ensureEditor: async (projectId) => {
+					ensuredProjectIds.push(projectId);
+					connected = true;
+				},
+			},
+		);
+		await queue.enqueue({ jobId: "job-1", input: exportInput(directory) });
+
+		const processed = await queue.runQueued(1);
+
+		expect(ensuredProjectIds).toEqual(["project-1"]);
+		expect(processed[0]).toMatchObject({ status: "completed" });
+		queue.stop();
+	});
 });
 
 function exportInput(directory: string) {

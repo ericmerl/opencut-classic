@@ -738,3 +738,7 @@ export const listExportJobsInputSchema = z.object({
 export const runExportJobsInputSchema = z.object({
 	limit: z.number().int().min(1).max(100).default(1),
 });
+
+export const startEditorWorkerInputSchema = z.object({
+	projectId: z.string().min(1).default("__opencut_automation_bootstrap__"),
+});

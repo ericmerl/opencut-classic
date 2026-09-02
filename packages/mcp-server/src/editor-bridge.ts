@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { BootstrapTickets } from "./bootstrap-tickets";
 import { ExportTickets } from "./export-tickets";
 import { MediaTickets } from "./media-tickets";
 import { SourceTickets } from "./source-tickets";
@@ -21,6 +22,7 @@ export class EditorBridge {
 	private connectionListeners = new Set<(connected: boolean) => void>();
 	private pending = new Map<string, PendingRequest>();
 	private server: Bun.Server<SocketData>;
+	private bootstrapTickets = new BootstrapTickets();
 	readonly exportTickets: ExportTickets;
 	readonly mediaTickets: MediaTickets;
 	readonly sourceTickets: SourceTickets;
@@ -54,6 +56,32 @@ export class EditorBridge {
 	onConnectionChange(listener: (connected: boolean) => void): () => void {
 		this.connectionListeners.add(listener);
 		return () => this.connectionListeners.delete(listener);
+	}
+
+	createBootstrapTicket(): { id: string; expiresAt: string } {
+		return this.bootstrapTickets.create();
+	}
+
+	waitForConnection(timeoutMs = 30_000): Promise<void> {
+		if (this.activeSocket) return Promise.resolve();
+		return new Promise((resolve, reject) => {
+			let unsubscribe: () => void = () => undefined;
+			const timer = setTimeout(() => {
+				unsubscribe();
+				reject(new Error("Timed out waiting for an OpenCut editor worker"));
+			}, timeoutMs);
+			unsubscribe = this.onConnectionChange((connected) => {
+				if (!connected) return;
+				clearTimeout(timer);
+				unsubscribe();
+				resolve();
+			});
+			if (this.activeSocket) {
+				clearTimeout(timer);
+				unsubscribe();
+				resolve();
+			}
+		});
 	}
 
 	request(
@@ -93,6 +121,9 @@ export class EditorBridge {
 		if (url.pathname.startsWith("/export/")) {
 			return this.handleExportRequest(request, url, origin);
 		}
+		if (url.pathname.startsWith("/bootstrap/")) {
+			return this.handleBootstrapRequest(request, url, origin);
+		}
 		if (url.pathname.startsWith("/source/")) {
 			return this.handleSourceRequest(request, url, origin);
 		}
@@ -119,6 +150,39 @@ export class EditorBridge {
 		})
 			? undefined
 			: new Response("WebSocket upgrade failed", { status: 400 });
+	}
+
+	private handleBootstrapRequest(
+		request: Request,
+		url: URL,
+		origin: string | null,
+	): Response {
+		const id = url.pathname.slice("/bootstrap/".length);
+		const headers = bootstrapCorsHeaders(origin);
+		if (request.method === "OPTIONS") {
+			return this.bootstrapTickets.has(id)
+				? new Response(null, { status: 204, headers })
+				: new Response("Expired or invalid bootstrap ticket", {
+						status: 404,
+						headers,
+					});
+		}
+		if (request.method !== "GET") {
+			return new Response("Method not allowed", {
+				status: 405,
+				headers: { ...headers, Allow: "GET, OPTIONS" },
+			});
+		}
+		if (!this.bootstrapTickets.take(id)) {
+			return new Response("Expired or invalid bootstrap ticket", {
+				status: 404,
+				headers,
+			});
+		}
+		return Response.json(
+			{ token: this.options.token, port: this.options.port },
+			{ headers },
+		);
 	}
 
 	private async handleSourceRequest(
@@ -266,6 +330,14 @@ export class EditorBridge {
 
 function exportCorsHeaders(origin: string | null): Record<string, string> {
 	return transferCorsHeaders(origin);
+}
+
+function bootstrapCorsHeaders(origin: string | null): Record<string, string> {
+	return {
+		"Access-Control-Allow-Origin": origin ?? "http://127.0.0.1",
+		"Access-Control-Allow-Methods": "GET, OPTIONS",
+		"Cache-Control": "no-store",
+	};
 }
 
 function transferCorsHeaders(origin: string | null): Record<string, string> {

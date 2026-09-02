@@ -8,6 +8,7 @@ import { ExportProjectService } from "./export-project";
 import { ExportReceiptStore } from "./export-receipts";
 import { ExportValidator } from "./export-validator";
 import { MatteGenerationService } from "./generate-matte";
+import { ManagedEditorWorker } from "./managed-editor-worker";
 import { calculateNormalizationGain } from "./audio-normalization";
 import { SubtitleFiles } from "./subtitle-files";
 import { SubjectTrackingService } from "./track-subject";
@@ -29,6 +30,7 @@ import {
 	queueExportInputSchema,
 	recordExportInspectionInputSchema,
 	runExportJobsInputSchema,
+	startEditorWorkerInputSchema,
 	syncAudioInputSchema,
 	timelineQueryInputSchema,
 	trackSubjectInputSchema,
@@ -55,10 +57,15 @@ const projectExports = new ExportProjectService(
 	exportReceipts,
 	exportValidator,
 );
+const editorWorker = ManagedEditorWorker.fromEnvironment(
+	bridge,
+	exportReceipts.directory,
+);
 const exportJobs = new ExportJobQueue(
 	bridge,
 	projectExports,
 	ExportJobQueue.storeForReceiptDirectory(exportReceipts.directory),
+	{ ensureEditor: (projectId) => editorWorker.ensureConnected(projectId) },
 );
 const matteGeneration = new MatteGenerationService(bridge);
 const subtitleFiles = new SubtitleFiles();
@@ -91,7 +98,28 @@ function createServer(): McpServer {
 			description:
 				"Report whether an authenticated OpenCut editor is connected.",
 		},
-		async () => toolResult(bridge.getStatus()),
+		async () =>
+			toolResult({ ...bridge.getStatus(), worker: editorWorker.getStatus() }),
+	);
+
+	server.registerTool(
+		"opencut_start_editor_worker",
+		{
+			description:
+				"Start a managed hidden headless Chrome or Edge editor using the persistent automation profile, then wait for its authenticated bridge connection.",
+			inputSchema: startEditorWorkerInputSchema,
+		},
+		async ({ projectId }) =>
+			toolResult(await editorWorker.ensureConnected(projectId)),
+	);
+
+	server.registerTool(
+		"opencut_stop_editor_worker",
+		{
+			description:
+				"Stop the headless editor process launched by this MCP server. Manually opened editor sessions are not stopped.",
+		},
+		async () => toolResult(await editorWorker.stop()),
 	);
 
 	server.registerTool(
@@ -516,11 +544,15 @@ console.error(
 	`OpenCut MCP server listening for the editor on 127.0.0.1:${port}`,
 );
 
-process.on("SIGINT", () => {
+function shutdown(): void {
 	exportJobs.stop();
+	void editorWorker.stop();
 	bridge.stop();
 	void handle.close();
-});
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 function toolResult(value: unknown) {
 	return {

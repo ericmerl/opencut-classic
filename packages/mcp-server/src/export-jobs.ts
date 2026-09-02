@@ -28,12 +28,15 @@ export class ExportJobQueue {
 		private bridge: PersistentExportJobBridge,
 		private exports: PersistentExportProjectService,
 		readonly store: ExportJobStore,
-		private options: { autoRun?: boolean } = {},
+		private options: {
+			autoRun?: boolean;
+			ensureEditor?: (projectId: string) => Promise<unknown>;
+		} = {},
 	) {
 		this.unsubscribe = bridge.onConnectionChange((connected) => {
 			if (connected) this.schedule();
 		});
-		if (bridge.getStatus().connected) this.schedule();
+		this.schedule();
 	}
 
 	static storeForReceiptDirectory(receiptDirectory: string): ExportJobStore {
@@ -103,7 +106,7 @@ export class ExportJobQueue {
 		limit = Number.POSITIVE_INFINITY,
 	): Promise<ExportJobRecord[]> {
 		if (this.draining) return this.draining;
-		this.draining = this.drain(limit).finally(() => {
+		this.draining = this.runWithEditor(limit).finally(() => {
 			this.draining = null;
 		});
 		return this.draining;
@@ -115,19 +118,40 @@ export class ExportJobQueue {
 	}
 
 	private schedule(): void {
-		if (
-			this.stopped ||
-			this.options.autoRun === false ||
-			!this.bridge.getStatus().connected
-		) {
-			return;
-		}
+		if (this.stopped || this.options.autoRun === false) return;
 		queueMicrotask(() => void this.runQueued().catch(() => undefined));
+	}
+
+	private async runWithEditor(limit: number): Promise<ExportJobRecord[]> {
+		await this.store.recoverInterrupted();
+		if (!this.bridge.getStatus().connected) {
+			const candidate = (await this.store.list())
+				.filter((record) => record.status === "queued")
+				.sort((left, right) =>
+					left.createdAt.localeCompare(right.createdAt),
+				)[0];
+			if (!candidate || !this.options.ensureEditor) return [];
+			try {
+				await this.options.ensureEditor(candidate.input.projectId);
+			} catch (error) {
+				const message =
+					error instanceof Error
+						? error.message
+						: "managed editor worker failed to connect";
+				await this.store.update(candidate.jobId, (current) =>
+					current.status === "queued"
+						? { ...current, lastError: message }
+						: current,
+				);
+				throw error;
+			}
+		}
+		if (!this.bridge.getStatus().connected) return [];
+		return this.drain(limit);
 	}
 
 	private async drain(limit: number): Promise<ExportJobRecord[]> {
 		if (this.stopped || !this.bridge.getStatus().connected) return [];
-		await this.store.recoverInterrupted();
 		const queued = (await this.store.list())
 			.filter((record) => record.status === "queued")
 			.sort((left, right) => left.createdAt.localeCompare(right.createdAt))

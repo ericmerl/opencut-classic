@@ -42,6 +42,16 @@ $env:OPENCUT_FFPROBE_PATH = "C:\path\to\ffprobe.exe"
 $env:OPENCUT_RECEIPT_DIR = "C:\path\to\private-opencut-receipts"
 ```
 
+To let MCP launch its own hidden editor worker, run this fork's OpenCut web app locally and configure its URL. Chrome or Edge is discovered automatically; the executable and persistent automation profile can also be selected explicitly:
+
+```powershell
+$env:OPENCUT_HEADLESS_EDITOR_URL = "http://127.0.0.1:3000"
+$env:OPENCUT_HEADLESS_BROWSER_PATH = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+$env:OPENCUT_HEADLESS_PROFILE_DIR = "C:\path\to\private-opencut-profile"
+```
+
+The worker receives its bridge credential through a one-time localhost bootstrap ticket, so the credential is not placed in the browser command line. OpenCut project data remains browser-profile-local. Projects created and edited through the managed profile persist across worker restarts, but a project stored only in a different Chrome profile is not automatically visible in the managed profile.
+
 Subject tracking uses the same local command-provider pattern. Configure
 `OPENCUT_SUBJECT_TRACKER_COMMAND` and optional JSON-array
 `OPENCUT_SUBJECT_TRACKER_ARGS`. See
@@ -51,6 +61,7 @@ bounding-box and canonical-time contract.
 Available tools:
 
 - `opencut_connection_status`
+- `opencut_start_editor_worker` and `opencut_stop_editor_worker`, launching or stopping a hidden persistent-profile Chrome or Edge editor without requiring a manually open tab
 - `opencut_list_projects`, returning saved-project metadata and the active project ID
 - `opencut_create_project`, creating and activating a named project with an idempotent operation ID
 - `opencut_open_project`, opening a saved project with an idempotent operation ID

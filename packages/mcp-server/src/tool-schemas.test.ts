@@ -17,6 +17,7 @@ import {
 	queueExportInputSchema,
 	recordExportInspectionInputSchema,
 	runExportJobsInputSchema,
+	startEditorWorkerInputSchema,
 	timelineQueryInputSchema,
 	syncAudioInputSchema,
 	trackSubjectInputSchema,
@@ -91,6 +92,12 @@ describe("OpenCut durable export receipt contract", () => {
 				watermarkStatus: "pending",
 			}).success,
 		).toBe(false);
+	});
+
+	test("defaults the managed editor worker to its bootstrap project", () => {
+		expect(startEditorWorkerInputSchema.parse({}).projectId).toBe(
+			"__opencut_automation_bootstrap__",
+		);
 	});
 });
 
