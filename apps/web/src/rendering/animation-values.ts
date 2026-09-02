@@ -1,6 +1,6 @@
 import type { ElementAnimations } from "@/animation/types";
 import { resolveAnimationPathValueAtTime } from "@/animation";
-import type { Transform } from "./index";
+import { sanitizeReframe, type ReframeConfig, type Transform } from "./index";
 
 export function resolveTransformAtTime({
 	baseTransform,
@@ -46,4 +46,42 @@ export function resolveTransformAtTime({
 			fallbackValue: baseTransform.rotate,
 		}),
 	};
+}
+
+export function resolveReframeAtTime({
+	baseReframe,
+	animations,
+	localTime,
+}: {
+	baseReframe: ReframeConfig;
+	animations: ElementAnimations | undefined;
+	localTime: number;
+}): ReframeConfig {
+	const safeLocalTime = Math.max(0, localTime);
+	const resolve = (propertyPath: string, fallbackValue: number) =>
+		resolveAnimationPathValueAtTime({
+			animations,
+			propertyPath,
+			localTime: safeLocalTime,
+			fallbackValue,
+		});
+	return sanitizeReframe({
+		mode: baseReframe.mode,
+		crop: {
+			x: resolve("reframe.cropX", baseReframe.crop.x),
+			y: resolve("reframe.cropY", baseReframe.crop.y),
+			width: resolve("reframe.cropWidth", baseReframe.crop.width),
+			height: resolve("reframe.cropHeight", baseReframe.crop.height),
+		},
+		focalPoint: {
+			x: resolve("reframe.focalX", baseReframe.focalPoint.x),
+			y: resolve("reframe.focalY", baseReframe.focalPoint.y),
+		},
+		targetRect: {
+			x: resolve("reframe.targetX", baseReframe.targetRect.x),
+			y: resolve("reframe.targetY", baseReframe.targetRect.y),
+			width: resolve("reframe.targetWidth", baseReframe.targetRect.width),
+			height: resolve("reframe.targetHeight", baseReframe.targetRect.height),
+		},
+	});
 }

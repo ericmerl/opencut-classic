@@ -18,7 +18,10 @@ import {
 	measureTextElement,
 } from "@/text/measure-element";
 import { resolveColorAtTime, resolveOpacityAtTime } from "@/animation/values";
-import { resolveTransformAtTime } from "@/rendering/animation-values";
+import {
+	resolveReframeAtTime,
+	resolveTransformAtTime,
+} from "@/rendering/animation-values";
 import { computeReframeGeometry, DEFAULT_REFRAME } from "@/rendering";
 import { videoCache } from "@/services/video-cache/service";
 import type { CanvasRenderer } from "./canvas-renderer";
@@ -225,6 +228,11 @@ function resolveVisualState({
 		animations: params.animations,
 		localTime,
 	});
+	const reframe = resolveReframeAtTime({
+		baseReframe: params.reframe ?? DEFAULT_REFRAME,
+		animations: params.animations,
+		localTime,
+	});
 	let wipeProgress: number | undefined;
 	const transition = resolveTransitionVisual({
 		params,
@@ -244,7 +252,7 @@ function resolveVisualState({
 		sourceWidth,
 		sourceHeight,
 		transform,
-		reframe: params.reframe ?? DEFAULT_REFRAME,
+		reframe,
 	});
 	const effectWidth = Math.max(1, Math.round(geometry.width));
 	const effectHeight = Math.max(1, Math.round(geometry.height));
@@ -252,7 +260,7 @@ function resolveVisualState({
 	return {
 		localTime,
 		transform,
-		reframe: params.reframe,
+		reframe,
 		opacity,
 		...(wipeProgress === undefined ? {} : { wipeProgress }),
 		effectPasses: resolveEffectPassGroups({

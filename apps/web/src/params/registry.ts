@@ -176,7 +176,6 @@ const reframeElementParams: ElementParamDefinition[] = [
 				? 0.999
 				: 1,
 		step: 0.01,
-		keyframable: false,
 	})),
 ];
 

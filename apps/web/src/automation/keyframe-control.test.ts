@@ -157,4 +157,30 @@ describe("buildKeyframeCommand", () => {
 			}),
 		).toThrow("keyframe not found: opacity/missing");
 	});
+
+	test("accepts normalized reframe properties", () => {
+		const element = buildVideoElement();
+		const target = resolveAnimationTarget({
+			element,
+			path: "reframe.focalX",
+		});
+		expect(target?.numericRanges).toEqual({
+			value: { min: 0, max: 0.999, step: 0.01 },
+		});
+		expect(
+			buildKeyframeCommand({
+				element,
+				operation: {
+					kind: "upsert_keyframe",
+					trackId: "track-1",
+					elementId: element.id,
+					propertyPath: "reframe.focalX",
+					time: mediaTime({ ticks: 120000 }),
+					value: 0.75,
+					interpolation: "linear",
+					keyframeId: "focal-x-1",
+				},
+			}).constructor.name,
+		).toBe("UpsertKeyframeCommand");
+	});
 });
