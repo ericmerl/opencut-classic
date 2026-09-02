@@ -7,14 +7,51 @@ import {
 	createProjectInputSchema,
 	editPlanInputSchema,
 	exportSubtitlesInputSchema,
+	getExportReceiptInputSchema,
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
 	openProjectInputSchema,
+	recordExportInspectionInputSchema,
 	timelineQueryInputSchema,
 	syncAudioInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut durable export receipt contract", () => {
+	test("accepts receipt lookup and hash-locked watermark inspection", () => {
+		expect(
+			getExportReceiptInputSchema.safeParse({ operationId: "export-1" })
+				.success,
+		).toBe(true);
+		expect(
+			recordExportInspectionInputSchema.safeParse({
+				operationId: "export-1",
+				outputSha256: "a".repeat(64),
+				watermarkStatus: "verified-clean",
+				reviewer: "vision-review",
+				notes: "All sampled frames and corners inspected.",
+			}).success,
+		).toBe(true);
+	});
+
+	test("rejects an invalid export hash or pending inspection claim", () => {
+		expect(
+			recordExportInspectionInputSchema.safeParse({
+				operationId: "export-1",
+				outputSha256: "not-a-hash",
+				watermarkStatus: "verified-clean",
+			}).success,
+		).toBe(false);
+		expect(
+			recordExportInspectionInputSchema.safeParse({
+				operationId: "export-1",
+				outputSha256: "a".repeat(64),
+				watermarkStatus: "pending",
+			}).success,
+		).toBe(false);
+	});
+});
 
 describe("OpenCut audio-cleanup MCP contract", () => {
 	test("accepts attachment, cleanup defaults, and replacement controls", () => {

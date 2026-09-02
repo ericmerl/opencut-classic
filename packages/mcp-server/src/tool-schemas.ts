@@ -695,3 +695,15 @@ export const openProjectInputSchema = z.object({
 	operationId: z.string().min(1),
 	projectId: z.string().min(1),
 });
+
+export const getExportReceiptInputSchema = z.object({
+	operationId: z.string().min(1),
+});
+
+export const recordExportInspectionInputSchema = z.object({
+	operationId: z.string().min(1),
+	outputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+	watermarkStatus: z.enum(["verified-clean", "rejected"]),
+	reviewer: z.string().trim().min(1).optional(),
+	notes: z.string().trim().min(1).optional(),
+});

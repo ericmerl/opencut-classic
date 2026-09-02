@@ -34,6 +34,14 @@ $env:OPENCUT_AUDIO_CLEANER_ARGS = '["C:\path\to\audio-cleaner.py"]'
 
 See [AUDIO_CLEANER_PROTOCOL.md](./AUDIO_CLEANER_PROTOCOL.md) for the complete request and response contract.
 
+Validated export requires FFmpeg and FFprobe. Put both executables on `PATH`, or configure their absolute paths. Durable receipts default to the operating system's per-user application-state directory and can be relocated explicitly:
+
+```powershell
+$env:OPENCUT_FFMPEG_PATH = "C:\path\to\ffmpeg.exe"
+$env:OPENCUT_FFPROBE_PATH = "C:\path\to\ffprobe.exe"
+$env:OPENCUT_RECEIPT_DIR = "C:\path\to\private-opencut-receipts"
+```
+
 Subject tracking uses the same local command-provider pattern. Configure
 `OPENCUT_SUBJECT_TRACKER_COMMAND` and optional JSON-array
 `OPENCUT_SUBJECT_TRACKER_ARGS`. See
@@ -57,7 +65,9 @@ Available tools:
 - `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, deterministic track mute and visibility, normalized crop and focal-point reframing, contain, cover, stretch, split-screen, and picture-in-picture layouts, source-audio separation, cleaned-source enablement and detachment, non-destructive dialogue ducking with attack and release ramps, per-clip audio gain, mute, linear fades, uniform mix gain, stable-ID clip effect creation, update, ordering, enablement, and removal, general keyframe creation, update, retiming, and removal, crossfade, fade-through-black, slide, wipe, and zoom transitions, text and styled caption-batch insertion, delete, same-track or cross-track move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and source-edge trim operations
 - `opencut_undo`
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track. Imports preserve project canvas and frame rate by default; set `adoptMediaSettings` to `true` to adopt them from the first visual asset.
-- `opencut_export_project`, rendering in the connected editor and writing to a new absolute local `.mp4` or `.webm` path
+- `opencut_export_project`, rendering in the connected editor, writing to a new absolute local `.mp4` or `.webm` path, fully decoding and probing it, extracting opening, middle, and ending frame samples, and persisting a durable SHA-256 receipt
+- `opencut_get_export_receipt`, reading a durable validation and watermark-inspection receipt after an MCP restart
+- `opencut_record_export_inspection`, recording a hash-locked verified-clean or rejected watermark review after the sampled full frames and all four corners have been inspected
 - `opencut_attach_matte`, attaching an existing image or video matte with explicit model provenance
 - `opencut_generate_matte`, securely transferring a selected clip source to the configured provider, generating a matte, and attaching it in one revision-safe operation
 - `opencut_track_subject`, transferring a selected video source to the configured tracker, validating and smoothing normalized subject boxes, mapping source samples through clip trim and retime, and atomically creating focal-point or crop reframe keyframes
@@ -78,4 +88,4 @@ Transitions link two consecutive, edge-adjacent video or image clips on one vide
 
 Caption `fontSize` values use OpenCut app units rather than output pixels. Typical captions use values from `4` through `8`; the default is `5`.
 
-Exports never overwrite an existing file. A completed export operation can be retried with the same operation ID and identical arguments without rendering or writing it again. Export retries are remembered for the lifetime of the MCP process.
+Exports never overwrite an existing file. FFmpeg and FFprobe are preflighted before rendering. A completed export is accepted only after its container and stream metadata match the request, the complete file decodes without an FFmpeg error, and opening, middle, and ending full-frame PNG samples have been extracted and hashed. The immutable core receipt and separately updateable watermark-inspection record are stored under `OPENCUT_RECEIPT_DIR`. Retrying the same operation ID and identical arguments after an MCP restart verifies the output size and SHA-256 before returning the durable result.

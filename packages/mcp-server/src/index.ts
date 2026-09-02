@@ -3,6 +3,9 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
 import { AudioCleanupService } from "./clean-audio";
+import { ExportProjectService } from "./export-project";
+import { ExportReceiptStore } from "./export-receipts";
+import { ExportValidator } from "./export-validator";
 import { MatteGenerationService } from "./generate-matte";
 import { calculateNormalizationGain } from "./audio-normalization";
 import { SubtitleFiles } from "./subtitle-files";
@@ -14,10 +17,12 @@ import {
 	createProjectInputSchema,
 	editPlanInputSchema,
 	generateMatteInputSchema,
+	getExportReceiptInputSchema,
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
 	exportSubtitlesInputSchema,
 	openProjectInputSchema,
+	recordExportInspectionInputSchema,
 	syncAudioInputSchema,
 	timelineQueryInputSchema,
 	trackSubjectInputSchema,
@@ -37,13 +42,16 @@ const port = parsePort(
 );
 const bridge = new EditorBridge({ token, port });
 const audioCleanup = new AudioCleanupService(bridge);
+const exportReceipts = new ExportReceiptStore();
+const exportValidator = new ExportValidator(exportReceipts);
+const projectExports = new ExportProjectService(
+	bridge,
+	exportReceipts,
+	exportValidator,
+);
 const matteGeneration = new MatteGenerationService(bridge);
 const subtitleFiles = new SubtitleFiles();
 const subjectTracking = new SubjectTrackingService(bridge);
-const completedExports = new Map<
-	string,
-	{ fingerprint: string; result: Record<string, unknown> }
->();
 const completedProjectOperations = new Map<
 	string,
 	{ fingerprint: string; result: Record<string, unknown> }
@@ -388,7 +396,7 @@ function createServer(): McpServer {
 		"opencut_export_project",
 		{
 			description:
-				"Render the active project in the connected editor and write it to a new absolute local file without opening a browser download dialog.",
+				"Render the active project to a new absolute local file, fully decode and probe it, extract hash-locked opening, middle, and ending frame samples, and persist a durable receipt for watermark inspection.",
 			inputSchema: z.object({
 				projectId: z.string().min(1),
 				operationId: z.string().min(1),
@@ -405,38 +413,44 @@ function createServer(): McpServer {
 				includeAudio: z.boolean().default(true),
 			}),
 		},
-		async (input) => {
-			const fingerprint = exportFingerprint(input);
-			const prior = completedExports.get(input.operationId);
-			if (prior) {
-				if (prior.fingerprint !== fingerprint) {
-					throw new Error(
-						"operationId was already used for a different export",
-					);
-				}
-				return toolResult({ ...prior.result, status: "replayed" });
-			}
+		async (input) => toolResult(await projectExports.export(input)),
+	);
 
-			const { outputPath, format, ...params } = input;
-			const ticket = await bridge.exportTickets.create(outputPath, format);
-			const result = await bridge.request(
-				"export_project",
-				{
-					...params,
-					format,
-					outputPath: ticket.outputPath,
-					url: ticket.url,
-				},
-				30 * 60_000,
-			);
-			if (isCompletedExport(result)) {
-				completedExports.set(input.operationId, {
-					fingerprint,
-					result: { ...result, status: "exported" },
-				});
-			}
-			return toolResult(result);
+	server.registerTool(
+		"opencut_get_export_receipt",
+		{
+			description:
+				"Read a durable export validation and watermark-inspection receipt by operation ID.",
+			inputSchema: getExportReceiptInputSchema,
 		},
+		async ({ operationId }) => {
+			const receipt = await exportReceipts.get(operationId);
+			return toolResult(
+				receipt
+					? {
+							status: "found",
+							receiptPath: exportReceipts.receiptPath(operationId),
+							receipt,
+						}
+					: { status: "not-found", operationId },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_record_export_inspection",
+		{
+			description:
+				"Record a completed human or vision review of the hash-locked export frame samples. Use verified-clean only after inspecting the opening, middle, and ending full frames including all four corners.",
+			inputSchema: recordExportInspectionInputSchema,
+		},
+		async ({ watermarkStatus, ...input }) =>
+			toolResult(
+				await exportReceipts.recordInspection({
+					...input,
+					status: watermarkStatus,
+				}),
+			),
 	);
 
 	return server;
@@ -571,37 +585,6 @@ function parsePort(value: string): number {
 		);
 	}
 	return parsed;
-}
-
-function exportFingerprint(input: {
-	projectId: string;
-	operationId: string;
-	expectedRevision: number;
-	outputPath: string;
-	format: "mp4" | "webm";
-	quality: "low" | "medium" | "high" | "very_high";
-	fps?: { numerator: number; denominator: number };
-	includeAudio: boolean;
-}): string {
-	return JSON.stringify([
-		input.projectId,
-		input.operationId,
-		input.expectedRevision,
-		input.outputPath,
-		input.format,
-		input.quality,
-		input.fps?.numerator ?? null,
-		input.fps?.denominator ?? null,
-		input.includeAudio,
-	]);
-}
-
-function isCompletedExport(
-	value: unknown,
-): value is Record<string, unknown> & { status: "exported" | "replayed" } {
-	if (!value || typeof value !== "object") return false;
-	const status = (value as Record<string, unknown>).status;
-	return status === "exported" || status === "replayed";
 }
 
 function isSerializedSubtitles(value: unknown): value is {
