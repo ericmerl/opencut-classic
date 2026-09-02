@@ -15,6 +15,7 @@ import {
 	importSubtitlesInputSchema,
 	exportSubtitlesInputSchema,
 	openProjectInputSchema,
+	syncAudioInputSchema,
 	timelineQueryInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
@@ -163,6 +164,17 @@ function createServer(): McpServer {
 			}),
 		},
 		async (input) => toolResult(await normalizeAudio(input)),
+	);
+
+	server.registerTool(
+		"opencut_sync_audio",
+		{
+			description:
+				"Synchronize a target video or audio clip to a reference clip by decoding both sources locally, estimating waveform lag with bounded normalized cross-correlation, and moving the target on the current track.",
+			inputSchema: syncAudioInputSchema,
+		},
+		async (input) =>
+			toolResult(await bridge.request("sync_audio", input, 10 * 60_000)),
 	);
 
 	server.registerTool(

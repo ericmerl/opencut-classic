@@ -620,6 +620,28 @@ export const trackSubjectInputSchema = z.object({
 	timeoutSeconds: z.number().int().min(1).max(7200).default(1800),
 });
 
+const elementReferenceSchema = z.object({
+	trackId: z.string().min(1),
+	elementId: z.string().min(1),
+});
+
+export const syncAudioInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	reference: elementReferenceSchema,
+	target: elementReferenceSchema,
+	maxOffsetTicks: z.number().int().positive().max(7_200_000).default(1_200_000),
+	analysisSampleRate: z.number().int().min(50).max(1_000).default(200),
+	maxAnalysisDurationTicks: z
+		.number()
+		.int()
+		.positive()
+		.max(14_400_000)
+		.default(7_200_000),
+	minCorrelation: z.number().min(0).max(1).default(0.35),
+});
+
 export const createProjectInputSchema = z.object({
 	operationId: z.string().min(1),
 	name: z.string().trim().min(1),

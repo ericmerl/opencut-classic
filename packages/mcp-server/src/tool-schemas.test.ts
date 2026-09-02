@@ -9,6 +9,7 @@ import {
 	importSubtitlesInputSchema,
 	openProjectInputSchema,
 	timelineQueryInputSchema,
+	syncAudioInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 } from "./tool-schemas";
@@ -49,6 +50,27 @@ describe("OpenCut subject-tracking MCP contract", () => {
 				options: { detector: "person", redetect: true },
 			}).success,
 		).toBe(true);
+	});
+});
+
+describe("OpenCut audio-sync MCP contract", () => {
+	test("accepts two element references with bounded analysis defaults", () => {
+		const result = syncAudioInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "sync-1",
+			expectedRevision: 4,
+			reference: { trackId: "main", elementId: "camera-a" },
+			target: { trackId: "audio-1", elementId: "recorder-audio" },
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data).toMatchObject({
+				maxOffsetTicks: 1_200_000,
+				analysisSampleRate: 200,
+				maxAnalysisDurationTicks: 7_200_000,
+				minCorrelation: 0.35,
+			});
+		}
 	});
 });
 

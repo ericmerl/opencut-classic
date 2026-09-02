@@ -13,7 +13,11 @@ import {
 } from "@/commands/timeline";
 import type { EditorCore } from "@/core";
 import { processMediaAssets } from "@/media/processing";
-import { decodeAudioToFloat32 } from "@/media/audio";
+import {
+	collectAudioElements,
+	createAudioContext,
+	decodeAudioToFloat32,
+} from "@/media/audio";
 import { extractTimelineAudio } from "@/media/mediabunny";
 import { coerceParamValue } from "@/params";
 import {
@@ -48,7 +52,12 @@ import type { SubtitleCue, SubtitleStyleOverrides } from "@/subtitles/types";
 import { DEFAULT_TRANSCRIPTION_SAMPLE_RATE } from "@/transcription/audio";
 import { buildCaptionChunks } from "@/transcription/caption";
 import { transcriptionService } from "@/services/transcription/service";
-import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
+import {
+	mediaTime,
+	mediaTimeFromSeconds,
+	mediaTimeToSeconds,
+	TICKS_PER_SECOND,
+} from "@/wasm";
 import { getElementKeyframes } from "@/animation";
 import { analyzeAutomationAudio } from "./audio-analysis";
 import { prepareMatteAttachment } from "./attach-matte";
@@ -56,6 +65,11 @@ import { buildAudioControlPatch } from "./audio-control";
 import { buildAudioMixGainCommand } from "./audio-mix-gain";
 import { buildSourceAudioSeparationCommand } from "./source-audio-control";
 import { buildAudioDuckingPatch } from "./audio-ducking";
+import {
+	buildAudioEnvelope,
+	findBestAudioLag,
+	synchronizedTargetStart,
+} from "./audio-sync";
 import { buildCaptionCorrectionCommand } from "./caption-control";
 import { buildEffectControlCommand, listEffectCatalog } from "./effect-control";
 import { buildKeyframeCommand } from "./keyframe-control";
@@ -82,6 +96,9 @@ import {
 import type {
 	AutomationAudioAnalysisRequest,
 	AutomationAudioAnalysisResult,
+	AutomationAudioSyncAppliedResult,
+	AutomationAudioSyncRequest,
+	AutomationAudioSyncResult,
 	AutomationAttachMatteAppliedResult,
 	AutomationAttachMatteRequest,
 	AutomationAttachMatteResult,
@@ -138,6 +155,10 @@ export class EditorAutomation {
 		string,
 		{ fingerprint: string; result: AutomationTranscriptionAppliedResult }
 	>();
+	private audioSyncOperations = new Map<
+		string,
+		{ fingerprint: string; result: AutomationAudioSyncAppliedResult }
+	>();
 	private exportedOperations = new Map<
 		string,
 		{ fingerprint: string; result: AutomationExportCompletedResult }
@@ -186,6 +207,12 @@ export class EditorAutomation {
 				revision: this.revision,
 			});
 		});
+	}
+
+	syncAudio(
+		request: AutomationAudioSyncRequest,
+	): Promise<AutomationAudioSyncResult> {
+		return this.enqueue(() => this.syncAudioNow(request));
 	}
 
 	listProjects(): Promise<AutomationProjectListResult> {
@@ -864,6 +891,201 @@ export class EditorAutomation {
 						? error.message
 						: "timeline transcription failed",
 			};
+		}
+	}
+
+	private async syncAudioNow(
+		request: AutomationAudioSyncRequest,
+	): Promise<AutomationAudioSyncResult> {
+		this.reconcileExternalChanges();
+		const fingerprint = stableSerialize(request);
+		const prior = this.audioSyncOperations.get(request.operationId);
+		if (prior) {
+			if (prior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason:
+						"operationId was already used for different audio synchronization",
+				};
+			}
+			return { ...prior.result, status: "replayed" };
+		}
+		if (request.projectId !== this.getProjectId()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `active project is ${this.getProjectId()}`,
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				operationId: request.operationId,
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+		if (
+			request.reference.trackId === request.target.trackId &&
+			request.reference.elementId === request.target.elementId
+		) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "reference and target audio elements must differ",
+			};
+		}
+
+		const reference = this.findElement(
+			request.reference.trackId,
+			request.reference.elementId,
+		);
+		const target = this.findElement(
+			request.target.trackId,
+			request.target.elementId,
+		);
+		if (
+			!reference ||
+			(reference.type !== "audio" && reference.type !== "video")
+		) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "reference must identify a video or audio element",
+			};
+		}
+		if (!target || (target.type !== "audio" && target.type !== "video")) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "target must identify a video or audio element",
+			};
+		}
+
+		const context = createAudioContext();
+		try {
+			const decoded = await collectAudioElements({
+				tracks: this.editor.scenes.getActiveScene().tracks,
+				mediaAssets: this.editor.media.getAssets(),
+				audioContext: context,
+			});
+			const referenceAudio = decoded.find(
+				(item) => item.timelineElement.id === reference.id,
+			);
+			const targetAudio = decoded.find(
+				(item) => item.timelineElement.id === target.id,
+			);
+			if (!referenceAudio || !targetAudio) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason:
+						"selected elements do not both contain decodable enabled audio",
+				};
+			}
+			const maxDuration = request.maxAnalysisDurationTicks / TICKS_PER_SECOND;
+			const referenceEnvelope = buildAudioEnvelope({
+				buffer: referenceAudio.buffer,
+				trimStart: referenceAudio.trimStart,
+				clipDuration: referenceAudio.duration,
+				retime: referenceAudio.retime,
+				analysisSampleRate: request.analysisSampleRate,
+				maxDuration,
+			});
+			const targetEnvelope = buildAudioEnvelope({
+				buffer: targetAudio.buffer,
+				trimStart: targetAudio.trimStart,
+				clipDuration: targetAudio.duration,
+				retime: targetAudio.retime,
+				analysisSampleRate: request.analysisSampleRate,
+				maxDuration,
+			});
+			const minimumLength = Math.min(
+				referenceEnvelope.length,
+				targetEnvelope.length,
+			);
+			const correlation = findBestAudioLag({
+				reference: referenceEnvelope,
+				target: targetEnvelope,
+				maxLagSamples: Math.round(
+					(request.maxOffsetTicks / TICKS_PER_SECOND) *
+						request.analysisSampleRate,
+				),
+				minOverlapSamples: Math.max(
+					20,
+					Math.min(
+						request.analysisSampleRate * 2,
+						Math.floor(minimumLength * 0.25),
+					),
+				),
+			});
+			if (correlation.score < request.minCorrelation) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: `best audio correlation ${correlation.score.toFixed(3)} is below ${request.minCorrelation.toFixed(3)}`,
+				};
+			}
+			const startTime = synchronizedTargetStart({
+				referenceStart: reference.startTime,
+				lagSamples: correlation.lagSamples,
+				analysisSampleRate: request.analysisSampleRate,
+				ticksPerSecond: TICKS_PER_SECOND,
+			});
+			if (startTime < 0) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason: `audio alignment requires a negative target start time: ${startTime}`,
+				};
+			}
+			this.editor.command.execute({
+				command: new MoveElementCommand({
+					moves: [
+						{
+							sourceTrackId: request.target.trackId,
+							targetTrackId: request.target.trackId,
+							elementId: target.id,
+							newStartTime: mediaTime({ ticks: startTime }),
+						},
+					],
+				}),
+			});
+			await this.editor.save.flush();
+			this.recordCommittedState();
+			const lagTicks = mediaTime({
+				ticks: Math.round(
+					(correlation.lagSamples / request.analysisSampleRate) *
+						TICKS_PER_SECOND,
+				),
+			});
+			const result: AutomationAudioSyncAppliedResult = {
+				status: "applied",
+				operationId: request.operationId,
+				revision: this.revision,
+				correlation: correlation.score,
+				lagTicks,
+				previousStartTime: target.startTime,
+				startTime: mediaTime({ ticks: startTime }),
+				snapshot: this.buildSnapshot(),
+			};
+			this.audioSyncOperations.set(request.operationId, {
+				fingerprint,
+				result,
+			});
+			return result;
+		} catch (error) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason:
+					error instanceof Error
+						? error.message
+						: "audio synchronization failed",
+			};
+		} finally {
+			await context.close();
 		}
 	}
 

@@ -174,6 +174,42 @@ export interface AutomationAudioAnalysisRequest {
 	expectedRevision: number;
 }
 
+export interface AutomationAudioSyncRequest {
+	projectId: string;
+	operationId: string;
+	expectedRevision: number;
+	reference: { trackId: string; elementId: string };
+	target: { trackId: string; elementId: string };
+	maxOffsetTicks: MediaTime;
+	analysisSampleRate: number;
+	maxAnalysisDurationTicks: MediaTime;
+	minCorrelation: number;
+}
+
+export interface AutomationAudioSyncAppliedResult {
+	status: "applied";
+	operationId: string;
+	revision: number;
+	correlation: number;
+	lagTicks: MediaTime;
+	previousStartTime: MediaTime;
+	startTime: MediaTime;
+	snapshot: AutomationProjectSnapshot;
+}
+
+export type AutomationAudioSyncResult =
+	| AutomationAudioSyncAppliedResult
+	| (Omit<AutomationAudioSyncAppliedResult, "status"> & {
+			status: "replayed";
+	  })
+	| {
+			status: "conflict";
+			operationId: string;
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; operationId: string; reason: string };
+
 export interface AutomationAudioAnalysis {
 	integratedLufs: number | null;
 	samplePeakDbfs: number | null;
