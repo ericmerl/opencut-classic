@@ -4,12 +4,15 @@ import * as z from "zod/v4";
 import { EditorBridge } from "./editor-bridge";
 import { MatteGenerationService } from "./generate-matte";
 import { calculateNormalizationGain } from "./audio-normalization";
+import { SubtitleFiles } from "./subtitle-files";
 import {
 	attachMatteInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
 	generateMatteInputSchema,
 	importMediaInputSchema,
+	importSubtitlesInputSchema,
+	exportSubtitlesInputSchema,
 	openProjectInputSchema,
 	timelineQueryInputSchema,
 } from "./tool-schemas";
@@ -27,6 +30,7 @@ const port = parsePort(
 );
 const bridge = new EditorBridge({ token, port });
 const matteGeneration = new MatteGenerationService(bridge);
+const subtitleFiles = new SubtitleFiles();
 const completedExports = new Map<
 	string,
 	{ fingerprint: string; result: Record<string, unknown> }
@@ -36,6 +40,10 @@ const completedProjectOperations = new Map<
 	{ fingerprint: string; result: Record<string, unknown> }
 >();
 const completedNormalizations = new Map<
+	string,
+	{ fingerprint: string; result: Record<string, unknown> }
+>();
+const completedSubtitleExports = new Map<
 	string,
 	{ fingerprint: string; result: Record<string, unknown> }
 >();
@@ -194,6 +202,78 @@ function createServer(): McpServer {
 					sourceFingerprint: ticket.sourceFingerprint,
 				}),
 			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_import_subtitles",
+		{
+			description:
+				"Import SRT, ASS, or WebVTT captions from an absolute local UTF-8 file onto a new text track without a browser file picker. Parsed ASS styling is preserved where OpenCut supports it, and an optional shared style can override imported styling.",
+			inputSchema: importSubtitlesInputSchema,
+		},
+		async ({ path, ...params }) => {
+			const source = await subtitleFiles.read(path);
+			const result = await bridge.request("import_subtitles", {
+				...params,
+				fileName: source.fileName,
+				input: source.input,
+				contentHash: source.contentHash,
+			});
+			return toolResult(
+				result && typeof result === "object"
+					? {
+							...result,
+							sourcePath: path,
+							sourceBytes: source.bytesRead,
+							sourceSha256: source.contentHash,
+						}
+					: result,
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_export_subtitles",
+		{
+			description:
+				"Export caption text elements from all text tracks, or selected text tracks, to a new absolute local SRT or WebVTT file with a SHA-256 receipt.",
+			inputSchema: exportSubtitlesInputSchema,
+		},
+		async (input) => {
+			const fingerprint = JSON.stringify(input);
+			const prior = completedSubtitleExports.get(input.operationId);
+			if (prior) {
+				if (prior.fingerprint !== fingerprint) {
+					throw new Error(
+						"operationId was already used for a different subtitle export",
+					);
+				}
+				return toolResult({ ...prior.result, status: "replayed" });
+			}
+
+			const { operationId, outputPath, ...request } = input;
+			const result = await bridge.request("export_subtitles", request);
+			if (!isSerializedSubtitles(result)) return toolResult(result);
+			const receipt = await subtitleFiles.write({
+				path: outputPath,
+				format: input.format,
+				content: result.content,
+			});
+			const completed = {
+				status: "exported",
+				operationId,
+				revision: result.revision,
+				format: result.format,
+				trackIds: result.trackIds,
+				cueCount: result.cueCount,
+				...receipt,
+			};
+			completedSubtitleExports.set(operationId, {
+				fingerprint,
+				result: completed,
+			});
+			return toolResult(completed);
 		},
 	);
 
@@ -447,6 +527,26 @@ function isCompletedExport(
 	if (!value || typeof value !== "object") return false;
 	const status = (value as Record<string, unknown>).status;
 	return status === "exported" || status === "replayed";
+}
+
+function isSerializedSubtitles(value: unknown): value is {
+	status: "serialized";
+	revision: number;
+	format: "srt" | "vtt";
+	trackIds: string[];
+	cueCount: number;
+	content: string;
+} {
+	if (!value || typeof value !== "object") return false;
+	const record = value as Record<string, unknown>;
+	return (
+		record.status === "serialized" &&
+		typeof record.revision === "number" &&
+		(record.format === "srt" || record.format === "vtt") &&
+		Array.isArray(record.trackIds) &&
+		typeof record.cueCount === "number" &&
+		typeof record.content === "string"
+	);
 }
 
 function isActivatedProject(

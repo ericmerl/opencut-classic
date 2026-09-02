@@ -39,12 +39,17 @@ import {
 import { DEFAULT_CANVAS_PRESETS } from "@/canvas/sizes";
 import type { TProjectSettings } from "@/project/types";
 import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-element";
+import { buildCaptionTrackInsertion } from "@/subtitles/insert";
+import { parseSubtitleFile } from "@/subtitles/parse";
+import { serializeSubtitles } from "@/subtitles/serialize";
+import type { SubtitleCue, SubtitleStyleOverrides } from "@/subtitles/types";
 import { mediaTimeFromSeconds, mediaTimeToSeconds } from "@/wasm";
 import { getElementKeyframes } from "@/animation";
 import { analyzeAutomationAudio } from "./audio-analysis";
 import { prepareMatteAttachment } from "./attach-matte";
 import { buildAudioControlPatch } from "./audio-control";
 import { buildAudioMixGainCommand } from "./audio-mix-gain";
+import { buildCaptionCorrectionCommand } from "./caption-control";
 import { buildEffectControlCommand, listEffectCatalog } from "./effect-control";
 import { buildKeyframeCommand } from "./keyframe-control";
 import {
@@ -85,6 +90,11 @@ import type {
 	AutomationImportAppliedResult,
 	AutomationImportRequest,
 	AutomationImportResult,
+	AutomationImportSubtitlesAppliedResult,
+	AutomationImportSubtitlesRequest,
+	AutomationImportSubtitlesResult,
+	AutomationExportSubtitlesRequest,
+	AutomationExportSubtitlesResult,
 	AutomationAppliedResult,
 	AutomationMutationResult,
 	AutomationOpenProjectRequest,
@@ -109,6 +119,10 @@ export class EditorAutomation {
 	private importedOperations = new Map<
 		string,
 		{ fingerprint: string; result: AutomationImportAppliedResult }
+	>();
+	private importedSubtitleOperations = new Map<
+		string,
+		{ fingerprint: string; result: AutomationImportSubtitlesAppliedResult }
 	>();
 	private exportedOperations = new Map<
 		string,
@@ -184,6 +198,18 @@ export class EditorAutomation {
 		request: AutomationImportRequest,
 	): Promise<AutomationImportResult> {
 		return this.enqueue(() => this.importMediaNow(request));
+	}
+
+	importSubtitles(
+		request: AutomationImportSubtitlesRequest,
+	): Promise<AutomationImportSubtitlesResult> {
+		return this.enqueue(() => this.importSubtitlesNow(request));
+	}
+
+	exportSubtitles(
+		request: AutomationExportSubtitlesRequest,
+	): Promise<AutomationExportSubtitlesResult> {
+		return this.enqueue(() => this.exportSubtitlesNow(request));
 	}
 
 	attachMatte(
@@ -572,6 +598,158 @@ export class EditorAutomation {
 		return result;
 	}
 
+	private async importSubtitlesNow(
+		request: AutomationImportSubtitlesRequest,
+	): Promise<AutomationImportSubtitlesResult> {
+		this.reconcileExternalChanges();
+		const { input: _input, ...stableRequest } = request;
+		const fingerprint = stableSerialize(stableRequest);
+		const prior = this.importedSubtitleOperations.get(request.operationId);
+		if (prior) {
+			if (prior.fingerprint !== fingerprint) {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					reason:
+						"operationId was already used for a different subtitle import",
+				};
+			}
+			return { ...prior.result, status: "replayed" };
+		}
+		if (request.projectId !== this.getProjectId()) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `active project is ${this.getProjectId()}`,
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				operationId: request.operationId,
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+
+		let parsed;
+		try {
+			parsed = parseSubtitleFile({
+				fileName: request.fileName,
+				input: request.input,
+			});
+		} catch (error) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason:
+					error instanceof Error ? error.message : "subtitle parsing failed",
+			};
+		}
+		const captions = parsed.captions.map((caption) => ({
+			...caption,
+			style: mergeSubtitleStyles({
+				base: caption.style,
+				overrides: request.style,
+			}),
+		}));
+		const insertion = buildCaptionTrackInsertion({
+			editor: this.editor,
+			captions,
+		});
+		if (!insertion) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "No valid subtitle cues were found in the subtitle file",
+			};
+		}
+
+		this.editor.command.execute({ command: insertion.command });
+		await this.editor.save.flush();
+		this.recordCommittedState();
+		const result: AutomationImportSubtitlesAppliedResult = {
+			status: "applied",
+			operationId: request.operationId,
+			revision: this.revision,
+			trackId: insertion.trackId,
+			elementIds: insertion.elementIds,
+			importedCueCount: captions.length,
+			skippedCueCount: parsed.skippedCueCount,
+			warnings: parsed.warnings,
+			snapshot: this.buildSnapshot(),
+		};
+		this.importedSubtitleOperations.set(request.operationId, {
+			fingerprint,
+			result,
+		});
+		return result;
+	}
+
+	private exportSubtitlesNow(
+		request: AutomationExportSubtitlesRequest,
+	): AutomationExportSubtitlesResult {
+		this.reconcileExternalChanges();
+		if (request.projectId !== this.getProjectId()) {
+			return {
+				status: "rejected",
+				reason: `active project is ${this.getProjectId()}`,
+			};
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+
+		const requestedIds = request.trackIds ? new Set(request.trackIds) : null;
+		const tracks = this.getTracks().filter(
+			(track) =>
+				track.type === "text" && (!requestedIds || requestedIds.has(track.id)),
+		);
+		if (requestedIds) {
+			for (const trackId of requestedIds) {
+				if (!tracks.some((track) => track.id === trackId)) {
+					return {
+						status: "rejected",
+						reason: `text track not found: ${trackId}`,
+					};
+				}
+			}
+		}
+
+		const captions: SubtitleCue[] = tracks
+			.flatMap((track) =>
+				track.elements
+					.filter((element) => element.type === "text")
+					.map((element) => ({
+						text: String(element.params.content ?? "").trim(),
+						startTime: mediaTimeToSeconds({ time: element.startTime }),
+						duration: mediaTimeToSeconds({ time: element.duration }),
+					})),
+			)
+			.filter((caption) => caption.text && caption.duration > 0)
+			.sort(
+				(left, right) =>
+					left.startTime - right.startTime ||
+					left.text.localeCompare(right.text),
+			);
+		if (captions.length === 0) {
+			return { status: "rejected", reason: "No caption cues were found" };
+		}
+
+		return {
+			status: "serialized",
+			revision: this.revision,
+			format: request.format,
+			trackIds: tracks.map((track) => track.id),
+			cueCount: captions.length,
+			content: serializeSubtitles({ captions, format: request.format }),
+		};
+	}
+
 	private async attachMatteNow(
 		request: AutomationAttachMatteRequest,
 	): Promise<AutomationAttachMatteResult> {
@@ -934,6 +1112,9 @@ export class EditorAutomation {
 				`element not found: ${operation.trackId}/${operation.elementId}`,
 			);
 		}
+		if (operation.kind === "update_caption") {
+			return buildCaptionCorrectionCommand({ element, operation });
+		}
 		if (operation.kind === "delete") {
 			return new DeleteElementsCommand({
 				elements: [
@@ -1249,6 +1430,7 @@ export class EditorAutomation {
 		this.revision = 0;
 		this.appliedOperations.clear();
 		this.importedOperations.clear();
+		this.importedSubtitleOperations.clear();
 		this.exportedOperations.clear();
 		this.attachedMatteOperations.clear();
 		this.editor.command.clear();
@@ -1267,6 +1449,27 @@ export class EditorAutomation {
 			tracks: scene.tracks,
 		};
 	}
+}
+
+function mergeSubtitleStyles({
+	base,
+	overrides,
+}: {
+	base: SubtitleStyleOverrides | undefined;
+	overrides: SubtitleStyleOverrides | undefined;
+}): SubtitleStyleOverrides | undefined {
+	if (!base && !overrides) return undefined;
+	const background = overrides?.background
+		? { ...base?.background, ...overrides.background }
+		: base?.background;
+	return {
+		...base,
+		...overrides,
+		...(background ? { background } : {}),
+		...(base?.placement || overrides?.placement
+			? { placement: { ...base?.placement, ...overrides?.placement } }
+			: {}),
+	};
 }
 
 function validatePlanShape(plan: AutomationEditPlan): string | null {

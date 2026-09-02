@@ -6,6 +6,8 @@ import type {
 	AutomationEditPlan,
 	AutomationExportRequest,
 	AutomationImportRequest,
+	AutomationImportSubtitlesRequest,
+	AutomationExportSubtitlesRequest,
 	AutomationOpenProjectRequest,
 	AutomationTransferSourceRequest,
 } from "./types";
@@ -62,6 +64,18 @@ type BridgeRequest =
 			id: string;
 			method: "import_media";
 			params: AutomationImportRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "import_subtitles";
+			params: AutomationImportSubtitlesRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "export_subtitles";
+			params: AutomationExportSubtitlesRequest;
 	  }
 	| {
 			kind: "request";
@@ -194,6 +208,10 @@ export class AutomationBridgeClient {
 				return this.automation.exportProject(message.params);
 			case "import_media":
 				return this.automation.importMedia(message.params);
+			case "import_subtitles":
+				return this.automation.importSubtitles(message.params);
+			case "export_subtitles":
+				return this.automation.exportSubtitles(message.params);
 			case "attach_matte":
 				return this.automation.attachMatte(message.params);
 			case "transfer_source_media":

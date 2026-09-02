@@ -4,10 +4,71 @@ import {
 	generateMatteInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
+	exportSubtitlesInputSchema,
 	importMediaInputSchema,
+	importSubtitlesInputSchema,
 	openProjectInputSchema,
 	timelineQueryInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut subtitle MCP contract", () => {
+	test("accepts subtitle import, correction, and export requests", () => {
+		expect(
+			importSubtitlesInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "subtitle-import-1",
+				expectedRevision: 3,
+				path: "C:\\media\\captions.vtt",
+				style: { fontSize: 6, color: "#ffffff" },
+			}).success,
+		).toBe(true);
+		expect(
+			editPlanInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "caption-correction-1",
+				expectedRevision: 4,
+				description: "Correct caption text and timing",
+				operations: [
+					{
+						kind: "update_caption",
+						trackId: "captions",
+						elementId: "caption-1",
+						text: "Corrected caption",
+						startTime: 120000,
+						duration: 240000,
+					},
+				],
+			}).success,
+		).toBe(true);
+		expect(
+			exportSubtitlesInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "subtitle-export-1",
+				expectedRevision: 5,
+				outputPath: "C:\\media\\corrected.srt",
+				format: "srt",
+				trackIds: ["captions"],
+			}).success,
+		).toBe(true);
+	});
+
+	test("rejects an empty caption correction", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "caption-correction-2",
+			expectedRevision: 4,
+			description: "Empty correction",
+			operations: [
+				{
+					kind: "update_caption",
+					trackId: "captions",
+					elementId: "caption-1",
+				},
+			],
+		});
+		expect(result.success).toBe(false);
+	});
+});
 
 describe("OpenCut matte MCP contract", () => {
 	test("accepts a precomputed red-channel video matte", () => {

@@ -206,6 +206,63 @@ export interface AutomationOpenProjectRequest {
 	projectId: string;
 }
 
+export interface AutomationImportSubtitlesRequest {
+	operationId: string;
+	projectId: string;
+	expectedRevision: number;
+	fileName: string;
+	input: string;
+	contentHash: string;
+	style?: SubtitleStyleOverrides;
+}
+
+export interface AutomationImportSubtitlesAppliedResult {
+	status: "applied";
+	operationId: string;
+	revision: number;
+	trackId: string;
+	elementIds: string[];
+	importedCueCount: number;
+	skippedCueCount: number;
+	warnings: string[];
+	snapshot: AutomationProjectSnapshot;
+}
+
+export type AutomationImportSubtitlesResult =
+	| (Omit<AutomationImportSubtitlesAppliedResult, "status"> & {
+			status: "applied" | "replayed";
+	  })
+	| {
+			status: "conflict";
+			operationId: string;
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; operationId: string; reason: string };
+
+export interface AutomationExportSubtitlesRequest {
+	projectId: string;
+	expectedRevision: number;
+	format: "srt" | "vtt";
+	trackIds?: string[];
+}
+
+export type AutomationExportSubtitlesResult =
+	| {
+			status: "serialized";
+			revision: number;
+			format: "srt" | "vtt";
+			trackIds: string[];
+			cueCount: number;
+			content: string;
+	  }
+	| {
+			status: "conflict";
+			expectedRevision: number;
+			actualRevision: number;
+	  }
+	| { status: "rejected"; reason: string };
+
 export interface AutomationProjectActivatedResult {
 	operationId: string;
 	projectId: string;
@@ -254,6 +311,14 @@ export type AutomationEditOperation =
 				duration: MediaTime;
 			}>;
 			style?: SubtitleStyleOverrides;
+	  }
+	| {
+			kind: "update_caption";
+			trackId: string;
+			elementId: string;
+			text?: string;
+			startTime?: MediaTime;
+			duration?: MediaTime;
 	  }
 	| {
 			kind: "delete";

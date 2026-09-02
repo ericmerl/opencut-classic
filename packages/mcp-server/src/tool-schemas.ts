@@ -186,6 +186,22 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			.min(1),
 		style: captionStyleSchema.optional(),
 	}),
+	z
+		.object({
+			kind: z.literal("update_caption"),
+			trackId: z.string().min(1),
+			elementId: z.string().min(1),
+			text: z.string().trim().min(1).optional(),
+			startTime: z.number().int().nonnegative().optional(),
+			duration: z.number().int().positive().optional(),
+		})
+		.refine(
+			(value) =>
+				value.text !== undefined ||
+				value.startTime !== undefined ||
+				value.duration !== undefined,
+			{ message: "at least one caption correction is required" },
+		),
 	z.object({
 		kind: z.literal("delete"),
 		trackId: z.string().min(1),
@@ -474,6 +490,23 @@ export const importMediaInputSchema = z.object({
 		.describe(
 			"When true, the first visual import adopts the media dimensions and frame rate. Defaults to false so imports preserve explicit project settings.",
 		),
+});
+
+export const importSubtitlesInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	path: z.string().min(1),
+	style: captionStyleSchema.optional(),
+});
+
+export const exportSubtitlesInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	outputPath: z.string().min(1),
+	format: z.enum(["srt", "vtt"]),
+	trackIds: z.array(z.string().min(1)).min(1).optional(),
 });
 
 export const attachMatteInputSchema = z.object({
