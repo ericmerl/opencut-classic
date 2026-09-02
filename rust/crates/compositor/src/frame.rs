@@ -51,6 +51,28 @@ pub struct QuadTransformDescriptor {
     pub rotation_degrees: f32,
     pub flip_x: bool,
     pub flip_y: bool,
+    #[serde(default = "NormalizedRectDescriptor::full")]
+    pub source_rect: NormalizedRectDescriptor,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalizedRectDescriptor {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl NormalizedRectDescriptor {
+    fn full() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,5 +163,27 @@ mod tests {
         assert_eq!(layer.masks.len(), 2);
         assert!(matches!(layer.masks[0].channel, MaskChannel::Red));
         assert!(matches!(layer.masks[1].channel, MaskChannel::Alpha));
+        assert_eq!(layer.transform.source_rect.x, 0.0);
+        assert_eq!(layer.transform.source_rect.width, 1.0);
+    }
+
+    #[test]
+    fn deserializes_a_normalized_source_crop() {
+        let transform: super::QuadTransformDescriptor = serde_json::from_value(serde_json::json!({
+            "centerX": 1.0,
+            "centerY": 1.0,
+            "width": 2.0,
+            "height": 2.0,
+            "rotationDegrees": 0.0,
+            "flipX": false,
+            "flipY": false,
+            "sourceRect": { "x": 0.25, "y": 0.1, "width": 0.5, "height": 0.8 }
+        }))
+        .expect("transform should deserialize");
+
+        assert_eq!(transform.source_rect.x, 0.25);
+        assert_eq!(transform.source_rect.y, 0.1);
+        assert_eq!(transform.source_rect.width, 0.5);
+        assert_eq!(transform.source_rect.height, 0.8);
     }
 }

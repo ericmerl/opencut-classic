@@ -7,16 +7,14 @@ import { createCanvasSurface } from "../canvas-utils";
 import { BlurBackgroundNode } from "../nodes/blur-background-node";
 import { ColorNode } from "../nodes/color-node";
 import { EffectLayerNode } from "../nodes/effect-layer-node";
-import {
-	GraphicNode,
-	type ResolvedGraphicNodeState,
-} from "../nodes/graphic-node";
+import { GraphicNode } from "../nodes/graphic-node";
 import { ImageNode } from "../nodes/image-node";
 import { RootNode } from "../nodes/root-node";
 import { StickerNode } from "../nodes/sticker-node";
 import { renderTextToContext, TextNode } from "../nodes/text-node";
 import { VideoNode } from "../nodes/video-node";
 import type { ResolvedVisualSourceNodeState } from "../nodes/visual-node";
+import { computeReframeGeometry, DEFAULT_REFRAME } from "@/rendering";
 import type {
 	FrameDescriptor,
 	FrameItemDescriptor,
@@ -248,11 +246,13 @@ async function collectVisualSourceNode({
 		height: sourceHeight,
 	});
 
-	const transform = computeVisualTransform({
-		renderer,
-		resolved: node.resolved,
+	const transform = computeReframeGeometry({
+		canvasWidth: renderer.width,
+		canvasHeight: renderer.height,
 		sourceWidth,
 		sourceHeight,
+		transform: node.resolved.transform,
+		reframe: node.resolved.reframe ?? DEFAULT_REFRAME,
 	});
 	const { masks, strokeLayer } = buildMaskArtifacts({
 		node,
@@ -324,37 +324,6 @@ function collectTextNode({
 	});
 }
 
-function computeVisualTransform({
-	renderer,
-	resolved,
-	sourceWidth,
-	sourceHeight,
-}: {
-	renderer: CanvasRenderer;
-	resolved: ResolvedVisualSourceNodeState | ResolvedGraphicNodeState;
-	sourceWidth: number;
-	sourceHeight: number;
-}): QuadTransformDescriptor {
-	const containScale = Math.min(
-		renderer.width / sourceWidth,
-		renderer.height / sourceHeight,
-	);
-	const scaledWidth = sourceWidth * containScale * resolved.transform.scaleX;
-	const scaledHeight = sourceHeight * containScale * resolved.transform.scaleY;
-	const absWidth = Math.abs(scaledWidth);
-	const absHeight = Math.abs(scaledHeight);
-
-	return {
-		centerX: renderer.width / 2 + resolved.transform.position.x,
-		centerY: renderer.height / 2 + resolved.transform.position.y,
-		width: absWidth,
-		height: absHeight,
-		rotationDegrees: resolved.transform.rotate,
-		flipX: scaledWidth < 0,
-		flipY: scaledHeight < 0,
-	};
-}
-
 function fullCanvasTransform(
 	renderer: CanvasRenderer,
 ): QuadTransformDescriptor {
@@ -366,6 +335,7 @@ function fullCanvasTransform(
 		rotationDegrees: 0,
 		flipX: false,
 		flipY: false,
+		sourceRect: { x: 0, y: 0, width: 1, height: 1 },
 	};
 }
 
@@ -397,7 +367,13 @@ function buildMaskArtifacts({
 			width,
 			height,
 			draw: (ctx) => {
-				drawTransformedCanvas({ ctx, source: matteSource, transform });
+				drawTransformedCanvas({
+					ctx,
+					source: matteSource,
+					transform,
+					sourceWidth: node.resolved?.matteSourceWidth,
+					sourceHeight: node.resolved?.matteSourceHeight,
+				});
 			},
 		});
 		masks.push({
@@ -582,10 +558,14 @@ function drawTransformedCanvas({
 	ctx,
 	source,
 	transform,
+	sourceWidth,
+	sourceHeight,
 }: {
 	ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 	source: CanvasImageSource;
 	transform: QuadTransformDescriptor;
+	sourceWidth?: number;
+	sourceHeight?: number;
 }) {
 	const x = transform.centerX - transform.width / 2;
 	const y = transform.centerY - transform.height / 2;
@@ -601,12 +581,28 @@ function drawTransformedCanvas({
 		ctx.scale(flipX, flipY);
 		ctx.translate(-transform.centerX, -transform.centerY);
 	}
-	ctx.drawImage(source, x, y, transform.width, transform.height);
+	if (sourceWidth !== undefined && sourceHeight !== undefined) {
+		const rect = transform.sourceRect;
+		ctx.drawImage(
+			source,
+			rect.x * sourceWidth,
+			rect.y * sourceHeight,
+			rect.width * sourceWidth,
+			rect.height * sourceHeight,
+			x,
+			y,
+			transform.width,
+			transform.height,
+		);
+	} else {
+		ctx.drawImage(source, x, y, transform.width, transform.height);
+	}
 	ctx.restore();
 }
 
 function transformHash(transform: QuadTransformDescriptor): string {
-	return `${transform.centerX}:${transform.centerY}:${transform.width}:${transform.height}:${transform.rotationDegrees}:${transform.flipX ? 1 : 0}:${transform.flipY ? 1 : 0}`;
+	const source = transform.sourceRect;
+	return `${transform.centerX}:${transform.centerY}:${transform.width}:${transform.height}:${transform.rotationDegrees}:${transform.flipX ? 1 : 0}:${transform.flipY ? 1 : 0}:${source.x}:${source.y}:${source.width}:${source.height}`;
 }
 
 // Stable identity key for CanvasImageSource. Using a WeakMap → counter keeps

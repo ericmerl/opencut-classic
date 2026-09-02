@@ -3,11 +3,13 @@ import type { MediaAsset } from "@/media/types";
 import { STICKER_INTRINSIC_SIZE_FALLBACK } from "@/stickers/intrinsic-size";
 import { DEFAULT_GRAPHIC_SOURCE_SIZE } from "@/graphics";
 import { measureTextElement } from "@/text/measure-element";
-import {
-	getElementLocalTime,
-} from "@/animation";
+import { getElementLocalTime } from "@/animation";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
-import { buildTransformFromParams } from "@/rendering";
+import {
+	buildReframeFromParams,
+	buildTransformFromParams,
+	computeReframeGeometry,
+} from "@/rendering";
 
 export interface ElementBounds {
 	cx: number;
@@ -30,6 +32,7 @@ function getVisualElementBounds({
 	sourceWidth,
 	sourceHeight,
 	transform,
+	reframe,
 }: {
 	canvasWidth: number;
 	canvasHeight: number;
@@ -41,22 +44,23 @@ function getVisualElementBounds({
 		position: { x: number; y: number };
 		rotate: number;
 	};
+	reframe?: ReturnType<typeof buildReframeFromParams>;
 }): ElementBounds {
-	const containScale = Math.min(
-		canvasWidth / sourceWidth,
-		canvasHeight / sourceHeight,
-	);
-	const scaledWidth = sourceWidth * containScale * transform.scaleX;
-	const scaledHeight = sourceHeight * containScale * transform.scaleY;
-	const cx = canvasWidth / 2 + transform.position.x;
-	const cy = canvasHeight / 2 + transform.position.y;
+	const geometry = computeReframeGeometry({
+		canvasWidth,
+		canvasHeight,
+		sourceWidth,
+		sourceHeight,
+		transform,
+		reframe: reframe ?? buildReframeFromParams({ params: {} }),
+	});
 
 	return {
-		cx,
-		cy,
-		width: scaledWidth,
-		height: scaledHeight,
-		rotation: transform.rotate,
+		cx: geometry.centerX,
+		cy: geometry.centerY,
+		width: geometry.width,
+		height: geometry.height,
+		rotation: geometry.rotationDegrees,
 	};
 }
 
@@ -136,6 +140,7 @@ function getElementBounds({
 			sourceWidth,
 			sourceHeight,
 			transform,
+			reframe: buildReframeFromParams({ params: element.params }),
 		});
 	}
 
@@ -237,7 +242,8 @@ export function getEdgeHandlePosition({
 	const angleRad = (bounds.rotation * Math.PI) / 180;
 	const cos = Math.cos(angleRad);
 	const sin = Math.sin(angleRad);
-	const localX = edge === "right" ? halfWidth : edge === "left" ? -halfWidth : 0;
+	const localX =
+		edge === "right" ? halfWidth : edge === "left" ? -halfWidth : 0;
 	const localY = edge === "bottom" ? halfHeight : 0;
 	return {
 		x: bounds.cx + (localX * cos - localY * sin),

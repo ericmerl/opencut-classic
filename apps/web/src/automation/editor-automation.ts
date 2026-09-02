@@ -52,6 +52,10 @@ import {
 	buildMatteSnapshot,
 	findVideoElement,
 } from "./matte-control";
+import {
+	buildReframeControlCommand,
+	buildReframeSnapshot,
+} from "./reframe-control";
 import { buildTransitionCommand } from "./transition-control";
 import {
 	buildTrimPatch,
@@ -991,6 +995,9 @@ export class EditorAutomation {
 				],
 			});
 		}
+		if (operation.kind === "set_reframe") {
+			return buildReframeControlCommand({ element, operation });
+		}
 		if (operation.kind === "set_audio") {
 			return new UpdateElementsCommand({
 				updates: [
@@ -1174,6 +1181,7 @@ export class EditorAutomation {
 	): AutomationElementSnapshot {
 		const keyframes = getElementKeyframes({ animations: element.animations });
 		const assets = this.editor.media.getAssets();
+		const reframe = buildReframeSnapshot({ element });
 		return {
 			trackId,
 			elementId: element.id,
@@ -1185,6 +1193,7 @@ export class EditorAutomation {
 			trimEnd: element.trimEnd,
 			sourceDuration: getElementSourceDuration({ element }),
 			params: buildElementParamValues({ element }),
+			...(reframe ? { reframe } : {}),
 			...("mediaId" in element ? { mediaId: element.mediaId } : {}),
 			...("sourceType" in element ? { sourceType: element.sourceType } : {}),
 			...("sourceUrl" in element ? { sourceUrl: element.sourceUrl } : {}),

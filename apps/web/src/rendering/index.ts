@@ -10,6 +10,8 @@ export interface Transform {
 	rotate: number;
 }
 
+export * from "./reframe";
+
 export type BlendMode =
 	| "normal"
 	| "darken"

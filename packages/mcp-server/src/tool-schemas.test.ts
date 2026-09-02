@@ -97,6 +97,53 @@ describe("OpenCut timeline-query MCP contract", () => {
 });
 
 describe("OpenCut edit-plan MCP contract", () => {
+	test("accepts crop, cover focal point, and picture-in-picture layouts", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "reframe-1",
+			expectedRevision: 2,
+			description: "Crop the speaker and place the reaction overlay",
+			operations: [
+				{
+					kind: "set_reframe",
+					trackId: "main",
+					elementId: "speaker",
+					mode: "fill",
+					crop: { x: 0.1, y: 0, width: 0.8, height: 1 },
+					focalPoint: { x: 0.65, y: 0.4 },
+				},
+				{
+					kind: "set_reframe",
+					trackId: "overlay",
+					elementId: "reaction",
+					layout: "pip-bottom-right",
+				},
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects invalid and ambiguous reframe rectangles", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "reframe-invalid-1",
+			expectedRevision: 2,
+			description: "Invalid reframe",
+			operations: [
+				{
+					kind: "set_reframe",
+					trackId: "main",
+					elementId: "speaker",
+					targetRect: { x: 0.8, y: 0, width: 0.4, height: 1 },
+					layout: "split-left",
+				},
+			],
+		});
+
+		expect(result.success).toBe(false);
+	});
+
 	test("accepts constant retiming with optional pitch preservation", () => {
 		const result = editPlanInputSchema.safeParse({
 			projectId: "project-1",

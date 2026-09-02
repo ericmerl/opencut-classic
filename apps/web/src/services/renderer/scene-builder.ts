@@ -17,6 +17,7 @@ import type { AnyBaseNode } from "./nodes/base-node";
 import type { TBackground, TCanvasSize } from "@/project/types";
 import { DEFAULT_BACKGROUND_BLUR_INTENSITY } from "@/background/blur";
 import {
+	buildReframeFromParams,
 	buildTransformFromParams,
 	readBlendModeFromParams,
 	readOpacityFromParams,
@@ -111,6 +112,7 @@ function buildTrackNodes({
 							trimEnd: element.trimEnd,
 							retime: element.retime,
 							transform: buildTransformFromParams({ params: element.params }),
+							reframe: buildReframeFromParams({ params: element.params }),
 							animations: element.animations,
 							opacity: readOpacityFromParams({ params: element.params }),
 							blendMode: readBlendModeFromParams({ params: element.params }),
@@ -131,6 +133,7 @@ function buildTrackNodes({
 							trimStart: element.trimStart,
 							trimEnd: element.trimEnd,
 							transform: buildTransformFromParams({ params: element.params }),
+							reframe: buildReframeFromParams({ params: element.params }),
 							animations: element.animations,
 							opacity: readOpacityFromParams({ params: element.params }),
 							blendMode: readBlendModeFromParams({ params: element.params }),

@@ -14,11 +14,17 @@ import {
 	timelineQueryInputSchema,
 } from "./tool-schemas";
 
-const token = process.env.OPENCUT_BRIDGE_TOKEN;
+const token =
+	process.env.OPENCUT_BRIDGE_TOKEN ??
+	process.env.NEXT_PUBLIC_OPENCUT_BRIDGE_TOKEN;
 if (!token || token.length < 32) {
 	throw new Error("OPENCUT_BRIDGE_TOKEN must contain at least 32 characters");
 }
-const port = parsePort(process.env.OPENCUT_BRIDGE_PORT ?? "32191");
+const port = parsePort(
+	process.env.OPENCUT_BRIDGE_PORT ??
+		process.env.NEXT_PUBLIC_OPENCUT_BRIDGE_PORT ??
+		"32191",
+);
 const bridge = new EditorBridge({ token, port });
 const matteGeneration = new MatteGenerationService(bridge);
 const completedExports = new Map<
@@ -151,7 +157,7 @@ function createServer(): McpServer {
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Atomically update project settings, create or configure tracks, set per-clip audio gain, mute, linear fades, or uniform mix gain, create, update, reorder, enable, or remove clip effects, create, update, retime, or remove keyframes, create, update, or remove clip transitions, insert text or timed caption batches, delete, move, retime, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
+				"Atomically update project settings, create or configure tracks, crop or reframe visual clips, set per-clip audio gain, mute, linear fades, or uniform mix gain, create, update, reorder, enable, or remove clip effects, create, update, retime, or remove keyframes, create, update, or remove clip transitions, insert text or timed caption batches, delete, move, retime, set validated element parameters, split, or trim timeline elements. Read the project first and use its current revision.",
 			inputSchema: editPlanInputSchema,
 		},
 		async (plan) => toolResult(await bridge.request("apply_edit_plan", plan)),

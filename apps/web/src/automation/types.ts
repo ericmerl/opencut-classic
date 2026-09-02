@@ -33,7 +33,33 @@ export interface AutomationElementSnapshot {
 	keyframes?: ElementKeyframe[];
 	effects?: AutomationEffectSnapshot[];
 	matte?: AutomationMatteSnapshot;
+	reframe?: AutomationReframeSnapshot;
 }
+
+export interface AutomationNormalizedRect {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+export interface AutomationReframeSnapshot {
+	mode: "contain" | "cover" | "stretch";
+	crop: AutomationNormalizedRect;
+	focalPoint: { x: number; y: number };
+	targetRect: AutomationNormalizedRect;
+}
+
+export type AutomationReframeLayout =
+	| "full-frame"
+	| "split-left"
+	| "split-right"
+	| "split-top"
+	| "split-bottom"
+	| "pip-top-left"
+	| "pip-top-right"
+	| "pip-bottom-left"
+	| "pip-bottom-right";
 
 export interface AutomationMatteSnapshot extends ClipMatteAttachment {
 	assetType: "image" | "video" | null;
@@ -241,6 +267,16 @@ export type AutomationEditOperation =
 			trackId: string;
 			elementId: string;
 			params: Record<string, string | number | boolean>;
+	  }
+	| {
+			kind: "set_reframe";
+			trackId: string;
+			elementId: string;
+			mode?: "fit" | "fill" | "contain" | "cover" | "stretch";
+			crop?: AutomationNormalizedRect;
+			focalPoint?: { x: number; y: number };
+			targetRect?: AutomationNormalizedRect;
+			layout?: AutomationReframeLayout;
 	  }
 	| {
 			kind: "set_audio";

@@ -1,4 +1,4 @@
-import type { BlendMode } from "@/rendering";
+import type { BlendMode, NormalizedRect } from "@/rendering";
 import type { EffectPass } from "@/effects/types";
 
 export type FrameDescriptor = {
@@ -33,6 +33,7 @@ export type QuadTransformDescriptor = {
 	rotationDegrees: number;
 	flipX: boolean;
 	flipY: boolean;
+	sourceRect: NormalizedRect;
 };
 
 export type LayerMaskDescriptor = {

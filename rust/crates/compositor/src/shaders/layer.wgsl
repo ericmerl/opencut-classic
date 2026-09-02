@@ -11,6 +11,8 @@ struct LayerUniforms {
     opacity: f32,
     flip_x: f32,
     flip_y: f32,
+    source_offset: vec2f,
+    source_scale: vec2f,
     _padding: vec2f,
 }
 
@@ -41,10 +43,11 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
         return vec4f(0.0, 0.0, 0.0, 0.0);
     }
 
-    let sample_uv = vec2f(
+    let local_sample_uv = vec2f(
         select(uv.x, 1.0 - uv.x, uniforms.flip_x > 0.5),
         select(uv.y, 1.0 - uv.y, uniforms.flip_y > 0.5),
     );
+    let sample_uv = uniforms.source_offset + local_sample_uv * uniforms.source_scale;
     let color = textureSampleLevel(source_texture, source_sampler, sample_uv, 0.0);
     return vec4f(color.rgb, color.a * uniforms.opacity);
 }

@@ -105,6 +105,32 @@ const transitionTypeSchema = z.enum([
 	"zoom",
 ]);
 
+const normalizedRectSchema = z
+	.object({
+		x: z.number().min(0).max(1),
+		y: z.number().min(0).max(1),
+		width: z.number().min(0.001).max(1),
+		height: z.number().min(0.001).max(1),
+	})
+	.refine((rect) => rect.x + rect.width <= 1, {
+		message: "x + width must be at most 1",
+	})
+	.refine((rect) => rect.y + rect.height <= 1, {
+		message: "y + height must be at most 1",
+	});
+
+const reframeLayoutSchema = z.enum([
+	"full-frame",
+	"split-left",
+	"split-right",
+	"split-top",
+	"split-bottom",
+	"pip-top-left",
+	"pip-top-right",
+	"pip-bottom-left",
+	"pip-bottom-right",
+]);
+
 const editOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("insert_text"),
@@ -193,6 +219,42 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 				message: "params cannot be empty",
 			}),
 	}),
+	z
+		.object({
+			kind: z.literal("set_reframe"),
+			trackId: z.string().min(1),
+			elementId: z.string().min(1),
+			mode: z.enum(["fit", "fill", "contain", "cover", "stretch"]).optional(),
+			crop: normalizedRectSchema.optional(),
+			focalPoint: z
+				.object({
+					x: z.number().min(0).max(1),
+					y: z.number().min(0).max(1),
+				})
+				.optional(),
+			targetRect: normalizedRectSchema.optional(),
+			layout: reframeLayoutSchema.optional(),
+		})
+		.superRefine((value, context) => {
+			if (
+				value.mode === undefined &&
+				value.crop === undefined &&
+				value.focalPoint === undefined &&
+				value.targetRect === undefined &&
+				value.layout === undefined
+			) {
+				context.addIssue({
+					code: "custom",
+					message: "at least one reframe control is required",
+				});
+			}
+			if (value.targetRect && value.layout) {
+				context.addIssue({
+					code: "custom",
+					message: "targetRect and layout cannot be combined",
+				});
+			}
+		}),
 	z
 		.object({
 			kind: z.literal("set_audio"),
