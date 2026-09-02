@@ -1079,6 +1079,62 @@ describe("OpenCut duplication and ripple MCP contract", () => {
 
 		expect(result.success).toBe(false);
 	});
+
+	test("accepts persistent groups, links, and relationship scopes", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "relationships-1",
+			expectedRevision: 9,
+			description: "Create and exercise persistent relationships",
+			operations: [
+				{
+					kind: "set_group",
+					groupId: "group-1",
+					elements: [
+						{ trackId: "video-1", elementId: "clip-1" },
+						{ trackId: "text-1", elementId: "caption-1" },
+					],
+				},
+				{
+					kind: "set_link",
+					linkId: "link-1",
+					elements: [
+						{ trackId: "video-1", elementId: "clip-1" },
+						{ trackId: "audio-1", elementId: "dialogue-1" },
+					],
+				},
+				{
+					kind: "move",
+					trackId: "video-1",
+					elementId: "clip-1",
+					startTime: 120_000,
+					relationshipScope: "all",
+				},
+				{ kind: "clear_group", groupId: "group-1" },
+				{ kind: "clear_link", linkId: "link-1" },
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects singleton relationship creation", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "relationship-singleton-1",
+			expectedRevision: 9,
+			description: "Create an invalid singleton group",
+			operations: [
+				{
+					kind: "set_group",
+					groupId: "group-1",
+					elements: [{ trackId: "video-1", elementId: "clip-1" }],
+				},
+			],
+		});
+
+		expect(result.success).toBe(false);
+	});
 });
 
 describe("OpenCut project-lifecycle MCP contract", () => {

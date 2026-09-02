@@ -87,6 +87,12 @@ import {
 } from "./reframe-control";
 import { buildTransitionCommand } from "./transition-control";
 import { withRipple } from "./ripple-control";
+import {
+	buildRelationshipControlCommand,
+	buildRelationshipMoves,
+	deferRelationshipCommand,
+	expandElementRelationships,
+} from "./relationship-control";
 import { buildAuthoredMaskCommand } from "./authored-mask-control";
 import {
 	buildDefinitionParamPatch,
@@ -1562,18 +1568,33 @@ export class EditorAutomation {
 			});
 			return new BatchCommand([addTrack, ...insertCommands]);
 		}
+		if (
+			operation.kind === "set_group" ||
+			operation.kind === "clear_group" ||
+			operation.kind === "set_link" ||
+			operation.kind === "clear_link"
+		) {
+			return buildRelationshipControlCommand({
+				tracks: this.editor.scenes.getActiveScene().tracks,
+				operation,
+			});
+		}
 		if (operation.kind === "duplicate_elements") {
-			const refs = operation.elements;
-			const refKeys = refs.map((ref) => `${ref.trackId}\u0000${ref.elementId}`);
-			if (new Set(refKeys).size !== refs.length) {
-				throw new Error("duplicate element references are not allowed");
-			}
-			for (const ref of refs) {
-				if (!this.findElement(ref.trackId, ref.elementId)) {
-					throw new Error(`element not found: ${ref.trackId}/${ref.elementId}`);
-				}
-			}
-			return new DuplicateElementsCommand({ elements: refs });
+			expandElementRelationships({
+				tracks: this.editor.scenes.getActiveScene().tracks,
+				refs: operation.elements,
+				scope: operation.relationshipScope,
+			});
+			return deferRelationshipCommand(
+				(tracks) =>
+					new DuplicateElementsCommand({
+						elements: expandElementRelationships({
+							tracks,
+							refs: operation.elements,
+							scope: operation.relationshipScope,
+						}).map(({ trackId, elementId }) => ({ trackId, elementId })),
+					}),
+			);
 		}
 		if (
 			operation.kind === "upsert_transition" ||
@@ -1596,16 +1617,26 @@ export class EditorAutomation {
 			return buildCaptionCorrectionCommand({ element, operation });
 		}
 		if (operation.kind === "delete") {
+			const refs = [
+				{ trackId: operation.trackId, elementId: operation.elementId },
+			];
+			expandElementRelationships({
+				tracks: this.editor.scenes.getActiveScene().tracks,
+				refs,
+				scope: operation.relationshipScope,
+			});
 			return withRipple({
 				enabled: operation.ripple,
-				command: new DeleteElementsCommand({
-					elements: [
-						{
-							trackId: operation.trackId,
-							elementId: operation.elementId,
-						},
-					],
-				}),
+				command: deferRelationshipCommand(
+					(tracks) =>
+						new DeleteElementsCommand({
+							elements: expandElementRelationships({
+								tracks,
+								refs,
+								scope: operation.relationshipScope,
+							}).map(({ trackId, elementId }) => ({ trackId, elementId })),
+						}),
+				),
 			});
 		}
 		if (operation.kind === "split") {
@@ -1768,16 +1799,29 @@ export class EditorAutomation {
 		}
 		if (operation.kind === "move") {
 			assertMediaTime(operation.startTime, "startTime", true);
-			return new MoveElementCommand({
-				moves: [
-					{
-						sourceTrackId: operation.trackId,
-						targetTrackId: operation.targetTrackId ?? operation.trackId,
-						elementId: operation.elementId,
-						newStartTime: operation.startTime,
-					},
-				],
+			const anchor = {
+				trackId: operation.trackId,
+				elementId: operation.elementId,
+			};
+			buildRelationshipMoves({
+				tracks: this.editor.scenes.getActiveScene().tracks,
+				anchor,
+				startTime: operation.startTime,
+				targetTrackId: operation.targetTrackId,
+				scope: operation.relationshipScope,
 			});
+			return deferRelationshipCommand(
+				(tracks) =>
+					new MoveElementCommand({
+						moves: buildRelationshipMoves({
+							tracks,
+							anchor,
+							startTime: operation.startTime,
+							targetTrackId: operation.targetTrackId,
+							scope: operation.relationshipScope,
+						}),
+					}),
+			);
 		}
 
 		return withRipple({
@@ -1902,6 +1946,8 @@ export class EditorAutomation {
 			elementId: element.id,
 			type: element.type,
 			name: element.name,
+			...(element.groupId ? { groupId: element.groupId } : {}),
+			...(element.linkId ? { linkId: element.linkId } : {}),
 			startTime: element.startTime,
 			duration: element.duration,
 			trimStart: element.trimStart,

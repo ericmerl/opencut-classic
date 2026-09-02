@@ -24,6 +24,8 @@ export interface AutomationElementSnapshot {
 	elementId: string;
 	type: string;
 	name: string;
+	groupId?: string;
+	linkId?: string;
 	startTime: MediaTime;
 	duration: MediaTime;
 	trimStart: MediaTime;
@@ -95,6 +97,8 @@ export type AutomationReframeLayout =
 	| "pip-top-right"
 	| "pip-bottom-left"
 	| "pip-bottom-right";
+
+export type AutomationRelationshipScope = "element" | "group" | "link" | "all";
 
 export interface AutomationMatteSnapshot extends ClipMatteAttachment {
 	assetType: "image" | "video" | null;
@@ -517,10 +521,30 @@ export type AutomationEditOperation =
 			trackId: string;
 			elementId: string;
 			ripple?: boolean;
+			relationshipScope?: AutomationRelationshipScope;
 	  }
 	| {
 			kind: "duplicate_elements";
 			elements: Array<{ trackId: string; elementId: string }>;
+			relationshipScope?: AutomationRelationshipScope;
+	  }
+	| {
+			kind: "set_group";
+			groupId: string;
+			elements: Array<{ trackId: string; elementId: string }>;
+	  }
+	| {
+			kind: "clear_group";
+			groupId: string;
+	  }
+	| {
+			kind: "set_link";
+			linkId: string;
+			elements: Array<{ trackId: string; elementId: string }>;
+	  }
+	| {
+			kind: "clear_link";
+			linkId: string;
 	  }
 	| {
 			kind: "move";
@@ -528,6 +552,7 @@ export type AutomationEditOperation =
 			targetTrackId?: string;
 			elementId: string;
 			startTime: MediaTime;
+			relationshipScope?: AutomationRelationshipScope;
 	  }
 	| {
 			kind: "set_params";

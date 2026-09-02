@@ -247,6 +247,156 @@ integrationTest(
 					(element) => element.elementId === graphic.elementId,
 				),
 			).toBe(false);
+
+			const followingGraphic = rippledElements.find(
+				(element) => element.name === "Following graphic",
+			);
+			const duplicatedGraphic = rippledElements.find(
+				(element) =>
+					typeof element.name === "string" && element.name.includes("(copy)"),
+			);
+			if (!followingGraphic || !duplicatedGraphic) {
+				throw new Error("relationship integration fixtures are missing");
+			}
+			const relationshipRefs = [followingGraphic, duplicatedGraphic].map(
+				(element) => ({
+					trackId: requireString(element.trackId, "trackId"),
+					elementId: requireString(element.elementId, "elementId"),
+				}),
+			);
+			const grouped = requireRecord(
+				await bridge.request("apply_edit_plan", {
+					projectId,
+					operationId: "timeline-integration-group",
+					expectedRevision: requireNumber(rippled.revision, "revision"),
+					description: "Create a persistent group",
+					operations: [
+						{
+							kind: "set_group",
+							groupId: "integration-group-1",
+							elements: relationshipRefs,
+						},
+					],
+				}),
+			);
+			const groupMoved = requireRecord(
+				await bridge.request("apply_edit_plan", {
+					projectId,
+					operationId: "timeline-integration-group-move",
+					expectedRevision: requireNumber(grouped.revision, "revision"),
+					description: "Move the complete persistent group",
+					operations: [
+						{
+							kind: "move",
+							...relationshipRefs[0],
+							startTime: 120_000,
+						},
+					],
+				}),
+			);
+			const groupMovedElements = requireRecords(
+				requireRecord(groupMoved.snapshot).elements,
+				"elements",
+			);
+			for (const ref of relationshipRefs) {
+				expect(
+					groupMovedElements.find(
+						(element) => element.elementId === ref.elementId,
+					),
+				).toMatchObject({
+					groupId: "integration-group-1",
+					startTime: 120_000,
+				});
+			}
+
+			const linked = requireRecord(
+				await bridge.request("apply_edit_plan", {
+					projectId,
+					operationId: "timeline-integration-link",
+					expectedRevision: requireNumber(groupMoved.revision, "revision"),
+					description: "Replace the group with a persistent link",
+					operations: [
+						{
+							kind: "set_link",
+							linkId: "integration-link-1",
+							elements: relationshipRefs,
+						},
+						{ kind: "clear_group", groupId: "integration-group-1" },
+					],
+				}),
+			);
+			const linkMoved = requireRecord(
+				await bridge.request("apply_edit_plan", {
+					projectId,
+					operationId: "timeline-integration-link-move",
+					expectedRevision: requireNumber(linked.revision, "revision"),
+					description: "Move the complete persistent link",
+					operations: [
+						{
+							kind: "move",
+							...relationshipRefs[0],
+							startTime: 240_000,
+						},
+					],
+				}),
+			);
+			const linkMovedElements = requireRecords(
+				requireRecord(linkMoved.snapshot).elements,
+				"elements",
+			);
+			for (const ref of relationshipRefs) {
+				const linkedElement = linkMovedElements.find(
+					(element) => element.elementId === ref.elementId,
+				);
+				expect(linkedElement).toMatchObject({
+					linkId: "integration-link-1",
+					startTime: 240_000,
+				});
+				expect(linkedElement?.groupId).toBeUndefined();
+			}
+
+			await worker.stop();
+			const restarted = await worker.ensureConnected(projectId);
+			expect(restarted).toMatchObject({ running: true, connected: true });
+			const reloaded = requireRecord(await bridge.request("read_project", {}));
+			const reloadedElements = requireRecords(reloaded.elements, "elements");
+			for (const ref of relationshipRefs) {
+				expect(
+					reloadedElements.find(
+						(element) => element.elementId === ref.elementId,
+					),
+				).toMatchObject({
+					linkId: "integration-link-1",
+					startTime: 240_000,
+				});
+			}
+
+			const linkDeleted = requireRecord(
+				await bridge.request("apply_edit_plan", {
+					projectId,
+					operationId: "timeline-integration-link-delete",
+					expectedRevision: requireNumber(reloaded.revision, "revision"),
+					description: "Delete the complete persistent link",
+					operations: [
+						{
+							kind: "delete",
+							...relationshipRefs[0],
+							relationshipScope: "link",
+						},
+					],
+				}),
+			);
+			const linkDeletedElements = requireRecords(
+				requireRecord(linkDeleted.snapshot).elements,
+				"elements",
+			);
+			expect(
+				relationshipRefs.every((ref) =>
+					linkDeletedElements.every(
+						(element) => element.elementId !== ref.elementId,
+					),
+				),
+			).toBe(true);
 		} finally {
 			await worker.stop();
 			bridge.stop();

@@ -1,5 +1,6 @@
-import { BatchCommand, type Command } from "@/commands";
-import { ToggleSourceAudioSeparationCommand } from "@/commands/timeline";
+import { BatchCommand } from "@/commands/batch-command";
+import type { Command } from "@/commands/base-command";
+import { ToggleSourceAudioSeparationCommand } from "@/commands/timeline/element/toggle-source-audio-separation";
 import type { MediaAsset } from "@/media/types";
 import {
 	canExtractSourceAudio,

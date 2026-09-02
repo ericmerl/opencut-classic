@@ -30,6 +30,26 @@ export class DuplicateElementsCommand extends Command {
 		this.duplicatedElements = [];
 
 		let updatedTracks = this.savedState;
+		const sourceElements = [
+			...this.savedState.overlay,
+			this.savedState.main,
+			...this.savedState.audio,
+		].flatMap((track) => {
+			const selectedIds = new Set(
+				this.elements
+					.filter((entry) => entry.trackId === track.id)
+					.map((entry) => entry.elementId),
+			);
+			return track.elements.filter((element) => selectedIds.has(element.id));
+		});
+		const duplicateGroupIds = buildDuplicateRelationshipIds({
+			elements: sourceElements,
+			property: "groupId",
+		});
+		const duplicateLinkIds = buildDuplicateRelationshipIds({
+			elements: sourceElements,
+			property: "linkId",
+		});
 
 		for (const track of [
 			...this.savedState.overlay,
@@ -60,6 +80,12 @@ export class DuplicateElementsCommand extends Command {
 						element,
 						id: newId,
 						startTime: element.startTime,
+						groupId: element.groupId
+							? duplicateGroupIds.get(element.groupId)
+							: undefined,
+						linkId: element.linkId
+							? duplicateLinkIds.get(element.linkId)
+							: undefined,
 					}),
 				);
 			}
@@ -117,19 +143,46 @@ function buildDuplicateElement({
 	element,
 	id,
 	startTime,
+	groupId,
+	linkId,
 }: {
 	element: TimelineElement;
 	id: string;
 	startTime: MediaTime;
+	groupId: string | undefined;
+	linkId: string | undefined;
 }): TimelineElement {
 	return {
 		...element,
 		id,
 		name: `${element.name} (copy)`,
 		startTime,
+		groupId,
+		linkId,
 		animations: cloneAnimations({
 			animations: element.animations,
 			shouldRegenerateKeyframeIds: true,
 		}),
 	};
+}
+
+function buildDuplicateRelationshipIds({
+	elements,
+	property,
+}: {
+	elements: TimelineElement[];
+	property: "groupId" | "linkId";
+}): Map<string, string> {
+	const counts = new Map<string, number>();
+	for (const element of elements) {
+		const relationshipId = element[property];
+		if (relationshipId) {
+			counts.set(relationshipId, (counts.get(relationshipId) ?? 0) + 1);
+		}
+	}
+	return new Map(
+		[...counts]
+			.filter(([, count]) => count >= 2)
+			.map(([relationshipId]) => [relationshipId, generateUUID()]),
+	);
 }

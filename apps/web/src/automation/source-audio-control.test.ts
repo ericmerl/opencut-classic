@@ -1,6 +1,7 @@
 /// <reference types="bun" />
 
 import { describe, expect, mock, test } from "bun:test";
+import type { MediaAsset } from "@/media/types";
 import type { ImageElement, VideoElement } from "@/timeline";
 
 mock.module("opencut-wasm", () => ({
@@ -14,13 +15,12 @@ mock.module("opencut-wasm", () => ({
 	snappedSeekTime: ({ time }: { time: number }) => time,
 }));
 
-class BatchCommand {}
 class ToggleSourceAudioSeparationCommand {}
 
-mock.module("@/commands", () => ({ BatchCommand }));
-mock.module("@/commands/timeline", () => ({
-	ToggleSourceAudioSeparationCommand,
-}));
+mock.module(
+	"@/commands/timeline/element/toggle-source-audio-separation",
+	() => ({ ToggleSourceAudioSeparationCommand }),
+);
 
 const { mediaTime } = await import("@/wasm");
 const { buildSourceAudioSeparationCommand } =
@@ -41,12 +41,22 @@ function video(overrides: Partial<VideoElement> = {}): VideoElement {
 	};
 }
 
+function videoAsset(hasAudio: boolean): MediaAsset {
+	return {
+		id: "media-1",
+		name: "presenter.mp4",
+		type: "video",
+		file: new File([], "presenter.mp4", { type: "video/mp4" }),
+		hasAudio,
+	};
+}
+
 describe("source audio separation", () => {
 	test("builds the existing extraction command for a video with audio", () => {
 		const command = buildSourceAudioSeparationCommand({
 			element: video(),
 			trackId: "main",
-			mediaAsset: { id: "media-1", type: "video", hasAudio: true } as never,
+			mediaAsset: videoAsset(true),
 		});
 
 		expect(command.constructor.name).toBe("ToggleSourceAudioSeparationCommand");
@@ -85,11 +95,7 @@ describe("source audio separation", () => {
 			buildSourceAudioSeparationCommand({
 				element: video(),
 				trackId: "main",
-				mediaAsset: {
-					id: "media-1",
-					type: "video",
-					hasAudio: false,
-				} as never,
+				mediaAsset: videoAsset(false),
 			}),
 		).toThrow("does not contain extractable audio");
 	});

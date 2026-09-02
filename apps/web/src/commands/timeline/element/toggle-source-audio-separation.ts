@@ -5,10 +5,7 @@ import {
 	canExtractSourceAudio,
 	isSourceAudioSeparated,
 } from "@/timeline/audio-separation";
-import {
-	applyPlacement,
-	resolveTrackPlacement,
-} from "@/timeline/placement";
+import { applyPlacement, resolveTrackPlacement } from "@/timeline/placement";
 import { updateElementInSceneTracks } from "@/timeline/track-element-update";
 import type {
 	SceneTracks,
@@ -71,11 +68,13 @@ export class ToggleSourceAudioSeparationCommand extends Command {
 			return;
 		}
 
+		const linkId = videoElement.linkId ?? generateUUID();
 		const separatedAudioElement = {
 			...buildSeparatedAudioElement({
 				sourceElement: videoElement,
 			}),
 			id: generateUUID(),
+			linkId,
 		};
 		const placementResult = resolveTrackPlacement({
 			tracks: this.savedState,
@@ -106,6 +105,7 @@ export class ToggleSourceAudioSeparationCommand extends Command {
 				trackId: this.params.trackId,
 				elementId: this.params.elementId,
 				isSourceAudioEnabled: false,
+				linkId,
 			}),
 		);
 	}
@@ -125,11 +125,13 @@ function updateSourceAudioEnabled({
 	trackId,
 	elementId,
 	isSourceAudioEnabled,
+	linkId,
 }: {
 	tracks: SceneTracks;
 	trackId: string;
 	elementId: string;
 	isSourceAudioEnabled: boolean;
+	linkId?: string;
 }): SceneTracks {
 	return updateElementInSceneTracks({
 		tracks,
@@ -140,6 +142,7 @@ function updateSourceAudioEnabled({
 		update: (element) => ({
 			...element,
 			isSourceAudioEnabled,
+			...(linkId ? { linkId } : {}),
 		}),
 	});
 }

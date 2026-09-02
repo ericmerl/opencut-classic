@@ -159,6 +159,15 @@ const reframeLayoutSchema = z.enum([
 	"pip-bottom-right",
 ]);
 
+const relationshipScopeSchema = z
+	.enum(["element", "group", "link", "all"])
+	.default("all");
+
+const elementRefSchema = z.object({
+	trackId: z.string().min(1),
+	elementId: z.string().min(1),
+});
+
 const editOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("insert_text"),
@@ -262,17 +271,30 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
 		ripple: z.boolean().default(false),
+		relationshipScope: relationshipScopeSchema,
 	}),
 	z.object({
 		kind: z.literal("duplicate_elements"),
-		elements: z
-			.array(
-				z.object({
-					trackId: z.string().min(1),
-					elementId: z.string().min(1),
-				}),
-			)
-			.min(1),
+		elements: z.array(elementRefSchema).min(1),
+		relationshipScope: relationshipScopeSchema,
+	}),
+	z.object({
+		kind: z.literal("set_group"),
+		groupId: z.string().trim().min(1),
+		elements: z.array(elementRefSchema).min(2),
+	}),
+	z.object({
+		kind: z.literal("clear_group"),
+		groupId: z.string().trim().min(1),
+	}),
+	z.object({
+		kind: z.literal("set_link"),
+		linkId: z.string().trim().min(1),
+		elements: z.array(elementRefSchema).min(2),
+	}),
+	z.object({
+		kind: z.literal("clear_link"),
+		linkId: z.string().trim().min(1),
 	}),
 	z.object({
 		kind: z.literal("move"),
@@ -291,6 +313,7 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			.int()
 			.nonnegative()
 			.describe("New absolute timeline position in canonical media ticks."),
+		relationshipScope: relationshipScopeSchema,
 	}),
 	z.object({
 		kind: z.literal("set_params"),
