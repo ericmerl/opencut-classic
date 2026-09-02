@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
+import { join } from "node:path";
 import { EditorBridge, type BridgeConnectionIdentity } from "./editor-bridge";
 import { AudioCleanupService } from "./clean-audio";
 import { ExportBatchQueue } from "./export-batches";
@@ -10,13 +11,55 @@ import { ExportReceiptStore } from "./export-receipts";
 import { ExportValidator } from "./export-validator";
 import { MatteGenerationService } from "./generate-matte";
 import { ManagedEditorWorker } from "./managed-editor-worker";
-import { calculateNormalizationGain } from "./audio-normalization";
+import { NormalizeAudioOperation } from "./normalize-audio-operation";
 import { SubtitleFiles } from "./subtitle-files";
+import { SubtitleImportOperation } from "./subtitle-import-operation";
 import { SubjectTrackingService } from "./track-subject";
+import { OperationLedger } from "./operation-ledger";
+import {
+	parseJsonValue,
+	type JsonValue,
+} from "./operation-ledger-schema";
+import {
+	McpLedgerBoundary,
+	requestLedgeredBrowserMutation,
+	requestLedgeredBrowserStep,
+} from "./mcp-ledger-boundary";
+import type { OperationExecutionContext } from "./execute-ledgered-operation";
+import type {
+	CompositeOperationObserver,
+	CompositeProviderEvent,
+} from "./composite-operation-observer";
+import {
+	executeRunExportJobs,
+	recoverRunExportJobs,
+} from "./run-export-jobs-operation";
+import {
+	executeSubtitleExport,
+	recoverSubtitleExport,
+} from "./subtitle-export-operation";
+import {
+	executeCancelBatch,
+	executeCancelJob,
+	executeQueueBatch,
+	executeQueueExport,
+	executeRecordInspection,
+	recoverCancelBatch,
+	recoverCancelJob,
+	recoverQueueBatch,
+	recoverQueueExport,
+	recoverRecordInspection,
+} from "./export-queue-ledger-operations";
+import {
+	getOperationInputSchema,
+	listOperationHistoryInputSchema,
+} from "./operation-tool-schemas";
 import {
 	attachMatteInputSchema,
 	attachCleanAudioInputSchema,
 	cleanAudioInputSchema,
+	cancelExportBatchInputSchema,
+	cancelExportJobInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
 	exportProjectInputSchema,
@@ -28,6 +71,7 @@ import {
 	importSubtitlesInputSchema,
 	listExportJobsInputSchema,
 	listExportBatchesInputSchema,
+	normalizeAudioInputSchema,
 	exportSubtitlesInputSchema,
 	openProjectInputSchema,
 	saveProjectInputSchema,
@@ -38,11 +82,15 @@ import {
 	runExportJobsInputSchema,
 	searchStickersInputSchema,
 	startEditorWorkerInputSchema,
+	stopEditorWorkerInputSchema,
 	syncAudioInputSchema,
 	timelineQueryInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 	withConnectionAffinity,
+	withMutationOperationId,
+	withProjectMutationSafety,
+	undoInputSchema,
 } from "./tool-schemas";
 
 const token =
@@ -57,8 +105,13 @@ const port = parsePort(
 		"32191",
 );
 const bridge = new EditorBridge({ token, port });
-const audioCleanup = new AudioCleanupService(bridge);
+const normalizeAudio = new NormalizeAudioOperation(bridge);
 const exportReceipts = new ExportReceiptStore();
+const audioCleanup = new AudioCleanupService(
+	bridge,
+	undefined,
+	join(exportReceipts.directory, "provider-operations", "audio-cleanup"),
+);
 const exportValidator = new ExportValidator(exportReceipts);
 const projectExports = new ExportProjectService(
 	bridge,
@@ -79,18 +132,25 @@ const exportBatches = new ExportBatchQueue(
 	exportJobs,
 	ExportBatchQueue.storeForReceiptDirectory(exportReceipts.directory),
 );
-const matteGeneration = new MatteGenerationService(bridge);
+const matteGeneration = new MatteGenerationService(
+	bridge,
+	undefined,
+	join(exportReceipts.directory, "provider-operations", "matte-generation"),
+);
 const subtitleFiles = new SubtitleFiles();
-const subjectTracking = new SubjectTrackingService(bridge);
+const subtitleImport = new SubtitleImportOperation(bridge, subtitleFiles);
+const subjectTracking = new SubjectTrackingService(
+	bridge,
+	undefined,
+	join(exportReceipts.directory, "provider-operations", "subject-tracking", "provider-results"),
+);
+const operationLedger = new OperationLedger(
+	process.env.OPENCUT_OPERATION_LEDGER_DIR ??
+		join(exportReceipts.directory, "operation-ledger"),
+);
+await operationLedger.readiness();
+const ledgerBoundary = new McpLedgerBoundary(operationLedger, bridge);
 const completedProjectOperations = new Map<
-	string,
-	{ fingerprint: string; result: Record<string, unknown> }
->();
-const completedNormalizations = new Map<
-	string,
-	{ fingerprint: string; result: Record<string, unknown> }
->();
-const completedSubtitleExports = new Map<
 	string,
 	{ fingerprint: string; result: Record<string, unknown> }
 >();
@@ -121,8 +181,12 @@ function createServer(): McpServer {
 				"Start a managed hidden headless Chrome or Edge editor using the persistent automation profile, then wait for its authenticated bridge connection.",
 			inputSchema: startEditorWorkerInputSchema,
 		},
-		async ({ projectId }) =>
-			toolResult(await editorWorker.ensureConnected(projectId)),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute("opencut_start_editor_worker", input, () =>
+					editorWorker.ensureConnected(input.projectId),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -130,8 +194,14 @@ function createServer(): McpServer {
 		{
 			description:
 				"Stop the headless editor process launched by this MCP server. Manually opened editor sessions are not stopped.",
+			inputSchema: stopEditorWorkerInputSchema,
 		},
-		async () => toolResult(await editorWorker.stop()),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute("opencut_stop_editor_worker", input, () =>
+					editorWorker.stop(),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -149,11 +219,13 @@ function createServer(): McpServer {
 		{
 			description:
 				"Create and activate a new OpenCut project, then navigate the connected editor to it.",
-			inputSchema: withConnectionAffinity(createProjectInputSchema),
+			inputSchema: withMutationOperationId(createProjectInputSchema),
 		},
 		async (params) =>
 			toolResult(
-				await runProjectOperation({ method: "create_project", input: params }),
+				await ledgerBoundary.execute("opencut_create_project", params, (context) =>
+					requestLedgeredBrowserMutation(context, bridge, "create_project", params),
+				),
 			),
 	);
 
@@ -162,11 +234,13 @@ function createServer(): McpServer {
 		{
 			description:
 				"Open an existing OpenCut project and navigate the connected editor to it.",
-			inputSchema: withConnectionAffinity(openProjectInputSchema),
+			inputSchema: withMutationOperationId(openProjectInputSchema),
 		},
 		async (params) =>
 			toolResult(
-				await runProjectOperation({ method: "open_project", input: params }),
+				await ledgerBoundary.execute("opencut_open_project", params, (context) =>
+					requestLedgeredBrowserMutation(context, bridge, "open_project", params),
+				),
 			),
 	);
 
@@ -188,7 +262,17 @@ function createServer(): McpServer {
 			inputSchema: saveProjectInputSchema,
 		},
 		async (params) =>
-			toolResult(await bridge.request("save_project", params, 5 * 60_000)),
+			toolResult(
+				await ledgerBoundary.execute("opencut_save_project", params, (context) =>
+					requestLedgeredBrowserMutation(
+						context,
+						bridge,
+						"save_project",
+						params,
+						5 * 60_000,
+					),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -200,6 +284,30 @@ function createServer(): McpServer {
 		},
 		async (params) =>
 			toolResult(await bridge.request("get_save_receipt", params)),
+	);
+
+	server.registerTool(
+		"opencut_get_operation",
+		{
+			description:
+				"Read the latest durable record and versions for one operation.",
+			inputSchema: getOperationInputSchema,
+		},
+		async ({ operationId }) =>
+			toolResult({
+				operation: await operationLedger.get(operationId),
+				versions: await operationLedger.versions(operationId),
+			}),
+	);
+
+	server.registerTool(
+		"opencut_list_operation_history",
+		{
+			description:
+				"List append-only durable operation history with bounded filters and cursor pagination.",
+			inputSchema: listOperationHistoryInputSchema,
+		},
+		async (input) => toolResult(await operationLedger.listPage(input)),
 	);
 
 	server.registerTool(
@@ -266,18 +374,19 @@ function createServer(): McpServer {
 		{
 			description:
 				"Measure and normalize the active timeline mix to a target integrated loudness while respecting a true-peak ceiling and preserving relative clip levels and volume automation.",
-			inputSchema: withConnectionAffinity(
-				z.object({
-					projectId: z.string().min(1),
-					operationId: z.string().min(1),
-					expectedRevision: z.number().int().nonnegative(),
-					targetLufs: z.number().min(-36).max(-5).default(-14),
-					maxTruePeakDbtp: z.number().min(-9).max(0).default(-1),
-					maxGainDb: z.number().min(0).max(20).default(20),
-				}),
+			inputSchema: withProjectMutationSafety(
+				normalizeAudioInputSchema,
 			),
 		},
-		async (input) => toolResult(await normalizeAudio(input)),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_normalize_audio",
+					input,
+					(context) => normalizeAudio.execute(input, context),
+					(context) => normalizeAudio.recover(input, context),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -285,10 +394,20 @@ function createServer(): McpServer {
 		{
 			description:
 				"Synchronize a target video or audio clip to a reference clip by decoding both sources locally, estimating waveform lag with bounded normalized cross-correlation, and moving the target on the current track.",
-			inputSchema: withConnectionAffinity(syncAudioInputSchema),
+			inputSchema: withProjectMutationSafety(syncAudioInputSchema),
 		},
 		async (input) =>
-			toolResult(await bridge.request("sync_audio", input, 10 * 60_000)),
+			toolResult(
+				await ledgerBoundary.execute("opencut_sync_audio", input, (context) =>
+					requestLedgeredBrowserMutation(
+						context,
+						bridge,
+						"sync_audio",
+						input,
+						10 * 60_000,
+					),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -296,21 +415,33 @@ function createServer(): McpServer {
 		{
 			description:
 				"Attach a precomputed cleaned-audio file to an uploaded audio or video clip while preserving the clip's timing, trim, retime, fades, ducking, mute, and volume automation. Use apply_edit_plan to enable, disable, or detach it.",
-			inputSchema: withConnectionAffinity(attachCleanAudioInputSchema),
+			inputSchema: withProjectMutationSafety(attachCleanAudioInputSchema),
 		},
-		async ({ path, ...params }) => {
-			const ticket = await bridge.mediaTickets.create(path);
-			return toolResult(
-				await bridge.request("attach_clean_audio", {
-					...params,
-					url: ticket.url,
-					name: ticket.name,
-					mimeType: ticket.mimeType,
-					artifactHash: ticket.contentHash,
-					artifactFingerprint: ticket.sourceFingerprint,
-				}),
-			);
-		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_attach_clean_audio",
+					input,
+					async (context) => {
+						const { path, ...params } = input;
+						const ticket = await bridge.mediaTickets.create(path);
+						const request = {
+							...params,
+							url: ticket.url,
+							name: ticket.name,
+							mimeType: ticket.mimeType,
+							artifactHash: ticket.contentHash,
+							artifactFingerprint: ticket.sourceFingerprint,
+						};
+						return requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"attach_clean_audio",
+							request,
+						);
+					},
+				),
+			),
 	);
 
 	server.registerTool(
@@ -318,9 +449,33 @@ function createServer(): McpServer {
 		{
 			description:
 				"Clean the complete uploaded source audio through the configured external provider and attach the result non-destructively to the selected audio or video clip. Existing trim, retime, fades, ducking, mute, and volume automation remain on the clip.",
-			inputSchema: withConnectionAffinity(cleanAudioInputSchema),
+			inputSchema: withProjectMutationSafety(cleanAudioInputSchema),
 		},
-		async (input) => toolResult(await audioCleanup.clean(input)),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_clean_audio",
+					input,
+					(context) =>
+						audioCleanup.clean(
+							input,
+							observeProvider(context, input.operationId),
+						),
+					async (context) => {
+						const artifact = retainedProviderArtifact(
+							context,
+							"audio-cleaner-command",
+						);
+						return artifact
+							? audioCleanup.attachRecovered(
+									input,
+									artifact,
+									observeProvider(context, input.operationId),
+								)
+							: null;
+					},
+				),
+			),
 	);
 
 	server.registerTool(
@@ -328,9 +483,14 @@ function createServer(): McpServer {
 		{
 			description:
 				"Atomically update project settings; create or configure tracks; insert native graphics, stickers, adjustment layers, text, or timed captions; author or remove visual masks; create, break apart, or inspect persistent compound clips; create or clear persistent element groups and links; crop or reframe clips; separate and automatically link video source audio; enable or detach a cleaned source; apply dialogue ducking; set audio gain, mute, fades, or uniform mix gain; manage clip effects, keyframes, and transitions; duplicate, delete, or move relationship sets; or retime, parameterize, split, and trim elements with optional ripple behavior. Read the project first and use its current revision.",
-			inputSchema: withConnectionAffinity(editPlanInputSchema),
+			inputSchema: withProjectMutationSafety(editPlanInputSchema),
 		},
-		async (plan) => toolResult(await bridge.request("apply_edit_plan", plan)),
+		async (plan) =>
+			toolResult(
+				await ledgerBoundary.execute("opencut_apply_edit_plan", plan, (context) =>
+					requestLedgeredBrowserMutation(context, bridge, "apply_edit_plan", plan),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -338,14 +498,20 @@ function createServer(): McpServer {
 		{
 			description:
 				"Undo one OpenCut command after checking the current revision.",
-			inputSchema: withConnectionAffinity(
-				z.object({
-					projectId: z.string().min(1),
-					expectedRevision: z.number().int().nonnegative(),
+			inputSchema: withProjectMutationSafety(undoInputSchema),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute("opencut_undo", params, (context) => {
+					const { undoOfOperationId: _undoOf, ...request } = params;
+					return requestLedgeredBrowserMutation(
+						context,
+						bridge,
+						"undo",
+						request,
+					);
 				}),
 			),
-		},
-		async (params) => toolResult(await bridge.request("undo", params)),
 	);
 
 	server.registerTool(
@@ -353,20 +519,32 @@ function createServer(): McpServer {
 		{
 			description:
 				"Import an image, audio file, or video from an absolute local path and place it automatically or on an explicit compatible track without a browser file picker. Project canvas and frame rate are preserved unless adoptMediaSettings is true.",
-			inputSchema: withConnectionAffinity(importMediaInputSchema),
+			inputSchema: withProjectMutationSafety(importMediaInputSchema),
 		},
-		async ({ path, ...params }) => {
-			const ticket = await bridge.mediaTickets.create(path);
-			return toolResult(
-				await bridge.request("import_media", {
-					...params,
-					url: ticket.url,
-					name: ticket.name,
-					mimeType: ticket.mimeType,
-					sourceFingerprint: ticket.sourceFingerprint,
-				}),
-			);
-		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_import_media",
+					input,
+					async (context) => {
+						const { path, ...params } = input;
+						const ticket = await bridge.mediaTickets.create(path);
+						const request = {
+							...params,
+							url: ticket.url,
+							name: ticket.name,
+							mimeType: ticket.mimeType,
+							sourceFingerprint: ticket.sourceFingerprint,
+						};
+						return requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"import_media",
+							request,
+						);
+					},
+				),
+			),
 	);
 
 	server.registerTool(
@@ -374,27 +552,17 @@ function createServer(): McpServer {
 		{
 			description:
 				"Import SRT, ASS, or WebVTT captions from an absolute local UTF-8 file onto a new text track without a browser file picker. Parsed ASS styling is preserved where OpenCut supports it, and an optional shared style can override imported styling.",
-			inputSchema: withConnectionAffinity(importSubtitlesInputSchema),
+			inputSchema: withProjectMutationSafety(importSubtitlesInputSchema),
 		},
-		async ({ path, ...params }) => {
-			const source = await subtitleFiles.read(path);
-			const result = await bridge.request("import_subtitles", {
-				...params,
-				fileName: source.fileName,
-				input: source.input,
-				contentHash: source.contentHash,
-			});
-			return toolResult(
-				result && typeof result === "object"
-					? {
-							...result,
-							sourcePath: path,
-							sourceBytes: source.bytesRead,
-							sourceSha256: source.contentHash,
-						}
-					: result,
-			);
-		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_import_subtitles",
+					input,
+					(context) => subtitleImport.execute(input, context),
+					(context) => subtitleImport.recover(input, context),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -402,11 +570,19 @@ function createServer(): McpServer {
 		{
 			description:
 				"Render the active timeline audio mix, transcribe it with OpenCut's local Whisper worker, chunk the result into captions, and atomically insert a new text track. The first model use may download model files and can take several minutes.",
-			inputSchema: withConnectionAffinity(transcribeTimelineInputSchema),
+			inputSchema: withProjectMutationSafety(transcribeTimelineInputSchema),
 		},
 		async (input) =>
 			toolResult(
-				await bridge.request("transcribe_timeline", input, 2 * 60 * 60_000),
+				await ledgerBoundary.execute("opencut_transcribe_timeline", input, (context) =>
+					requestLedgeredBrowserMutation(
+						context,
+						bridge,
+						"transcribe_timeline",
+						input,
+						2 * 60 * 60_000,
+					),
+				),
 			),
 	);
 
@@ -415,49 +591,24 @@ function createServer(): McpServer {
 		{
 			description:
 				"Export caption text elements from all text tracks, or selected text tracks, to a new absolute local SRT or WebVTT file with a SHA-256 receipt.",
-			inputSchema: withConnectionAffinity(exportSubtitlesInputSchema),
+			inputSchema: withProjectMutationSafety(exportSubtitlesInputSchema),
 		},
-		async (input) => {
-			const fingerprint = JSON.stringify(input);
-			const prior = completedSubtitleExports.get(input.operationId);
-			if (prior) {
-				if (prior.fingerprint !== fingerprint) {
-					throw new Error(
-						"operationId was already used for a different subtitle export",
-					);
-				}
-				return toolResult({ ...prior.result, status: "replayed" });
-			}
-
-			const { operationId, outputPath, ...request } = input;
-			const result = await bridge.request("export_subtitles", request);
-			if (!isSerializedSubtitles(result)) return toolResult(result);
-			const receipt = await subtitleFiles.write({
-				path: outputPath,
-				format: input.format,
-				content: result.content,
-			});
-			const completed = {
-				status: "exported",
-				operationId,
-				projectId: result.projectId,
-				sceneId: result.sceneId,
-				revision: result.revision,
-				format: result.format,
-				trackIds: result.trackIds,
-				cueCount: result.cueCount,
-				bridgeProtocolVersion: result.bridgeProtocolVersion,
-				connectionIdentity: result.connectionIdentity,
-				requestConnectionIdentity: result.requestConnectionIdentity,
-				contentIdentity: result.contentIdentity,
-				...receipt,
-			};
-			completedSubtitleExports.set(operationId, {
-				fingerprint,
-				result: completed,
-			});
-			return toolResult(completed);
-		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_export_subtitles",
+					input,
+					(context) =>
+						executeSubtitleExport(bridge, subtitleFiles, input, context),
+					(context) =>
+						recoverSubtitleExport(
+							bridge,
+							subtitleFiles,
+							input,
+							context,
+						),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -465,21 +616,33 @@ function createServer(): McpServer {
 		{
 			description:
 				"Attach a precomputed image or video foreground matte to a video clip. The artifact must match the source aspect ratio; video mattes must cover the full source duration. Use apply_edit_plan to enable, disable, or detach it.",
-			inputSchema: withConnectionAffinity(attachMatteInputSchema),
+			inputSchema: withProjectMutationSafety(attachMatteInputSchema),
 		},
-		async ({ path, ...params }) => {
-			const ticket = await bridge.mediaTickets.create(path);
-			return toolResult(
-				await bridge.request("attach_matte", {
-					...params,
-					url: ticket.url,
-					name: ticket.name,
-					mimeType: ticket.mimeType,
-					artifactHash: ticket.contentHash,
-					artifactFingerprint: ticket.sourceFingerprint,
-				}),
-			);
-		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_attach_matte",
+					input,
+					async (context) => {
+						const { path, ...params } = input;
+						const ticket = await bridge.mediaTickets.create(path);
+						const request = {
+							...params,
+							url: ticket.url,
+							name: ticket.name,
+							mimeType: ticket.mimeType,
+							artifactHash: ticket.contentHash,
+							artifactFingerprint: ticket.sourceFingerprint,
+						};
+						return requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"attach_matte",
+							request,
+						);
+					},
+				),
+			),
 	);
 
 	server.registerTool(
@@ -487,9 +650,34 @@ function createServer(): McpServer {
 		{
 			description:
 				"Generate and attach a foreground matte for one video clip through the configured external provider. The source stays local, model provenance is persisted, and the current project revision is required.",
-			inputSchema: withConnectionAffinity(generateMatteInputSchema),
+			inputSchema: withProjectMutationSafety(generateMatteInputSchema),
 		},
-		async (input) => toolResult(await matteGeneration.generate(input)),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_generate_matte",
+					input,
+					(context) =>
+						matteGeneration.generate(
+							input,
+							observeProvider(context, input.operationId),
+						),
+					async (context) => {
+						const artifact = retainedProviderArtifact(
+							context,
+							"matte-producer-command",
+						);
+						const channel = providerCheckpointChannel(context);
+						return artifact && channel
+							? matteGeneration.attachRecovered(
+									input,
+									{ ...artifact, channel },
+									observeProvider(context, input.operationId),
+								)
+							: null;
+					},
+				),
+			),
 	);
 
 	server.registerTool(
@@ -497,9 +685,30 @@ function createServer(): McpServer {
 		{
 			description:
 				"Track a subject through a video clip with the configured local provider, map source samples through trim and retime, smooth the motion, and atomically create focal-point or crop reframe keyframes.",
-			inputSchema: withConnectionAffinity(trackSubjectInputSchema),
+			inputSchema: withProjectMutationSafety(trackSubjectInputSchema),
 		},
-		async (input) => toolResult(await subjectTracking.track(input)),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_track_subject",
+					input,
+					(context) =>
+						subjectTracking.track(
+							input,
+							observeProvider(context, input.operationId),
+						),
+					async (context) => {
+						const recovery = retainedTrackingRecovery(context);
+						return recovery
+							? subjectTracking.applyRecovered(
+									input,
+									recovery,
+									observeProvider(context, input.operationId),
+								)
+							: null;
+					},
+				),
+			),
 	);
 
 	server.registerTool(
@@ -507,9 +716,59 @@ function createServer(): McpServer {
 		{
 			description:
 				"Render the active project to a new absolute local file, fully decode and probe it, extract hash-locked opening, middle, and ending frame samples, and persist a durable receipt for watermark inspection.",
-			inputSchema: withConnectionAffinity(exportProjectInputSchema),
+			inputSchema: withProjectMutationSafety(exportProjectInputSchema),
 		},
-		async (input) => toolResult(await projectExports.export(input)),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_export_project",
+					input,
+					async (context) => {
+						await context.checkpoint({
+							checkpoint: operationCheckpoint(
+								requiredOperationId(input.operationId),
+								"filesystem",
+								"prepared",
+								{ outputPath: input.outputPath },
+							),
+						});
+						const result = await projectExports.export(input);
+						const receipt = await exportReceipts.get(input.operationId);
+						if (receipt) {
+							await context.checkpoint({
+								phase: "verifying",
+								checkpoint: operationCheckpoint(
+									input.operationId,
+									"filesystem",
+									"verified",
+									{ receiptPath: exportReceipts.receiptPath(input.operationId) },
+								),
+							});
+						}
+						return result;
+					},
+					async (context) => {
+						const receipt = await exportReceipts.get(input.operationId);
+						if (!receipt) return null;
+						await context.checkpoint({
+							phase: "verifying",
+							checkpoint: operationCheckpoint(
+								requiredOperationId(input.operationId),
+								"filesystem",
+								"verified",
+								{ receiptPath: exportReceipts.receiptPath(input.operationId) },
+							),
+						});
+						return {
+							...receipt.result,
+							status: "replayed",
+							replayed: true,
+							inspection: receipt.inspection,
+							receiptPath: exportReceipts.receiptPath(input.operationId),
+						};
+					},
+				),
+			),
 	);
 
 	server.registerTool(
@@ -517,10 +776,17 @@ function createServer(): McpServer {
 		{
 			description:
 				"Persist an export job and run it automatically when an authenticated editor worker is connected. The job survives MCP restarts.",
-			inputSchema: withConnectionAffinity(queueExportInputSchema),
+			inputSchema: withProjectMutationSafety(queueExportInputSchema),
 		},
-		async ({ jobId, ...input }) =>
-			toolResult(await exportJobs.enqueue({ jobId, input })),
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_queue_export",
+					params,
+					(context) => executeQueueExport(exportJobs, params, context),
+					(context) => recoverQueueExport(exportJobs, params, context),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -528,9 +794,27 @@ function createServer(): McpServer {
 		{
 			description:
 				"Persist and enqueue a restart-safe matrix of platform-specific export variants. Each variant gets an independent durable job, validation receipt, canvas override, and output path.",
-			inputSchema: withConnectionAffinity(queueExportBatchInputSchema),
+			inputSchema: withProjectMutationSafety(queueExportBatchInputSchema),
 		},
-		async (input) => toolResult(await exportBatches.enqueue(input)),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_queue_export_batch",
+					input,
+					(context) =>
+						executeQueueBatch(
+							exportBatches,
+							{ ...input, operationId: requiredOperationId(input.operationId) },
+							context,
+						),
+					(context) =>
+						recoverQueueBatch(
+							exportBatches,
+							{ ...input, operationId: requiredOperationId(input.operationId) },
+							context,
+						),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -566,16 +850,27 @@ function createServer(): McpServer {
 		{
 			description:
 				"Cancel every still-queued variant in one export batch. Running or terminal variants are preserved and reported.",
-			inputSchema: getExportBatchInputSchema,
+			inputSchema: cancelExportBatchInputSchema,
 		},
-		async ({ batchId }) => {
-			const summary = await exportBatches.cancel(batchId);
-			return toolResult(
-				summary
-					? { status: "found", summary }
-					: { status: "not-found", batchId },
-			);
-		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_cancel_export_batch",
+					input,
+					(context) =>
+						executeCancelBatch(
+							exportBatches,
+							{ ...input, operationId: requiredOperationId(input.operationId) },
+							context,
+						),
+					(context) =>
+						recoverCancelBatch(
+							exportBatches,
+							{ ...input, operationId: requiredOperationId(input.operationId) },
+							context,
+						),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -606,9 +901,27 @@ function createServer(): McpServer {
 		{
 			description:
 				"Cancel a queued export job. A running renderer cannot yet be interrupted.",
-			inputSchema: getExportJobInputSchema,
+			inputSchema: cancelExportJobInputSchema,
 		},
-		async ({ jobId }) => toolResult(await exportJobs.cancel(jobId)),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_cancel_export_job",
+					input,
+					(context) =>
+						executeCancelJob(
+							exportJobs,
+							{ ...input, operationId: requiredOperationId(input.operationId) },
+							context,
+						),
+					(context) =>
+						recoverCancelJob(
+							exportJobs,
+							{ ...input, operationId: requiredOperationId(input.operationId) },
+							context,
+						),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -618,11 +931,32 @@ function createServer(): McpServer {
 				"Run queued export jobs now through the connected editor worker, up to the requested limit.",
 			inputSchema: runExportJobsInputSchema,
 		},
-		async ({ limit }) =>
-			toolResult({
-				connected: bridge.getStatus().connected,
-				processed: await exportJobs.runQueued(limit),
-			}),
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_run_export_jobs",
+					input,
+					(context) =>
+						executeRunExportJobs(
+							exportJobs,
+							bridge.getStatus().connected,
+							{
+								operationId: requiredOperationId(input.operationId),
+								limit: input.limit,
+							},
+							context,
+						),
+					(context) =>
+						recoverRunExportJobs(
+							exportJobs,
+							{
+								operationId: requiredOperationId(input.operationId),
+								limit: input.limit,
+							},
+							context,
+						),
+				),
+			),
 	);
 
 	server.registerTool(
@@ -653,12 +987,34 @@ function createServer(): McpServer {
 				"Record a completed human or vision review of the hash-locked export frame samples. Use verified-clean only after inspecting the opening, middle, and ending full frames including all four corners.",
 			inputSchema: recordExportInspectionInputSchema,
 		},
-		async ({ watermarkStatus, ...input }) =>
+		async (input) =>
 			toolResult(
-				await exportReceipts.recordInspection({
-					...input,
-					status: watermarkStatus,
-				}),
+				await ledgerBoundary.execute(
+					"opencut_record_export_inspection",
+					input,
+					(context) =>
+						executeRecordInspection(
+							exportReceipts,
+							{
+								...input,
+								inspectionOperationId: requiredOperationId(
+									input.inspectionOperationId,
+								),
+							},
+							context,
+						),
+					(context) =>
+						recoverRecordInspection(
+							exportReceipts,
+							{
+								...input,
+								inspectionOperationId: requiredOperationId(
+									input.inspectionOperationId,
+								),
+							},
+							context,
+						),
+				),
 			),
 	);
 
@@ -674,6 +1030,7 @@ function shutdown(): void {
 	exportJobs.stop();
 	void editorWorker.stop();
 	bridge.stop();
+	operationLedger.close();
 	void handle.close();
 }
 
@@ -706,6 +1063,180 @@ function toolResult(value: unknown) {
 	};
 }
 
+function operationCheckpoint(
+	checkpointId: string,
+	kind: "editor" | "provider" | "filesystem" | "job" | "save",
+	state: "prepared" | "committed" | "verified",
+	metadata: Record<string, JsonValue>,
+) {
+	return {
+		checkpointId,
+		kind,
+		state,
+		recordedAt: new Date().toISOString(),
+		metadata,
+	};
+}
+
+function requiredOperationId(value: string | undefined): string {
+	if (!value) throw new Error("operationId is required for mutations");
+	return value;
+}
+
+function observeProvider(
+	context: OperationExecutionContext,
+	operationId: string,
+): CompositeOperationObserver {
+	return async (event: CompositeProviderEvent) => {
+		await context.checkpoint({
+			checkpoint: operationCheckpoint(
+				operationId,
+				"provider",
+				event.state,
+				{
+					provider: event.provider,
+					...(event.metadata ?? {}),
+				},
+			),
+			providerProvenance: [
+				{
+					provider: event.provider,
+					...(event.modelId ? { modelId: event.modelId } : {}),
+					...(event.modelVersion
+						? { modelVersion: event.modelVersion }
+						: {}),
+					...(event.artifact ? { artifactHash: event.artifact.sha256 } : {}),
+					...(event.metadata
+						? { metadata: parseJsonValue(event.metadata) as Record<string, JsonValue> }
+						: {}),
+				},
+			],
+			...(event.artifact
+				? {
+						artifacts: [
+							{
+								artifactId: event.artifact.sha256,
+								kind: "provider-output" as const,
+								state:
+									event.state === "verified"
+										? ("verified" as const)
+										: ("created" as const),
+								sha256: event.artifact.sha256,
+								bytes: event.artifact.bytes ?? null,
+								path: event.artifact.path ?? null,
+								mimeType: event.artifact.mimeType ?? null,
+							},
+						],
+					}
+				: {}),
+		});
+	};
+}
+
+function retainedProviderArtifact(
+	context: OperationExecutionContext,
+	provider: string,
+): {
+	path: string;
+	sha256: string;
+	modelId: string;
+	modelVersion: string;
+} | null {
+	const record = context.record();
+	const artifact = record.artifacts.find(
+		(candidate) =>
+			candidate.kind === "provider-output" &&
+			candidate.path !== null &&
+			candidate.sha256 !== null,
+	);
+	const provenance = record.providerProvenance.find(
+		(candidate) => candidate.provider === provider,
+	);
+	return artifact && provenance?.modelId && provenance.modelVersion
+		? {
+				path: artifact.path!,
+				sha256: artifact.sha256!,
+				modelId: provenance.modelId,
+				modelVersion: provenance.modelVersion,
+			}
+		: null;
+}
+
+function providerCheckpointChannel(
+	context: OperationExecutionContext,
+): "alpha" | "red" | null {
+	for (const checkpoint of context.record().checkpoints) {
+		const channel = checkpoint.metadata.channel;
+		if (channel === "alpha" || channel === "red") return channel;
+	}
+	return null;
+}
+
+function retainedTrackingRecovery(context: OperationExecutionContext): {
+	samples: Array<{
+		sourceTime: number;
+		box: { x: number; y: number; width: number; height: number };
+		confidence?: number;
+	}>;
+	modelId: string;
+	modelVersion: string;
+} | null {
+	const checkpoint = context
+		.record()
+		.checkpoints.find(
+			(candidate) =>
+				candidate.kind === "provider" &&
+				Array.isArray(candidate.metadata.samples),
+		);
+	const provenance = context
+		.record()
+		.providerProvenance.find(
+			(candidate) => candidate.provider === "subject-tracker-command",
+		);
+	if (
+		!checkpoint ||
+		!provenance?.modelId ||
+		!provenance.modelVersion ||
+		!Array.isArray(checkpoint.metadata.samples)
+	)
+		return null;
+	const samples = checkpoint.metadata.samples.map(parseTrackingSample);
+	return samples.every((sample) => sample !== null)
+		? {
+				samples: samples as NonNullable<(typeof samples)[number]>[],
+				modelId: provenance.modelId,
+				modelVersion: provenance.modelVersion,
+			}
+		: null;
+}
+
+function parseTrackingSample(value: JsonValue) {
+	if (!isRecord(value) || !isRecord(value.box)) return null;
+	const box = value.box;
+	if (
+		typeof value.sourceTime !== "number" ||
+		!Number.isInteger(value.sourceTime) ||
+		value.sourceTime < 0 ||
+		![box.x, box.y, box.width, box.height].every(
+			(candidate) => typeof candidate === "number" && Number.isFinite(candidate),
+		) ||
+		(value.confidence !== undefined && typeof value.confidence !== "number")
+	)
+		return null;
+	return {
+		sourceTime: value.sourceTime,
+		box: {
+			x: box.x as number,
+			y: box.y as number,
+			width: box.width as number,
+			height: box.height as number,
+		},
+		...(typeof value.confidence === "number"
+			? { confidence: value.confidence }
+			: {}),
+	};
+}
+
 async function runProjectOperation({
 	method,
 	input,
@@ -731,114 +1262,6 @@ async function runProjectOperation({
 			result: { ...result },
 		});
 	}
-	return result;
-}
-
-async function normalizeAudio(input: {
-	bridgeProtocolVersion?: 1 | 2;
-	expectedConnectionIdentity?: BridgeConnectionIdentity;
-	projectId: string;
-	operationId: string;
-	expectedRevision: number;
-	targetLufs: number;
-	maxTruePeakDbtp: number;
-	maxGainDb: number;
-}): Promise<unknown> {
-	const expectedIdentity = expectedV2Identity(input);
-	const fingerprint = JSON.stringify(input);
-	const prior = completedNormalizations.get(input.operationId);
-	if (prior) {
-		if (prior.fingerprint !== fingerprint) {
-			throw new Error(
-				"operationId was already used for a different audio normalization",
-			);
-		}
-		return { ...prior.result, status: "replayed" };
-	}
-	const beforeResult = await bridge.request(
-		"analyze_audio",
-		{
-			...bridgeProtocolContext(input),
-			projectId: input.projectId,
-			expectedRevision: input.expectedRevision,
-		},
-		5 * 60_000,
-		expectedIdentity,
-	);
-	if (!isAnalyzedAudio(beforeResult)) return beforeResult;
-	const before = beforeResult.analysis;
-	if (before.integratedLufs === null || before.estimatedTruePeakDbtp === null) {
-		return {
-			status: "rejected",
-			projectId: input.projectId,
-			sceneId:
-				typeof beforeResult.sceneId === "string" ? beforeResult.sceneId : null,
-			bridgeProtocolVersion: beforeResult.bridgeProtocolVersion ?? null,
-			connectionIdentity: beforeResult.connectionIdentity ?? null,
-			requestConnectionIdentity: expectedIdentity ?? null,
-			reason: "audible timeline mix is silent or below the loudness gate",
-			analysis: before,
-		};
-	}
-	const { appliedGainDb, limitedBy } = calculateNormalizationGain({
-		integratedLufs: before.integratedLufs,
-		estimatedTruePeakDbtp: before.estimatedTruePeakDbtp,
-		targetLufs: input.targetLufs,
-		maxTruePeakDbtp: input.maxTruePeakDbtp,
-		maxGainDb: input.maxGainDb,
-		minimumGainDb: before.minimumGainDb,
-		maximumGainDb: before.maximumGainDb,
-	});
-	const mutation = await bridge.request(
-		"apply_edit_plan",
-		{
-			...bridgeProtocolContext(input),
-			projectId: input.projectId,
-			operationId: input.operationId,
-			expectedRevision: input.expectedRevision,
-			description: `Normalize timeline audio to ${input.targetLufs} LUFS`,
-			operations: [{ kind: "adjust_mix_gain", gainDb: appliedGainDb }],
-		},
-		5 * 60_000,
-		expectedIdentity,
-	);
-	if (!isAppliedMutation(mutation)) return mutation;
-	const afterResult = await bridge.request(
-		"analyze_audio",
-		{
-			...bridgeProtocolContext(input),
-			projectId: input.projectId,
-			expectedRevision: mutation.revision,
-		},
-		5 * 60_000,
-		expectedIdentity,
-	);
-	const snapshot = isRecord(mutation.snapshot) ? mutation.snapshot : null;
-	const result = {
-		status: "normalized",
-		operationId: input.operationId,
-		projectId: input.projectId,
-		sceneId:
-			snapshot && typeof snapshot.sceneId === "string"
-				? snapshot.sceneId
-				: null,
-		revision: mutation.revision,
-		bridgeProtocolVersion: mutation.bridgeProtocolVersion ?? null,
-		connectionIdentity: mutation.connectionIdentity ?? null,
-		requestConnectionIdentity: expectedIdentity ?? null,
-		contentIdentity:
-			(snapshot?.contentIdentity as unknown) ??
-			(isAnalyzedAudio(afterResult) ? afterResult.contentIdentity : null) ??
-			beforeResult.contentIdentity,
-		targetLufs: input.targetLufs,
-		maxTruePeakDbtp: input.maxTruePeakDbtp,
-		appliedGainDb,
-		limitedBy,
-		before,
-		after: isAnalyzedAudio(afterResult) ? afterResult.analysis : afterResult,
-		mutation,
-	};
-	completedNormalizations.set(input.operationId, { fingerprint, result });
 	return result;
 }
 

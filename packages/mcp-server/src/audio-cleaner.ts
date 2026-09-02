@@ -1,6 +1,11 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import * as z from "zod/v4";
+import { semanticProviderInput } from "./provider-semantic-input";
+import {
+	DurableProviderSupervisor,
+	providerSupervisorFingerprint,
+} from "./provider-supervisor";
 
 const cleanerResponseSchema = z.object({
 	protocolVersion: z.literal(1),
@@ -57,10 +62,52 @@ export class CommandAudioCleaner {
 		private config: {
 			command: string;
 			args?: string[];
+			supervisorDirectory?: string;
 		},
 	) {}
 
 	async clean(
+		job: AudioCleanerJob,
+		timeoutMs: number,
+	): Promise<AudioCleanerResult> {
+		if (this.config.supervisorDirectory) return this.runSupervised(job, timeoutMs);
+		return this.run(job, timeoutMs);
+	}
+
+	private async runSupervised(
+		job: AudioCleanerJob,
+		timeoutMs: number,
+	): Promise<AudioCleanerResult> {
+		const supervisor = new DurableProviderSupervisor({
+			directory: this.config.supervisorDirectory!,
+		});
+		try {
+			await supervisor.submit({
+				provider: "audio-cleaner-command",
+				operationId: job.operationId,
+				semanticFingerprint: providerSupervisorFingerprint(
+					semanticProviderInput(job),
+				),
+				command: this.config.command,
+				args: this.config.args ?? [],
+				request: job,
+				timeoutMs,
+			});
+			const terminal = await supervisor.waitForTerminal(
+				"audio-cleaner-command",
+				job.operationId,
+				timeoutMs + 5_000,
+			);
+			if (terminal.state !== "succeeded") {
+				throw new Error(providerTerminalError(terminal.state, terminal.diagnostics));
+			}
+			return cleanerResultSchema.parse(terminal.result);
+		} finally {
+			supervisor.close();
+		}
+	}
+
+	private async run(
 		job: AudioCleanerJob,
 		timeoutMs: number,
 	): Promise<AudioCleanerResult> {
@@ -119,7 +166,9 @@ export class CommandAudioCleaner {
 	}
 }
 
-export function commandAudioCleanerFromEnvironment(): CommandAudioCleaner {
+export function commandAudioCleanerFromEnvironment(
+	resultReceiptDirectory?: string,
+): CommandAudioCleaner {
 	const command = globalThis.process.env.OPENCUT_AUDIO_CLEANER_COMMAND;
 	if (!command) {
 		throw new Error(
@@ -143,7 +192,26 @@ export function commandAudioCleanerFromEnvironment(): CommandAudioCleaner {
 		}
 		args = parsed;
 	}
-	return new CommandAudioCleaner({ command, args });
+	return new CommandAudioCleaner({
+		command,
+		args,
+		...(resultReceiptDirectory
+			? { supervisorDirectory: resultReceiptDirectory }
+			: {}),
+	});
+}
+
+const cleanerResultSchema = z.object({
+	artifactPath: z.string().min(1),
+	modelId: z.string().min(1),
+	modelVersion: z.string().min(1),
+	warnings: z.array(z.string()),
+});
+
+function providerTerminalError(state: string, diagnostics: string | null): string {
+	return state === "unknown"
+		? `Audio cleaner outcome is durably unknown and will not be rerun: ${diagnostics ?? "supervisor stopped before publication"}`
+		: `Audio cleaner failed: ${diagnostics ?? state}`;
 }
 
 function resolveArtifactPath({

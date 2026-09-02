@@ -1,4 +1,24 @@
+import { randomUUID } from "node:crypto";
 import * as z from "zod/v4";
+import { operationIdSchema } from "./operation-tool-schemas";
+
+const legacyCompatibleOperationIdSchema = operationIdSchema.optional();
+
+function withLegacyOperationIdDefault<T extends z.ZodType>(
+	schema: T,
+	field = "operationId",
+) {
+	return schema.transform((value) => {
+		if (
+			value !== null &&
+			typeof value === "object" &&
+			(value as Record<string, unknown>)[field] === undefined
+		) {
+			return { ...value, [field]: `legacy:${randomUUID()}` };
+		}
+		return value;
+	});
+}
 
 export const connectionIdentitySchema = z.object({
 	serverInstanceId: z.string().min(1).describe("MCP bridge process affinity"),
@@ -29,6 +49,61 @@ const connectionAffinitySchema = z.union([
 
 export function withConnectionAffinity<T extends z.ZodType>(schema: T) {
 	return z.intersection(schema, connectionAffinitySchema);
+}
+
+export function withMutationOperationId<
+	T extends z.ZodType,
+	TField extends string = "operationId",
+>(
+	schema: T,
+	field = "operationId" as TField,
+) {
+	return withConnectionAffinity(schema)
+		.superRefine((value, context) => {
+			if (
+				value.bridgeProtocolVersion === 2 &&
+				(value as Record<string, unknown>)[field] === undefined
+			) {
+				context.addIssue({
+					code: "custom",
+					path: [field],
+					message: `bridge protocol v2 mutations require ${field}`,
+				});
+			}
+		})
+		.transform((value): typeof value & Record<TField, string> => {
+			const result =
+				(value as Record<string, unknown>)[field] === undefined
+					? { ...value, [field]: `legacy:${randomUUID()}` }
+					: value;
+			return result as typeof value & Record<TField, string>;
+		});
+}
+
+export function withProjectMutationSafety<T extends z.ZodType>(schema: T) {
+	return withMutationOperationId(
+		z.intersection(
+			schema,
+			z.object({
+				expectedProjectContentHash: z
+					.string()
+					.regex(/^[a-f0-9]{64}$/)
+					.optional(),
+			}),
+		),
+	)
+		.superRefine((value, context) => {
+		if (
+			value.bridgeProtocolVersion === 2 &&
+			!value.expectedProjectContentHash
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["expectedProjectContentHash"],
+				message: "bridge protocol v2 requires expectedProjectContentHash",
+			});
+		}
+	});
 }
 
 const frameRateSchema = z.object({
@@ -642,7 +717,7 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 export const editPlanInputSchema = z
 	.object({
 		projectId: z.string().min(1),
-		operationId: z.string().min(1),
+		operationId: legacyCompatibleOperationIdSchema,
 		expectedRevision: z.number().int().nonnegative(),
 		description: z.string().min(1),
 		operations: z.array(editOperationSchema).min(1),
@@ -673,7 +748,7 @@ export const editPlanInputSchema = z
 
 export const importMediaInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	path: z.string().min(1),
 	startTime: z.number().int().nonnegative(),
@@ -688,7 +763,7 @@ export const importMediaInputSchema = z.object({
 
 export const importSubtitlesInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	path: z.string().min(1),
 	style: captionStyleSchema.optional(),
@@ -696,7 +771,7 @@ export const importSubtitlesInputSchema = z.object({
 
 export const exportSubtitlesInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	outputPath: z.string().min(1),
 	format: z.enum(["srt", "vtt"]),
@@ -705,7 +780,7 @@ export const exportSubtitlesInputSchema = z.object({
 
 export const transcribeTimelineInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	language: z.string().trim().min(1).default("auto"),
 	modelId: z
@@ -723,7 +798,7 @@ export const transcribeTimelineInputSchema = z.object({
 
 export const attachMatteInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	trackId: z.string().min(1),
 	elementId: z.string().min(1),
@@ -740,7 +815,7 @@ export const attachMatteInputSchema = z.object({
 
 export const generateMatteInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	trackId: z.string().min(1),
 	elementId: z.string().min(1),
@@ -757,7 +832,7 @@ export const generateMatteInputSchema = z.object({
 
 export const attachCleanAudioInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	trackId: z.string().min(1),
 	elementId: z.string().min(1),
@@ -768,7 +843,7 @@ export const attachCleanAudioInputSchema = z.object({
 
 export const cleanAudioInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	trackId: z.string().min(1),
 	elementId: z.string().min(1),
@@ -790,7 +865,7 @@ export const cleanAudioInputSchema = z.object({
 
 export const trackSubjectInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	trackId: z.string().min(1),
 	elementId: z.string().min(1),
@@ -835,7 +910,7 @@ const elementReferenceSchema = z.object({
 
 export const syncAudioInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	reference: elementReferenceSchema,
 	target: elementReferenceSchema,
@@ -850,21 +925,30 @@ export const syncAudioInputSchema = z.object({
 	minCorrelation: z.number().min(0).max(1).default(0.35),
 });
 
+export const normalizeAudioInputSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
+	expectedRevision: z.number().int().nonnegative(),
+	targetLufs: z.number().min(-36).max(-5).default(-14),
+	maxTruePeakDbtp: z.number().min(-9).max(0).default(-1),
+	maxGainDb: z.number().min(0).max(20).default(20),
+});
+
 export const createProjectInputSchema = z.object({
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	name: z.string().trim().min(1),
 });
 
 export const openProjectInputSchema = z.object({
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	projectId: z.string().min(1),
 });
 
-export const saveProjectInputSchema = withConnectionAffinity(
+export const saveProjectInputSchema = withMutationOperationId(
 	z.object({
 		projectId: z.string().min(1),
 		sceneId: z.string().min(1).optional(),
-		operationId: z.string().min(1),
+		operationId: legacyCompatibleOperationIdSchema,
 		expectedRevision: z.number().int().nonnegative(),
 		expectedContentHash: z
 			.string()
@@ -889,17 +973,18 @@ export const getExportReceiptInputSchema = z.object({
 	operationId: z.string().min(1),
 });
 
-export const recordExportInspectionInputSchema = z.object({
-	operationId: z.string().min(1),
+export const recordExportInspectionInputSchema = withMutationOperationId(z.object({
+	operationId: operationIdSchema,
+	inspectionOperationId: legacyCompatibleOperationIdSchema,
 	outputSha256: z.string().regex(/^[a-f0-9]{64}$/),
 	watermarkStatus: z.enum(["verified-clean", "rejected"]),
 	reviewer: z.string().trim().min(1).optional(),
 	notes: z.string().trim().min(1).optional(),
-});
+}), "inspectionOperationId");
 
 export const exportProjectInputSchema = z.object({
 	projectId: z.string().min(1),
-	operationId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	expectedProjectContentHash: z
 		.string()
@@ -938,6 +1023,7 @@ const exportBatchVariantSchema = z.object({
 
 export const queueExportBatchInputSchema = z
 	.object({
+		operationId: legacyCompatibleOperationIdSchema,
 		batchId: z.string().trim().min(1),
 		projectId: z.string().min(1),
 		expectedRevision: z.number().int().nonnegative(),
@@ -991,10 +1077,31 @@ export const listExportJobsInputSchema = z.object({
 	limit: z.number().int().min(1).max(100).default(25),
 });
 
-export const runExportJobsInputSchema = z.object({
+export const runExportJobsInputSchema = withMutationOperationId(z.object({
+	operationId: legacyCompatibleOperationIdSchema,
 	limit: z.number().int().min(1).max(100).default(1),
+}));
+
+export const startEditorWorkerInputSchema = withMutationOperationId(z.object({
+	operationId: legacyCompatibleOperationIdSchema,
+	projectId: z.string().min(1).default("__opencut_automation_bootstrap__"),
+}));
+
+export const stopEditorWorkerInputSchema = withMutationOperationId(z.object({
+	operationId: legacyCompatibleOperationIdSchema,
+}));
+
+export const undoInputSchema = z.object({
+	operationId: legacyCompatibleOperationIdSchema,
+	projectId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	undoOfOperationId: operationIdSchema.optional(),
 });
 
-export const startEditorWorkerInputSchema = z.object({
-	projectId: z.string().min(1).default("__opencut_automation_bootstrap__"),
-});
+export const cancelExportJobInputSchema = withMutationOperationId(getExportJobInputSchema.extend({
+	operationId: legacyCompatibleOperationIdSchema,
+}));
+
+export const cancelExportBatchInputSchema = withMutationOperationId(getExportBatchInputSchema.extend({
+	operationId: legacyCompatibleOperationIdSchema,
+}));

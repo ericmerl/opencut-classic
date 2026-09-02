@@ -3,6 +3,11 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import * as z from "zod/v4";
+import { semanticProviderInput } from "./provider-semantic-input";
+import {
+	DurableProviderSupervisor,
+	providerSupervisorFingerprint,
+} from "./provider-supervisor";
 
 const producerResponseSchema = z.object({
 	protocolVersion: z.literal(1),
@@ -50,10 +55,52 @@ export class CommandMatteProducer {
 		private config: {
 			command: string;
 			args?: string[];
+			supervisorDirectory?: string;
 		},
 	) {}
 
 	async produce(
+		job: MatteProducerJob,
+		timeoutMs: number,
+	): Promise<MatteProducerResult> {
+		if (this.config.supervisorDirectory) return this.runSupervised(job, timeoutMs);
+		return this.run(job, timeoutMs);
+	}
+
+	private async runSupervised(
+		job: MatteProducerJob,
+		timeoutMs: number,
+	): Promise<MatteProducerResult> {
+		const supervisor = new DurableProviderSupervisor({
+			directory: this.config.supervisorDirectory!,
+		});
+		try {
+			await supervisor.submit({
+				provider: "matte-producer-command",
+				operationId: job.operationId,
+				semanticFingerprint: providerSupervisorFingerprint(
+					semanticProviderInput(job),
+				),
+				command: this.config.command,
+				args: this.config.args ?? [],
+				request: job,
+				timeoutMs,
+			});
+			const terminal = await supervisor.waitForTerminal(
+				"matte-producer-command",
+				job.operationId,
+				timeoutMs + 5_000,
+			);
+			if (terminal.state !== "succeeded") {
+				throw new Error(providerTerminalError(terminal.state, terminal.diagnostics));
+			}
+			return producerResultSchema.parse(terminal.result);
+		} finally {
+			supervisor.close();
+		}
+	}
+
+	private async run(
 		job: MatteProducerJob,
 		timeoutMs: number,
 	): Promise<MatteProducerResult> {
@@ -113,7 +160,9 @@ export class CommandMatteProducer {
 	}
 }
 
-export function commandMatteProducerFromEnvironment(): CommandMatteProducer {
+export function commandMatteProducerFromEnvironment(
+	resultReceiptDirectory?: string,
+): CommandMatteProducer {
 	const command = globalThis.process.env.OPENCUT_MATTE_PRODUCER_COMMAND;
 	if (!command) {
 		throw new Error(
@@ -137,7 +186,27 @@ export function commandMatteProducerFromEnvironment(): CommandMatteProducer {
 		}
 		args = parsed;
 	}
-	return new CommandMatteProducer({ command, args });
+	return new CommandMatteProducer({
+		command,
+		args,
+		...(resultReceiptDirectory
+			? { supervisorDirectory: resultReceiptDirectory }
+			: {}),
+	});
+}
+
+const producerResultSchema = z.object({
+	artifactPath: z.string().min(1),
+	channel: z.enum(["alpha", "red"]),
+	modelId: z.string().min(1),
+	modelVersion: z.string().min(1),
+	warnings: z.array(z.string()),
+});
+
+function providerTerminalError(state: string, diagnostics: string | null): string {
+	return state === "unknown"
+		? `Matte producer outcome is durably unknown and will not be rerun: ${diagnostics ?? "supervisor stopped before publication"}`
+		: `Matte producer failed: ${diagnostics ?? state}`;
 }
 
 export async function hashSourceFile(path: string): Promise<string> {

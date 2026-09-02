@@ -3,6 +3,8 @@ import {
 	attachCleanAudioInputSchema,
 	attachMatteInputSchema,
 	cleanAudioInputSchema,
+	cancelExportBatchInputSchema,
+	cancelExportJobInputSchema,
 	generateMatteInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
@@ -23,11 +25,14 @@ import {
 	runExportJobsInputSchema,
 	searchStickersInputSchema,
 	startEditorWorkerInputSchema,
+	stopEditorWorkerInputSchema,
 	timelineQueryInputSchema,
 	syncAudioInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 	withConnectionAffinity,
+	withProjectMutationSafety,
+	undoInputSchema,
 } from "./tool-schemas";
 
 const connectionIdentity = {
@@ -69,6 +74,48 @@ describe("OpenCut bridge affinity contract", () => {
 				expectedConnectionIdentity: connectionIdentity,
 			}).success,
 		).toBe(false);
+	});
+
+	test("requires the project hash on explicit v2 mutation and export calls", () => {
+		const mutation = withProjectMutationSafety(undoInputSchema);
+		const v2 = {
+			projectId: "project-1",
+			expectedRevision: 1,
+			bridgeProtocolVersion: 2 as const,
+			expectedConnectionIdentity: connectionIdentity,
+		};
+		expect(mutation.safeParse(v2).success).toBe(false);
+		expect(
+			mutation.safeParse({
+				...v2,
+				operationId: "undo-v2-1",
+				expectedProjectContentHash: "a".repeat(64),
+			}).success,
+		).toBe(true);
+	});
+
+		test("generates isolated degraded IDs only when legacy callers omit them", () => {
+		const start = startEditorWorkerInputSchema.parse({ projectId: "project-1" });
+		const stop = stopEditorWorkerInputSchema.parse({});
+		const undo = withProjectMutationSafety(undoInputSchema).parse({
+			projectId: "project-1",
+			expectedRevision: 1,
+		});
+		const cancelJob = cancelExportJobInputSchema.parse({ jobId: "job-1" });
+		const cancelBatch = cancelExportBatchInputSchema.parse({
+			batchId: "batch-1",
+		});
+
+		for (const operationId of [
+			start.operationId,
+			stop.operationId,
+			undo.operationId,
+			cancelJob.operationId,
+			cancelBatch.operationId,
+		]) {
+			expect(operationId).toStartWith("legacy:");
+		}
+		expect(new Set([start.operationId, stop.operationId])).toHaveLength(2);
 	});
 });
 

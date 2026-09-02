@@ -263,6 +263,13 @@ export class ExportProjectService {
 				validation.status === "validated" ? "exported" : "validation-failed",
 			validation,
 			receiptPath: this.receipts.receiptPath(input.operationId),
+			exportReceiptId: input.operationId,
+			container: input.format,
+			renderer: {
+				provider: "opencut-web-renderer",
+				pipeline: "editor-native-export",
+				protocolVersion: input.bridgeProtocolVersion ?? 1,
+			},
 		};
 		const inspection = {
 			status: "pending" as const,

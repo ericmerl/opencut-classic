@@ -58,6 +58,7 @@ describe("ManagedEditorWorker", () => {
 			browserPath,
 			profileDirectory: join(directory, "profile"),
 			spawnProcess,
+			testDropResponseOperationId: "drop-after-receipt",
 		});
 
 		const status = await worker.ensureConnected("project-1");
@@ -70,6 +71,9 @@ describe("ManagedEditorWorker", () => {
 			"one-time-ticket",
 		);
 		expect(launchedUrl.searchParams.get("automationBridgePort")).toBe("32191");
+		expect(
+			launchedUrl.searchParams.get("automationTestDropResponseOperationId"),
+		).toBe("drop-after-receipt");
 		expect(status).toMatchObject({ running: true, connected: true });
 
 		await worker.stop();

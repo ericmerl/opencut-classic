@@ -11,6 +11,7 @@ describe("SubjectTrackingService", () => {
 	test("transfers, tracks, maps retimed source samples, applies keyframes, and replays", async () => {
 		let sourcePath = "";
 		let trackerCalls = 0;
+		const providerStates: string[] = [];
 		const appliedPlans: Record<string, unknown>[] = [];
 		const methods: string[] = [];
 		const bridge: SubjectTrackingBridge = {
@@ -71,7 +72,9 @@ describe("SubjectTrackingService", () => {
 			},
 		}));
 
-		const first = await service.track(input());
+		const first = await service.track(input(), async (event) => {
+			providerStates.push(event.state);
+		});
 		const replay = await service.track(input());
 
 		expect(first).toMatchObject({
@@ -85,6 +88,7 @@ describe("SubjectTrackingService", () => {
 		});
 		expect(replay.status).toBe("replayed");
 		expect(trackerCalls).toBe(1);
+		expect(providerStates).toEqual(["prepared", "committed", "verified"]);
 		expect(methods).toEqual([
 			"read_project",
 			"transfer_source_media",
@@ -156,6 +160,60 @@ describe("SubjectTrackingService", () => {
 				warnings: ["no confident samples"],
 			},
 		});
+	});
+
+	test("applies retained tracker samples without rerunning the tracker", async () => {
+		let trackerCalls = 0;
+		const methods: string[] = [];
+		const states: string[] = [];
+		const service = new SubjectTrackingService(
+			{
+				sourceTickets: { create: async () => ({ url: "", outputPath: "" }) },
+				request: async (method) => {
+					methods.push(method);
+					if (method === "read_project") return snapshot();
+					if (method === "apply_edit_plan") {
+						return { status: "applied", revision: 3 };
+					}
+					throw new Error(`unexpected method: ${method}`);
+				},
+			},
+			() => ({
+				track: async () => {
+					trackerCalls += 1;
+					throw new Error("tracker must not rerun");
+				},
+			}),
+		);
+		const result = await service.applyRecovered(
+			input(),
+			{
+				modelId: "fixture",
+				modelVersion: "1",
+				samples: [
+					{
+						sourceTime: 120_000,
+						box: { x: 0.1, y: 0.2, width: 0.2, height: 0.4 },
+						confidence: 0.95,
+					},
+					{
+						sourceTime: 360_000,
+						box: { x: 0.5, y: 0.2, width: 0.2, height: 0.4 },
+						confidence: 0.9,
+					},
+				],
+			},
+			async (event) => {
+				states.push(event.state);
+			},
+		);
+		expect(result).toMatchObject({
+			status: "tracked-and-reframed",
+			recoveredProviderSamples: true,
+		});
+		expect(trackerCalls).toBe(0);
+		expect(methods).toEqual(["read_project", "apply_edit_plan"]);
+		expect(states).toEqual(["verified"]);
 	});
 
 	test("builds padded crop channels and filters low-confidence samples", () => {

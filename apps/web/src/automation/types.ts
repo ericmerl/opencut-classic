@@ -19,6 +19,10 @@ import type {
 	ElementKeyframe,
 } from "@/animation/types";
 import type { ProjectContentHashResult } from "./project-content-hash";
+import type {
+	OperationReceiptAfterState,
+	OperationReceiptBinding,
+} from "@/services/storage/types";
 
 export interface AutomationElementSnapshot {
 	trackId: string;
@@ -415,6 +419,27 @@ export interface AutomationGetSaveReceiptRequest {
 export type AutomationGetSaveReceiptResult =
 	| ({ status: "found" } & AutomationSaveReceipt)
 	| { status: "not-found"; operationId: string };
+
+export interface AutomationGetOperationReceiptRequest {
+	operationId: string;
+	binding: OperationReceiptBinding;
+}
+
+export type AutomationGetOperationReceiptResult =
+	| {
+			status: "found";
+			operationId: string;
+			binding: OperationReceiptBinding;
+			afterState: OperationReceiptAfterState;
+			result: unknown;
+			recordedAt: string;
+	  }
+	| { status: "not-found" | "contract-mismatch"; operationId: string };
+
+export interface AutomationVerifyOperationReceiptRequest {
+	binding: OperationReceiptBinding;
+	saveOperationId: string;
+}
 
 export interface AutomationImportSubtitlesRequest {
 	operationId: string;
@@ -841,6 +866,7 @@ export interface AutomationAppliedResult {
 	operationId: string;
 	revision: number;
 	snapshot: AutomationProjectSnapshot;
+	affectedObjects: import("./affected-objects").AutomationAffectedObject[];
 }
 
 export type AutomationMutationResult =
@@ -850,6 +876,7 @@ export type AutomationMutationResult =
 			operationId: string;
 			revision: number;
 			snapshot: AutomationProjectSnapshot;
+			affectedObjects: import("./affected-objects").AutomationAffectedObject[];
 	  }
 	| {
 			status: "conflict";

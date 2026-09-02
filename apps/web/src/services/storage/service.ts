@@ -17,6 +17,8 @@ import {
 	type FreshProjectReadback,
 	type MediaAssetData,
 	type PersistedMediaReadback,
+	type PersistedOperationReceipt,
+	type OperationReceiptBinding,
 	type PersistedProjectWriteRecord,
 	type PersistedSaveReceipt,
 	type PersistedSaveReceiptEnvelope,
@@ -35,6 +37,7 @@ import type { Bookmark, SceneTracks, TScene } from "@/timeline";
 import { roundMediaTime } from "@/wasm";
 import { resolvePersistedMediaIdentity } from "@/media/content-identity";
 import { parseSaveReceiptEnvelope } from "./save-receipt-storage";
+import { OperationReceiptStore } from "./operation-receipt-storage";
 
 function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 	if (!Array.isArray(raw)) return [];
@@ -67,6 +70,7 @@ class StorageService {
 	private projectsAdapter: IndexedDBAdapter<StoredProjectRecord>;
 	private savedSoundsAdapter: IndexedDBAdapter<SavedSoundsData>;
 	private saveReceiptsAdapter: IndexedDBAdapter<unknown>;
+	private operationReceipts: OperationReceiptStore;
 	private config: StorageConfig;
 	private migrationsPromise: Promise<void> | null = null;
 	private projectWriteTails = new Map<string, Promise<void>>();
@@ -91,6 +95,7 @@ class StorageService {
 			storeName: "receipts",
 			version: 1,
 		});
+		this.operationReceipts = new OperationReceiptStore();
 	}
 
 	private createProjectsAdapter(): IndexedDBAdapter<StoredProjectRecord> {
@@ -271,6 +276,21 @@ class StorageService {
 		const value = await this.saveReceiptsAdapter.get(operationId);
 		if (value === null) return null;
 		return parseSaveReceiptEnvelope({ value, operationId, parseResult });
+	}
+
+	async saveOperationReceipt(
+		receipt: Omit<
+			PersistedOperationReceipt,
+			"id" | "envelopeVersion" | "storageSchemaVersion"
+		>,
+	): Promise<void> {
+		await this.operationReceipts.save(receipt);
+	}
+
+	async loadOperationReceipt(
+		binding: OperationReceiptBinding,
+	): Promise<PersistedOperationReceipt | null> {
+		return this.operationReceipts.load(binding);
 	}
 
 	async loadProject({

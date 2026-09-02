@@ -17,6 +17,7 @@ import {
 	type MatteProducerResult,
 } from "./matte-producer";
 import type { BridgeConnectionIdentity } from "./editor-bridge";
+import type { CompositeOperationObserver } from "./composite-operation-observer";
 
 export interface GenerateMatteInput {
 	bridgeProtocolVersion?: 1 | 2;
@@ -80,10 +81,14 @@ export class MatteGenerationService {
 
 	constructor(
 		private bridge: MatteGenerationBridge,
-		private createProducer: () => MatteProducer = commandMatteProducerFromEnvironment,
+		private createProducer?: () => MatteProducer,
+		private durableArtifactRoot?: string,
 	) {}
 
-	async generate(input: GenerateMatteInput): Promise<Record<string, unknown>> {
+	async generate(
+		input: GenerateMatteInput,
+		observe?: CompositeOperationObserver,
+	): Promise<Record<string, unknown>> {
 		const expectedIdentity = expectedV2Identity(input);
 		const fingerprint = stableSerialize(input);
 		const prior = this.completed.get(input.operationId);
@@ -129,10 +134,25 @@ export class MatteGenerationService {
 			);
 		}
 		const clip = findProjectClip({ snapshot, input });
-		const producer = this.createProducer();
-		const jobDirectory = await mkdtemp(join(tmpdir(), "opencut-matte-job-"));
+		const producer = this.createProducer
+			? this.createProducer()
+			: commandMatteProducerFromEnvironment(
+					this.durableArtifactRoot
+						? join(this.durableArtifactRoot, "provider-results")
+						: undefined,
+				);
+		if (this.durableArtifactRoot) {
+			await mkdir(this.durableArtifactRoot, { recursive: true });
+		}
+		const jobDirectory = await mkdtemp(
+			join(
+				this.durableArtifactRoot ?? tmpdir(),
+				"opencut-matte-job-",
+			),
+		);
 		const outputDirectory = join(jobDirectory, "output");
 		await mkdir(outputDirectory);
+		let preserveJobDirectory = false;
 
 		try {
 			const sourcePath = join(
@@ -160,6 +180,12 @@ export class MatteGenerationService {
 			}
 
 			const sourceContentHash = await hashSourceFile(sourcePath);
+			await observe?.({
+				state: "prepared",
+				provider: "matte-producer-command",
+				modelId: input.modelId,
+				modelVersion: input.modelVersion,
+			});
 			const producerResult = await producer.produce(
 				{
 					protocolVersion: 1,
@@ -193,6 +219,22 @@ export class MatteGenerationService {
 			const matteTicket = await this.bridge.mediaTickets.create(
 				producerResult.artifactPath,
 			);
+			preserveJobDirectory = true;
+			await observe?.({
+				state: "committed",
+				provider: "matte-producer-command",
+				modelId: producerResult.modelId,
+				modelVersion: producerResult.modelVersion,
+				artifact: {
+					sha256: matteTicket.contentHash,
+					mimeType: matteTicket.mimeType,
+					path: producerResult.artifactPath,
+				},
+				metadata: {
+					warnings: producerResult.warnings,
+					channel: producerResult.channel,
+				},
+			});
 			const attachment = asAttachmentResult(
 				await this.bridge.request(
 					"attach_matte",
@@ -237,6 +279,18 @@ export class MatteGenerationService {
 					input.projectId,
 				);
 			}
+			await observe?.({
+				state: "verified",
+				provider: "matte-producer-command",
+				modelId: producerResult.modelId,
+				modelVersion: producerResult.modelVersion,
+				artifact: {
+					sha256: matteTicket.contentHash,
+					mimeType: matteTicket.mimeType,
+					path: producerResult.artifactPath,
+				},
+			});
+			preserveJobDirectory = Boolean(this.durableArtifactRoot);
 
 			const result = {
 				...attachment,
@@ -257,8 +311,76 @@ export class MatteGenerationService {
 			this.completed.set(input.operationId, { fingerprint, result });
 			return withProjectEnvelope(result, snapshot, input.projectId);
 		} finally {
-			await rm(jobDirectory, { recursive: true, force: true });
+			if (!preserveJobDirectory) {
+				await rm(jobDirectory, { recursive: true, force: true });
+			}
 		}
+	}
+
+	async attachRecovered(
+		input: GenerateMatteInput,
+		artifact: {
+			path: string;
+			sha256: string;
+			modelId: string;
+			modelVersion: string;
+			channel: "alpha" | "red";
+		},
+		observe?: CompositeOperationObserver,
+	): Promise<Record<string, unknown>> {
+		const ticket = await this.bridge.mediaTickets.create(artifact.path);
+		if (ticket.contentHash !== artifact.sha256) {
+			throw new Error("retained matte artifact hash changed");
+		}
+		const attachment = asAttachmentResult(
+			await this.bridge.request(
+				"attach_matte",
+				{
+					...bridgeProtocolContext(input),
+					projectId: input.projectId,
+					operationId: input.operationId,
+					expectedRevision: input.expectedRevision,
+					trackId: input.trackId,
+					elementId: input.elementId,
+					url: ticket.url,
+					name: ticket.name,
+					mimeType: ticket.mimeType,
+					artifactHash: ticket.contentHash,
+					artifactFingerprint: ticket.sourceFingerprint,
+					channel: artifact.channel,
+					modelId: artifact.modelId,
+					modelVersion: artifact.modelVersion,
+				},
+				10 * 60_000,
+				expectedV2Identity(input),
+			),
+		);
+		if (attachment.status !== "applied" && attachment.status !== "replayed") {
+			return attachment;
+		}
+		await observe?.({
+			state: "verified",
+			provider: "matte-producer-command",
+			modelId: artifact.modelId,
+			modelVersion: artifact.modelVersion,
+			artifact: {
+				path: artifact.path,
+				sha256: artifact.sha256,
+				mimeType: ticket.mimeType,
+			},
+			metadata: { channel: artifact.channel },
+		});
+		return {
+			...attachment,
+			status: "generated-and-attached",
+			recoveredProviderArtifact: true,
+			producer: {
+				type: "command",
+				modelId: artifact.modelId,
+				modelVersion: artifact.modelVersion,
+				warnings: [],
+			},
+		};
 	}
 }
 

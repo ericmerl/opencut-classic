@@ -47,6 +47,7 @@ integrationTest(
 			bridgePort,
 			profileDirectory,
 			receiptDirectory,
+			dropBrowserResponseOperationId: "public-receipt-recovery-audio",
 		});
 		const initialStatus = await first.callTool("opencut_connection_status", {});
 		expect(initialStatus.connected).toBe(false);
@@ -62,15 +63,21 @@ integrationTest(
 			affinity(initialIdentity),
 		);
 		const projectId = requireString(initial.projectId, "projectId");
-		const imported = await first.callTool("opencut_import_media", {
+		const initialContentHash = requireProjectContentHash(initial);
+		const importRequest = {
 			...affinity(initialIdentity),
 			projectId,
 			operationId: "public-media-import",
 			expectedRevision: requireNumber(initial.revision, "revision"),
+			expectedProjectContentHash: initialContentHash,
 			path: sourcePath,
 			startTime: 0,
 			adoptMediaSettings: true,
-		});
+		};
+		const imported = await first.callTool(
+			"opencut_import_media",
+			importRequest,
+		);
 		expect(imported.status).toBe("applied");
 		const importedSnapshot = requireRecord(imported.snapshot, "snapshot");
 		const importedElementId = requireString(imported.elementId, "elementId");
@@ -91,11 +98,13 @@ integrationTest(
 			).digest,
 		).toBe(sourceHash);
 
-		const edited = await first.callTool("opencut_apply_edit_plan", {
+		const importedContentHash = requireProjectContentHash(importedSnapshot);
+		const editRequest = {
 			...affinity(initialIdentity),
 			projectId,
 			operationId: "public-observable-grade",
 			expectedRevision: requireNumber(imported.revision, "revision"),
+			expectedProjectContentHash: importedContentHash,
 			description: "Apply the complete realistic color grade",
 			operations: [
 				{
@@ -117,7 +126,11 @@ integrationTest(
 					enabled: true,
 				},
 			],
-		});
+		};
+		const edited = await first.callTool(
+			"opencut_apply_edit_plan",
+			editRequest,
+		);
 		expect(edited.status).toBe("applied");
 		const editedSnapshot = requireRecord(edited.snapshot, "snapshot");
 		const contentHash = requireProjectContentHash(editedSnapshot);
@@ -149,6 +162,35 @@ integrationTest(
 			writeVersion,
 		});
 
+		const audioRequest = {
+			...affinity(initialIdentity),
+			projectId,
+			operationId: "public-receipt-recovery-audio",
+			expectedRevision: requireNumber(edited.revision, "revision"),
+			expectedProjectContentHash: contentHash,
+			description: "Apply an audible source gain through receipt recovery",
+			operations: [
+				{
+					kind: "set_audio",
+					trackId: requireString(importedElement.trackId, "trackId"),
+					elementId: importedElementId,
+					volumeDb: -3,
+				},
+			],
+		};
+		const interruptedAudio = await first.callTool(
+			"opencut_apply_edit_plan",
+			audioRequest,
+		);
+		expect(interruptedAudio).toMatchObject({
+			status: "recoverable",
+			disposition: "unknown",
+		});
+		const disconnectedAfterReceipt = await first.callTool(
+			"opencut_connection_status",
+			{},
+		);
+		expect(disconnectedAfterReceipt.connected).toBe(false);
 		await first.callTool("opencut_stop_editor_worker", {});
 		await first.close();
 		const second = await startMcp({
@@ -177,11 +219,14 @@ integrationTest(
 			"opencut_get_project",
 			affinity(restartedIdentity),
 		);
-		expect(requireProjectContentHash(reloaded)).toBe(contentHash);
+		const audioContentHash = requireProjectContentHash(reloaded);
+		expect(audioContentHash).not.toBe(contentHash);
+		expect(requireProjectContentHash(reloaded)).toBe(audioContentHash);
 		const reloadedElement = requireRecords(reloaded.elements, "elements").find(
 			(element) => element.elementId === importedElementId,
 		);
 		expect(reloadedElement).toMatchObject({
+			params: { volume: -3 },
 			effects: [
 				expect.objectContaining({
 					effectId: "public-realistic-grade",
@@ -189,16 +234,115 @@ integrationTest(
 				}),
 			],
 		});
+		const recoveredAudio = await second.callTool("opencut_apply_edit_plan", {
+			...audioRequest,
+			...affinity(restartedIdentity),
+		});
+		expect(recoveredAudio).toMatchObject({
+			status: "applied",
+			durableOperationStatus: "completed",
+			operationDisposition: "applied-verified",
+		});
+		const recoveredAudioRecord = requireRecord(
+			requireRecord(
+				(
+					await second.callTool("opencut_get_operation", {
+						operationId: audioRequest.operationId,
+					})
+				).operation,
+				"audio operation entry",
+			).record,
+			"audio operation record",
+		);
+		expect(recoveredAudioRecord).toMatchObject({
+			status: "completed",
+			contentHashBefore: contentHash,
+			contentHashAfter: audioContentHash,
+			saveReceipt: { contentHash: audioContentHash, reloadVerified: true },
+		});
 		const replayed = await second.callTool("opencut_save_project", {
 			...saveRequest,
 			...affinity(restartedIdentity),
 		});
 		expect(replayed).toMatchObject({
-			status: "replayed",
+			status: "saved",
+			durableOperationStatus: "replayed",
 			receiptId: saveReceiptId,
 			writeVersion,
 			contentHash,
 		});
+		const replayedEdit = await second.callTool("opencut_apply_edit_plan", {
+			...editRequest,
+			...affinity(restartedIdentity),
+		});
+		expect(replayedEdit).toMatchObject({
+			status: "applied",
+			durableOperationStatus: "replayed",
+			operationDisposition: "applied-verified",
+		});
+		const afterReplay = await second.callTool(
+			"opencut_get_project",
+			affinity(restartedIdentity),
+		);
+		expect(requireProjectContentHash(afterReplay)).toBe(audioContentHash);
+		expect(requireNumber(afterReplay.revision, "revision")).toBe(
+			requireNumber(reloaded.revision, "restarted revision"),
+		);
+		expect(requireRecords(afterReplay.elements, "elements")).toHaveLength(
+			requireRecords(reloaded.elements, "elements").length,
+		);
+		expect(
+			createHash("sha256").update(await readFile(sourcePath)).digest("hex"),
+		).toBe(sourceHash);
+		await expect(
+			second.callTool("opencut_apply_edit_plan", {
+				...editRequest,
+				...affinity(restartedIdentity),
+				description: "Changed input must not reuse the operation ID",
+			}),
+		).rejects.toThrow();
+		const operation = await second.callTool("opencut_get_operation", {
+			operationId: editRequest.operationId,
+		});
+		const operationRecord = requireRecord(
+			requireRecord(operation.operation, "operation entry").record,
+			"operation record",
+		);
+		expect(operationRecord).toMatchObject({
+			operationId: editRequest.operationId,
+			status: "completed",
+			disposition: "applied-verified",
+			contentHashBefore: importedContentHash,
+			contentHashAfter: contentHash,
+			actor: { type: "service", id: "opencut-mcp" },
+			affectedObjects: expect.arrayContaining([
+				{ objectType: "project", objectId: projectId, action: "updated" },
+				{
+					objectType: "element",
+					objectId: importedElementId,
+					action: "updated",
+				},
+			]),
+			saveReceipt: {
+				projectId,
+				contentHash,
+				readbackContentHash: contentHash,
+				reloadVerified: true,
+			},
+		});
+		expect(operationRecord.inputFingerprint).toMatch(/^[a-f0-9]{64}$/);
+		expect(operationRecord.revisionAfter).toBe(edited.revision);
+		const history = await second.callTool("opencut_list_operation_history", {
+			projectId,
+			limit: 100,
+		});
+		expect(
+			requireRecords(history.entries, "history entries").some(
+				(entry) =>
+					requireRecord(entry.record, "history record").operationId ===
+					editRequest.operationId,
+			),
+		).toBe(true);
 
 		const outputPath = join(directory, "public-verified.webm");
 		const exported = await second.callTool(
@@ -208,7 +352,7 @@ integrationTest(
 				projectId,
 				operationId: "public-pinned-export",
 				expectedRevision: requireNumber(reloaded.revision, "revision"),
-				expectedProjectContentHash: contentHash,
+				expectedProjectContentHash: audioContentHash,
 				outputPath,
 				format: "webm",
 				quality: "low",
@@ -221,7 +365,7 @@ integrationTest(
 		expect(exported).toMatchObject({
 			status: "exported",
 			projectId,
-			savedContentHash: contentHash,
+			savedContentHash: audioContentHash,
 			validation: {
 				status: "validated",
 				fullDecode: true,
@@ -251,9 +395,38 @@ integrationTest(
 				operationId: "public-pinned-export",
 				result: {
 					status: "exported",
-					savedContentHash: contentHash,
+					savedContentHash: audioContentHash,
 				},
 			},
+		});
+		const exportOperation = requireRecord(
+			requireRecord(
+				(
+					await second.callTool("opencut_get_operation", {
+						operationId: "public-pinned-export",
+					})
+				).operation,
+				"export operation entry",
+			).record,
+			"export operation record",
+		);
+		expect(exportOperation).toMatchObject({
+			status: "completed",
+			contentHashBefore: audioContentHash,
+			artifacts: [
+				{
+					kind: "export",
+					state: "verified",
+					sha256: exported.sha256,
+					bytes: exported.bytesWritten,
+				},
+			],
+			providerProvenance: [
+				{
+					provider: "opencut-web-renderer",
+					artifactHash: exported.sha256,
+				},
+			],
 		});
 		await second.callTool("opencut_stop_editor_worker", {});
 	},
@@ -270,6 +443,7 @@ async function startMcp(options: {
 	bridgePort: number;
 	profileDirectory: string;
 	receiptDirectory: string;
+	dropBrowserResponseOperationId?: string;
 }): Promise<McpStdioHarness> {
 	const harness = new McpStdioHarness(options);
 	processes.push(harness);
@@ -294,6 +468,7 @@ class McpStdioHarness {
 			bridgePort: number;
 			profileDirectory: string;
 			receiptDirectory: string;
+			dropBrowserResponseOperationId?: string;
 		},
 	) {}
 
@@ -311,6 +486,12 @@ class McpStdioHarness {
 				OPENCUT_HEADLESS_PROFILE_DIR: this.options.profileDirectory,
 				OPENCUT_HEADLESS_CONNECTION_TIMEOUT_MS: "90000",
 				OPENCUT_RECEIPT_DIR: this.options.receiptDirectory,
+				...(this.options.dropBrowserResponseOperationId
+					? {
+							OPENCUT_TEST_DROP_BROWSER_RESPONSE_OPERATION_ID:
+								this.options.dropBrowserResponseOperationId,
+						}
+					: {}),
 			},
 		});
 		this.child.stdout.on("data", (chunk) => this.readOutput(String(chunk)));

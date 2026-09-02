@@ -17,6 +17,7 @@ import {
 	type SubjectTrackingSample,
 } from "./subject-tracker";
 import type { BridgeConnectionIdentity } from "./editor-bridge";
+import type { CompositeOperationObserver } from "./composite-operation-observer";
 
 const TICKS_PER_SECOND = 120_000;
 
@@ -113,10 +114,14 @@ export class SubjectTrackingService {
 
 	constructor(
 		private bridge: SubjectTrackingBridge,
-		private createTracker: () => SubjectTracker = commandSubjectTrackerFromEnvironment,
+		private createTracker?: () => SubjectTracker,
+		private providerResultDirectory?: string,
 	) {}
 
-	async track(input: TrackSubjectInput): Promise<Record<string, unknown>> {
+	async track(
+		input: TrackSubjectInput,
+		observe?: CompositeOperationObserver,
+	): Promise<Record<string, unknown>> {
 		const expectedIdentity = expectedV2Identity(input);
 		const fingerprint = stableSerialize(input);
 		const prior = this.completed.get(input.operationId);
@@ -163,7 +168,9 @@ export class SubjectTrackingService {
 		}
 
 		const clip = findTrackingClip({ snapshot, input });
-		const tracker = this.createTracker();
+		const tracker = this.createTracker
+			? this.createTracker()
+			: commandSubjectTrackerFromEnvironment(this.providerResultDirectory);
 		const jobDirectory = await mkdtemp(join(tmpdir(), "opencut-track-job-"));
 		try {
 			const sourcePath = join(
@@ -191,6 +198,12 @@ export class SubjectTrackingService {
 			}
 
 			const sourceContentHash = await hashSourceFile(sourcePath);
+			await observe?.({
+				state: "prepared",
+				provider: "subject-tracker-command",
+				modelId: input.modelId,
+				modelVersion: input.modelVersion,
+			});
 			const trackerResult = await tracker.track(
 				buildTrackerJob({
 					input,
@@ -201,6 +214,28 @@ export class SubjectTrackingService {
 				}),
 				input.timeoutSeconds * 1000,
 			);
+			await observe?.({
+				state: "committed",
+				provider: "subject-tracker-command",
+				modelId: trackerResult.modelId,
+				modelVersion: trackerResult.modelVersion,
+				metadata: {
+					sampleCount: trackerResult.samples.length,
+					warnings: trackerResult.warnings,
+					samples: trackerResult.samples.map((sample) => ({
+						sourceTime: sample.sourceTime,
+						box: {
+							x: sample.box.x,
+							y: sample.box.y,
+							width: sample.box.width,
+							height: sample.box.height,
+						},
+						...(sample.confidence === undefined
+							? {}
+							: { confidence: sample.confidence }),
+					})),
+				},
+			});
 			const operations = buildTrackingEditOperations({
 				input,
 				clip,
@@ -266,6 +301,13 @@ export class SubjectTrackingService {
 					input.projectId,
 				);
 			}
+			await observe?.({
+				state: "verified",
+				provider: "subject-tracker-command",
+				modelId: trackerResult.modelId,
+				modelVersion: trackerResult.modelVersion,
+				metadata: { sampleCount: trackerResult.samples.length },
+			});
 
 			const keyframeCount = operations.length - 1;
 			const result = {
@@ -292,6 +334,97 @@ export class SubjectTrackingService {
 		} finally {
 			await rm(jobDirectory, { recursive: true, force: true });
 		}
+	}
+
+	async applyRecovered(
+		input: TrackSubjectInput,
+		recovery: {
+			samples: SubjectTrackingSample[];
+			modelId: string;
+			modelVersion: string;
+		},
+		observe?: CompositeOperationObserver,
+	): Promise<Record<string, unknown>> {
+		const snapshot = asProjectSnapshot(
+			await this.bridge.request(
+				"read_project",
+				bridgeProtocolContext(input),
+				undefined,
+				expectedV2Identity(input),
+			),
+		);
+		if (
+			snapshot.projectId !== input.projectId ||
+			snapshot.revision !== input.expectedRevision
+		) {
+			return withProjectEnvelope(
+				{
+					status: "conflict",
+					operationId: input.operationId,
+					expectedRevision: input.expectedRevision,
+					actualRevision: snapshot.revision,
+				},
+				snapshot,
+				input.projectId,
+			);
+		}
+		const clip = findTrackingClip({ snapshot, input });
+		const operations = buildTrackingEditOperations({
+			input,
+			clip,
+			samples: recovery.samples,
+		});
+		if (operations.length === 1) {
+			return withProjectEnvelope(
+				{
+					status: "rejected",
+					operationId: input.operationId,
+					reason: "recovered tracker samples contain no visible subject",
+				},
+				snapshot,
+				input.projectId,
+			);
+		}
+		const mutation = asMutationResult(
+			await this.bridge.request(
+				"apply_edit_plan",
+				{
+					...bridgeProtocolContext(input),
+					projectId: input.projectId,
+					operationId: input.operationId,
+					expectedRevision: input.expectedRevision,
+					description: `Recover tracked subject and apply ${input.trackingMode} reframe`,
+					operations,
+				},
+				10 * 60_000,
+				expectedV2Identity(input),
+			),
+		);
+		if (mutation.status !== "applied" && mutation.status !== "replayed") {
+			return withProjectEnvelope(mutation, snapshot, input.projectId);
+		}
+		await observe?.({
+			state: "verified",
+			provider: "subject-tracker-command",
+			modelId: recovery.modelId,
+			modelVersion: recovery.modelVersion,
+			metadata: { sampleCount: recovery.samples.length },
+		});
+		return {
+			...mutation,
+			status: "tracked-and-reframed",
+			recoveredProviderSamples: true,
+			trackingMode: input.trackingMode,
+			keyframeCount: operations.length - 1,
+			sampleCount:
+				(operations.length - 1) / channelsForMode(input.trackingMode).length,
+			tracker: {
+				type: "command",
+				modelId: recovery.modelId,
+				modelVersion: recovery.modelVersion,
+				warnings: [],
+			},
+		};
 	}
 }
 

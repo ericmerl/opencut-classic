@@ -27,11 +27,13 @@ const { EditorAutomation } = await import("./editor-automation");
 const originalLoadProjectFresh = storageService.loadProjectFresh;
 const originalLoadSaveReceipt = storageService.loadSaveReceipt;
 const originalSaveSaveReceipt = storageService.saveSaveReceipt;
+const originalLoadOperationReceipt = storageService.loadOperationReceipt;
 
 afterEach(() => {
 	storageService.loadProjectFresh = originalLoadProjectFresh;
 	storageService.loadSaveReceipt = originalLoadSaveReceipt;
 	storageService.saveSaveReceipt = originalSaveSaveReceipt;
+	storageService.loadOperationReceipt = originalLoadOperationReceipt;
 });
 
 describe("EditorAutomation save barrier", () => {
@@ -173,6 +175,188 @@ describe("EditorAutomation save barrier", () => {
 			operationId: request.operationId,
 		});
 		expect(flushCalls).toBe(2);
+	});
+
+	test("verifies a bound committed receipt after revision reset without flushing", async () => {
+		const project = buildProject("Committed browser edit");
+		const scene = project.scenes[0]!;
+		let flushCalls = 0;
+		let savedReceipt: unknown = null;
+		const editor = createEditor({
+			project,
+			scene,
+			onFlush: () => (flushCalls += 1),
+		});
+		const automation = new EditorAutomation(editor);
+		const snapshot = await automation.readProject();
+		if (snapshot.contentIdentity.status !== "hashed") throw new Error("hash blocked");
+		const committedContentHash = snapshot.contentIdentity.hash.digest;
+		const binding = {
+			version: 1 as const,
+			outerOperationId: "edit-before-response-loss",
+			outerToolName: "opencut_apply_edit_plan",
+			outerRequestFingerprint: "a".repeat(64),
+			role: "direct-terminal" as const,
+			stepId: "opencut_apply_edit_plan:direct",
+			browserMethod: "apply_edit_plan",
+			browserRequestFingerprint: "b".repeat(64),
+		};
+		storageService.loadOperationReceipt = async () => ({
+			id: "bound-receipt",
+			envelopeVersion: 3,
+			storageSchemaVersion: 3,
+			operationId: binding.outerOperationId,
+			binding,
+			afterState: {
+				projectId: "project-1",
+				sceneId: "scene-1",
+				revisionAfter: 19,
+				sessionRevisionAfter: 19,
+				durableWriteVersion: 7,
+				contentHashAfter: committedContentHash,
+			},
+			result: { status: "applied", revision: 19, snapshot },
+			recordedAt: "2026-09-02T12:00:00.000Z",
+		});
+		storageService.loadProjectFresh = async () => readback(project, 7);
+		storageService.loadSaveReceipt = async () => null;
+		storageService.saveSaveReceipt = async (receipt) => {
+			savedReceipt = receipt;
+		};
+
+		const result = await automation.verifyOperationReceipt({
+			binding,
+			saveOperationId: `${binding.outerOperationId}:ledger-save`,
+		});
+
+		expect(result).toMatchObject({
+			status: "saved",
+			revision: 19,
+			writeVersion: 7,
+			contentHash: committedContentHash,
+		});
+		expect(savedReceipt).toBeTruthy();
+		expect(flushCalls).toBe(0);
+	});
+
+	test("keeps receipt recovery unresolved when persisted content advanced", async () => {
+		const committedProject = buildProject("Committed browser edit");
+		const advancedProject = buildProject("Advanced after commit");
+		const scene = committedProject.scenes[0]!;
+		let flushCalls = 0;
+		let saveReceiptWrites = 0;
+		const automation = new EditorAutomation(
+			createEditor({
+				project: committedProject,
+				scene,
+				onFlush: () => (flushCalls += 1),
+			}),
+		);
+		const snapshot = await automation.readProject();
+		if (snapshot.contentIdentity.status !== "hashed") throw new Error("hash blocked");
+		const committedContentHash = snapshot.contentIdentity.hash.digest;
+		const binding = {
+			version: 1 as const,
+			outerOperationId: "advanced-before-recovery",
+			outerToolName: "opencut_apply_edit_plan",
+			outerRequestFingerprint: "c".repeat(64),
+			role: "direct-terminal" as const,
+			stepId: "opencut_apply_edit_plan:direct",
+			browserMethod: "apply_edit_plan",
+			browserRequestFingerprint: "d".repeat(64),
+		};
+		storageService.loadOperationReceipt = async () => ({
+			id: "advanced-bound-receipt",
+			envelopeVersion: 3,
+			storageSchemaVersion: 3,
+			operationId: binding.outerOperationId,
+			binding,
+			afterState: {
+				projectId: "project-1",
+				sceneId: "scene-1",
+				revisionAfter: 19,
+				sessionRevisionAfter: 19,
+				durableWriteVersion: 7,
+				contentHashAfter: committedContentHash,
+			},
+			result: { status: "applied", revision: 19, snapshot },
+			recordedAt: "2026-09-02T12:00:00.000Z",
+		});
+		storageService.loadProjectFresh = async () => readback(advancedProject, 8);
+		storageService.loadSaveReceipt = async () => null;
+		storageService.saveSaveReceipt = async () => {
+			saveReceiptWrites += 1;
+		};
+
+		const result = await automation.verifyOperationReceipt({
+			binding,
+			saveOperationId: `${binding.outerOperationId}:ledger-save`,
+		});
+
+		expect(result).toMatchObject({
+			status: "verification-failed",
+			operationId: `${binding.outerOperationId}:ledger-save`,
+		});
+		expect(flushCalls).toBe(0);
+		expect(saveReceiptWrites).toBe(0);
+	});
+
+	test("rejects same-hash recovery when the durable write version differs", async () => {
+		const project = buildProject("Committed browser edit");
+		const scene = project.scenes[0]!;
+		let flushCalls = 0;
+		let saveReceiptWrites = 0;
+		const automation = new EditorAutomation(
+			createEditor({
+				project,
+				scene,
+				onFlush: () => (flushCalls += 1),
+			}),
+		);
+		const snapshot = await automation.readProject();
+		if (snapshot.contentIdentity.status !== "hashed") throw new Error("hash blocked");
+		const committedContentHash = snapshot.contentIdentity.hash.digest;
+		const binding = {
+			version: 1 as const,
+			outerOperationId: "same-hash-wrong-write-version",
+			outerToolName: "opencut_apply_edit_plan",
+			outerRequestFingerprint: "e".repeat(64),
+			role: "direct-terminal" as const,
+			stepId: "opencut_apply_edit_plan:direct",
+			browserMethod: "apply_edit_plan",
+			browserRequestFingerprint: "f".repeat(64),
+		};
+		storageService.loadOperationReceipt = async () => ({
+			id: "wrong-write-version-receipt",
+			envelopeVersion: 3,
+			storageSchemaVersion: 3,
+			operationId: binding.outerOperationId,
+			binding,
+			afterState: {
+				projectId: "project-1",
+				sceneId: "scene-1",
+				revisionAfter: 19,
+				sessionRevisionAfter: 19,
+				durableWriteVersion: 7,
+				contentHashAfter: committedContentHash,
+			},
+			result: { status: "applied", revision: 19, snapshot },
+			recordedAt: "2026-09-02T12:00:00.000Z",
+		});
+		storageService.loadProjectFresh = async () => readback(project, 8);
+		storageService.loadSaveReceipt = async () => null;
+		storageService.saveSaveReceipt = async () => {
+			saveReceiptWrites += 1;
+		};
+
+		const result = await automation.verifyOperationReceipt({
+			binding,
+			saveOperationId: `${binding.outerOperationId}:ledger-save`,
+		});
+
+		expect(result).toMatchObject({ status: "verification-failed" });
+		expect(flushCalls).toBe(0);
+		expect(saveReceiptWrites).toBe(0);
 	});
 });
 

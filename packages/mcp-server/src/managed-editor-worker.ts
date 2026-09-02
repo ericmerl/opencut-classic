@@ -36,6 +36,7 @@ export class ManagedEditorWorker {
 			connectionTimeoutMs?: number;
 			spawnProcess?: typeof spawn;
 			browserArguments?: string[];
+			testDropResponseOperationId?: string;
 		},
 	) {}
 
@@ -52,6 +53,8 @@ export class ManagedEditorWorker {
 			connectionTimeoutMs: readTimeout(
 				globalThis.process.env.OPENCUT_HEADLESS_CONNECTION_TIMEOUT_MS,
 			),
+			testDropResponseOperationId:
+				globalThis.process.env.OPENCUT_TEST_DROP_BROWSER_RESPONSE_OPERATION_ID,
 		});
 	}
 
@@ -110,6 +113,12 @@ export class ManagedEditorWorker {
 				String(this.bridge.getStatus().port),
 			);
 			editorUrl.searchParams.set("automationBootstrap", ticket.id);
+			if (this.options.testDropResponseOperationId) {
+				editorUrl.searchParams.set(
+					"automationTestDropResponseOperationId",
+					this.options.testDropResponseOperationId,
+				);
+			}
 
 			const child = (this.options.spawnProcess ?? spawn)(
 				browserPath,

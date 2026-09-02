@@ -13,6 +13,8 @@ import type {
 	AutomationOpenProjectRequest,
 	AutomationSaveProjectRequest,
 	AutomationGetSaveReceiptRequest,
+	AutomationGetOperationReceiptRequest,
+	AutomationVerifyOperationReceiptRequest,
 	AutomationStickerSearchRequest,
 	AutomationTransferSourceRequest,
 	AutomationTranscriptionRequest,
@@ -82,6 +84,18 @@ type BridgeRequest =
 			id: string;
 			method: "get_save_receipt";
 			params: AutomationGetSaveReceiptRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "get_operation_receipt";
+			params: AutomationGetOperationReceiptRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "verify_operation_receipt";
+			params: AutomationVerifyOperationReceiptRequest;
 	  }
 	| {
 			kind: "request";
@@ -170,6 +184,10 @@ export interface AutomationConnectionIdentity {
 export const AUTOMATION_BRIDGE_PROTOCOL_VERSION = 2;
 export const AUTOMATION_EDITOR_INSTANCE_STORAGE_KEY =
 	"opencut.automation.editor-instance-id";
+export const AUTOMATION_TEST_DROP_RESPONSE_OPERATION_STORAGE_KEY =
+	"opencut.automation.test-drop-response-operation-id";
+export const AUTOMATION_TEST_DROP_RESPONSE_OPERATION_QUERY_KEY =
+	"automationTestDropResponseOperationId";
 
 interface IdentityStorage {
 	getItem(key: string): string | null;
@@ -192,6 +210,11 @@ export class AutomationBridgeClient {
 			url: string;
 			token: string;
 			onActiveProjectChange?: (projectId: string) => void;
+			afterOperationReceipt?: (details: {
+				method: string;
+				request: unknown;
+				result: unknown;
+			}) => Promise<boolean> | boolean;
 			identityStorage?: IdentityStorage;
 			createId?: () => string;
 		},
@@ -203,6 +226,7 @@ export class AutomationBridgeClient {
 			createId,
 		);
 		this.editorSessionId = createId();
+		armBrowserResponseDropFromLocation();
 		this.identityReady = usesBrowserStorage
 			? reconcileIndexedDbIdentity(this.editorInstanceId)
 					.catch(() => this.editorInstanceId)
@@ -306,6 +330,25 @@ export class AutomationBridgeClient {
 		try {
 			this.validateRequestTarget(message.target);
 			const result = await this.dispatch(message);
+			await this.automation.recordOperationReceipt(
+				message.method,
+				message.params,
+				result,
+			);
+			if (
+				(await this.options.afterOperationReceipt?.({
+					method: message.method,
+					request: message.params,
+					result,
+				})) ||
+				consumeBrowserResponseDrop(message.params)
+			) {
+				// This test-only fault point models an abrupt browser/editor shutdown after
+				// the durable receipt commits and before a response can be delivered.
+				// stop() clears identity synchronously and prevents an automatic reconnect.
+				this.stop();
+				return;
+			}
 			if (this.socket !== socket || this.stopped) return;
 			this.sendResponse(socket, {
 				kind: "response",
@@ -432,6 +475,10 @@ export class AutomationBridgeClient {
 				return this.automation.saveProject(message.params);
 			case "get_save_receipt":
 				return this.automation.getSaveReceipt(message.params);
+			case "get_operation_receipt":
+				return this.automation.getOperationReceipt(message.params);
+			case "verify_operation_receipt":
+				return this.automation.verifyOperationReceipt(message.params);
 			case "apply_edit_plan":
 				return this.automation.applyEditPlan(message.params);
 			case "export_project":
@@ -459,6 +506,50 @@ export class AutomationBridgeClient {
 		if (this.socket === socket && socket.readyState === WebSocket.OPEN)
 			socket.send(JSON.stringify(response));
 	}
+}
+
+function consumeBrowserResponseDrop(params: unknown): boolean {
+	if (typeof window === "undefined" || !isRecord(params)) return false;
+	const binding = isRecord(params.operationReceiptBinding)
+		? params.operationReceiptBinding
+		: null;
+	const operationId = binding?.outerOperationId;
+	if (typeof operationId !== "string") return false;
+	try {
+		if (
+			window.sessionStorage.getItem(
+				AUTOMATION_TEST_DROP_RESPONSE_OPERATION_STORAGE_KEY,
+			) !== operationId
+		)
+			return false;
+		window.sessionStorage.removeItem(
+			AUTOMATION_TEST_DROP_RESPONSE_OPERATION_STORAGE_KEY,
+		);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function armBrowserResponseDropFromLocation(): void {
+	if (typeof window === "undefined") return;
+	try {
+		const operationId = new URL(window.location.href).searchParams.get(
+			AUTOMATION_TEST_DROP_RESPONSE_OPERATION_QUERY_KEY,
+		);
+		if (operationId) {
+			window.sessionStorage.setItem(
+				AUTOMATION_TEST_DROP_RESPONSE_OPERATION_STORAGE_KEY,
+				operationId,
+			);
+		}
+	} catch {
+		// Test fault injection is optional and must not affect normal startup.
+	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 export class AutomationBridgeProtocolError extends Error {

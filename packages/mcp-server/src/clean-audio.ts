@@ -15,6 +15,7 @@ import {
 } from "./matte-generation-data";
 import { hashSourceFile } from "./matte-producer";
 import type { BridgeConnectionIdentity } from "./editor-bridge";
+import type { CompositeOperationObserver } from "./composite-operation-observer";
 
 export interface CleanAudioInput {
 	bridgeProtocolVersion?: 1 | 2;
@@ -92,10 +93,14 @@ export class AudioCleanupService {
 
 	constructor(
 		private bridge: AudioCleanupBridge,
-		private createCleaner: () => AudioCleaner = commandAudioCleanerFromEnvironment,
+		private createCleaner?: () => AudioCleaner,
+		private durableArtifactRoot?: string,
 	) {}
 
-	async clean(input: CleanAudioInput): Promise<Record<string, unknown>> {
+	async clean(
+		input: CleanAudioInput,
+		observe?: CompositeOperationObserver,
+	): Promise<Record<string, unknown>> {
 		const expectedIdentity = expectedV2Identity(input);
 		const fingerprint = stableSerialize(input);
 		const prior = this.completed.get(input.operationId);
@@ -142,10 +147,25 @@ export class AudioCleanupService {
 		}
 
 		const clip = findAudioProjectClip({ snapshot, input });
-		const cleaner = this.createCleaner();
-		const jobDirectory = await mkdtemp(join(tmpdir(), "opencut-audio-job-"));
+		const cleaner = this.createCleaner
+			? this.createCleaner()
+			: commandAudioCleanerFromEnvironment(
+					this.durableArtifactRoot
+						? join(this.durableArtifactRoot, "provider-results")
+						: undefined,
+				);
+		if (this.durableArtifactRoot) {
+			await mkdir(this.durableArtifactRoot, { recursive: true });
+		}
+		const jobDirectory = await mkdtemp(
+			join(
+				this.durableArtifactRoot ?? tmpdir(),
+				"opencut-audio-job-",
+			),
+		);
 		const outputDirectory = join(jobDirectory, "output");
 		await mkdir(outputDirectory);
+		let preserveJobDirectory = false;
 
 		try {
 			const sourcePath = join(
@@ -173,6 +193,12 @@ export class AudioCleanupService {
 			}
 
 			const sourceContentHash = await hashSourceFile(sourcePath);
+			await observe?.({
+				state: "prepared",
+				provider: "audio-cleaner-command",
+				modelId: input.modelId,
+				modelVersion: input.modelVersion,
+			});
 			const cleanerResult = await cleaner.clean(
 				{
 					protocolVersion: 1,
@@ -219,6 +245,19 @@ export class AudioCleanupService {
 			const artifactTicket = await this.bridge.mediaTickets.create(
 				cleanerResult.artifactPath,
 			);
+			preserveJobDirectory = true;
+			await observe?.({
+				state: "committed",
+				provider: "audio-cleaner-command",
+				modelId: cleanerResult.modelId,
+				modelVersion: cleanerResult.modelVersion,
+				artifact: {
+					sha256: artifactTicket.contentHash,
+					mimeType: artifactTicket.mimeType,
+					path: cleanerResult.artifactPath,
+				},
+				metadata: { warnings: cleanerResult.warnings },
+			});
 			const attachment = asAttachmentResult(
 				await this.bridge.request(
 					"attach_clean_audio",
@@ -262,6 +301,18 @@ export class AudioCleanupService {
 					input.projectId,
 				);
 			}
+			await observe?.({
+				state: "verified",
+				provider: "audio-cleaner-command",
+				modelId: cleanerResult.modelId,
+				modelVersion: cleanerResult.modelVersion,
+				artifact: {
+					sha256: artifactTicket.contentHash,
+					mimeType: artifactTicket.mimeType,
+					path: cleanerResult.artifactPath,
+				},
+			});
+			preserveJobDirectory = Boolean(this.durableArtifactRoot);
 
 			const result = {
 				...attachment,
@@ -282,8 +333,73 @@ export class AudioCleanupService {
 			this.completed.set(input.operationId, { fingerprint, result });
 			return withProjectEnvelope(result, snapshot, input.projectId);
 		} finally {
-			await rm(jobDirectory, { recursive: true, force: true });
+			if (!preserveJobDirectory) {
+				await rm(jobDirectory, { recursive: true, force: true });
+			}
 		}
+	}
+
+	async attachRecovered(
+		input: CleanAudioInput,
+		artifact: {
+			path: string;
+			sha256: string;
+			modelId: string;
+			modelVersion: string;
+		},
+		observe?: CompositeOperationObserver,
+	): Promise<Record<string, unknown>> {
+		const ticket = await this.bridge.mediaTickets.create(artifact.path);
+		if (ticket.contentHash !== artifact.sha256) {
+			throw new Error("retained cleaned-audio artifact hash changed");
+		}
+		const attachment = asAttachmentResult(
+			await this.bridge.request(
+				"attach_clean_audio",
+				{
+					...bridgeProtocolContext(input),
+					projectId: input.projectId,
+					operationId: input.operationId,
+					expectedRevision: input.expectedRevision,
+					trackId: input.trackId,
+					elementId: input.elementId,
+					url: ticket.url,
+					name: ticket.name,
+					mimeType: ticket.mimeType,
+					artifactHash: ticket.contentHash,
+					artifactFingerprint: ticket.sourceFingerprint,
+					modelId: artifact.modelId,
+					modelVersion: artifact.modelVersion,
+				},
+				10 * 60_000,
+				expectedV2Identity(input),
+			),
+		);
+		if (attachment.status !== "applied" && attachment.status !== "replayed") {
+			return attachment;
+		}
+		await observe?.({
+			state: "verified",
+			provider: "audio-cleaner-command",
+			modelId: artifact.modelId,
+			modelVersion: artifact.modelVersion,
+			artifact: {
+				path: artifact.path,
+				sha256: artifact.sha256,
+				mimeType: ticket.mimeType,
+			},
+		});
+		return {
+			...attachment,
+			status: "cleaned-and-attached",
+			recoveredProviderArtifact: true,
+			cleaner: {
+				type: "command",
+				modelId: artifact.modelId,
+				modelVersion: artifact.modelVersion,
+				warnings: [],
+			},
+		};
 	}
 }
 

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	AudioCleanupService,
 	type AudioCleanupBridge,
@@ -10,6 +12,7 @@ describe("AudioCleanupService", () => {
 	test("transfers, cleans, attaches, and replays one operation", async () => {
 		let sourcePath = "";
 		let cleanerCalls = 0;
+		const providerStates: string[] = [];
 		const methods: string[] = [];
 		const bridge: AudioCleanupBridge = {
 			sourceTickets: {
@@ -82,7 +85,9 @@ describe("AudioCleanupService", () => {
 			},
 		}));
 
-		const first = await service.clean(input());
+		const first = await service.clean(input(), async (event) => {
+			providerStates.push(event.state);
+		});
 		const replay = await service.clean(input());
 
 		expect(first).toMatchObject({
@@ -96,11 +101,67 @@ describe("AudioCleanupService", () => {
 		});
 		expect(replay.status).toBe("replayed");
 		expect(cleanerCalls).toBe(1);
+		expect(providerStates).toEqual(["prepared", "committed", "verified"]);
 		expect(methods).toEqual([
 			"read_project",
 			"transfer_source_media",
 			"attach_clean_audio",
 		]);
+	});
+
+	test("reattaches a retained provider artifact without rerunning cleanup", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "opencut-clean-recover-"));
+		const path = join(directory, "cleaned.wav");
+		await writeFile(path, new Uint8Array([1, 2, 3]));
+		let cleanerCalls = 0;
+		const states: string[] = [];
+		const service = new AudioCleanupService(
+			{
+				sourceTickets: { create: async () => ({ url: "", outputPath: "" }) },
+				mediaTickets: {
+					create: async () => ({
+						url: "http://fixture",
+						name: "cleaned.wav",
+						mimeType: "audio/wav",
+						size: 3,
+						sourceFingerprint: "fingerprint",
+						contentHash: "a".repeat(64),
+					}),
+				},
+				request: async (method) => {
+					expect(method).toBe("attach_clean_audio");
+					return { status: "applied", revision: 3 };
+				},
+			},
+			() => ({
+				clean: async () => {
+					cleanerCalls += 1;
+					throw new Error("cleanup must not rerun");
+				},
+			}),
+		);
+		try {
+			const result = await service.attachRecovered(
+				input(),
+				{
+					path,
+					sha256: "a".repeat(64),
+					modelId: "fixture",
+					modelVersion: "1",
+				},
+				async (event) => {
+					states.push(event.state);
+				},
+			);
+			expect(result).toMatchObject({
+				status: "cleaned-and-attached",
+				recoveredProviderArtifact: true,
+			});
+			expect(cleanerCalls).toBe(0);
+			expect(states).toEqual(["verified"]);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 });
 

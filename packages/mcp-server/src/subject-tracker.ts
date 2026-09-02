@@ -1,5 +1,10 @@
 import { dirname } from "node:path";
 import * as z from "zod/v4";
+import { semanticProviderInput } from "./provider-semantic-input";
+import {
+	DurableProviderSupervisor,
+	providerSupervisorFingerprint,
+} from "./provider-supervisor";
 
 const normalizedBoxSchema = z
 	.object({
@@ -94,10 +99,52 @@ export class CommandSubjectTracker {
 		private config: {
 			command: string;
 			args?: string[];
+			supervisorDirectory?: string;
 		},
 	) {}
 
 	async track(
+		job: SubjectTrackerJob,
+		timeoutMs: number,
+	): Promise<SubjectTrackerResult> {
+		if (this.config.supervisorDirectory) return this.runSupervised(job, timeoutMs);
+		return this.run(job, timeoutMs);
+	}
+
+	private async runSupervised(
+		job: SubjectTrackerJob,
+		timeoutMs: number,
+	): Promise<SubjectTrackerResult> {
+		const supervisor = new DurableProviderSupervisor({
+			directory: this.config.supervisorDirectory!,
+		});
+		try {
+			await supervisor.submit({
+				provider: "subject-tracker-command",
+				operationId: job.operationId,
+				semanticFingerprint: providerSupervisorFingerprint(
+					semanticProviderInput(job),
+				),
+				command: this.config.command,
+				args: this.config.args ?? [],
+				request: job,
+				timeoutMs,
+			});
+			const terminal = await supervisor.waitForTerminal(
+				"subject-tracker-command",
+				job.operationId,
+				timeoutMs + 5_000,
+			);
+			if (terminal.state !== "succeeded") {
+				throw new Error(providerTerminalError(terminal.state, terminal.diagnostics));
+			}
+			return trackerResultSchema.parse(terminal.result);
+		} finally {
+			supervisor.close();
+		}
+	}
+
+	private async run(
 		job: SubjectTrackerJob,
 		timeoutMs: number,
 	): Promise<SubjectTrackerResult> {
@@ -153,7 +200,9 @@ export class CommandSubjectTracker {
 	}
 }
 
-export function commandSubjectTrackerFromEnvironment(): CommandSubjectTracker {
+export function commandSubjectTrackerFromEnvironment(
+	resultReceiptDirectory?: string,
+): CommandSubjectTracker {
 	const command = globalThis.process.env.OPENCUT_SUBJECT_TRACKER_COMMAND;
 	if (!command) {
 		throw new Error(
@@ -177,7 +226,32 @@ export function commandSubjectTrackerFromEnvironment(): CommandSubjectTracker {
 		}
 		args = parsed;
 	}
-	return new CommandSubjectTracker({ command, args });
+	return new CommandSubjectTracker({
+		command,
+		args,
+		...(resultReceiptDirectory
+			? { supervisorDirectory: resultReceiptDirectory }
+			: {}),
+	});
+}
+
+const trackerResultSchema = z.object({
+	samples: z.array(
+		z.object({
+			sourceTime: z.number().int().nonnegative(),
+			box: normalizedBoxSchema,
+			confidence: z.number().min(0).max(1).optional(),
+		}),
+	),
+	modelId: z.string().min(1),
+	modelVersion: z.string().min(1),
+	warnings: z.array(z.string()),
+});
+
+function providerTerminalError(state: string, diagnostics: string | null): string {
+	return state === "unknown"
+		? `Subject tracker outcome is durably unknown and will not be rerun: ${diagnostics ?? "supervisor stopped before publication"}`
+		: `Subject tracker failed: ${diagnostics ?? state}`;
 }
 
 function validateSamples({

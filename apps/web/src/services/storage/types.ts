@@ -103,6 +103,40 @@ export interface PersistedSaveReceiptEnvelope<
 	storageSchemaVersion: typeof SAVE_RECEIPT_STORAGE_SCHEMA_VERSION;
 }
 
+export const OPERATION_RECEIPT_ENVELOPE_VERSION = 3 as const;
+export const OPERATION_RECEIPT_STORAGE_SCHEMA_VERSION = 3 as const;
+
+export interface OperationReceiptBinding {
+	version: 1;
+	outerOperationId: string;
+	outerToolName: string;
+	outerRequestFingerprint: string;
+	role: "direct-terminal" | "composite-step";
+	stepId: string;
+	browserMethod: string;
+	browserRequestFingerprint: string;
+}
+
+export interface OperationReceiptAfterState {
+	projectId: string;
+	sceneId: string;
+	sessionRevisionAfter: number;
+	revisionAfter: number;
+	durableWriteVersion: number;
+	contentHashAfter: string;
+}
+
+export interface PersistedOperationReceipt {
+	id: string;
+	envelopeVersion: typeof OPERATION_RECEIPT_ENVELOPE_VERSION;
+	storageSchemaVersion: typeof OPERATION_RECEIPT_STORAGE_SCHEMA_VERSION;
+	operationId: string;
+	binding: OperationReceiptBinding;
+	afterState: OperationReceiptAfterState;
+	result: unknown;
+	recordedAt: string;
+}
+
 export interface StorageConfig {
 	projectsDb: string;
 	mediaDb: string;

@@ -10,9 +10,15 @@ import {
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 const cleanup: Array<() => void> = [];
+const recordedReceipts: Array<{
+	method: string;
+	request: unknown;
+	result: unknown;
+}> = [];
 
 afterEach(() => {
 	for (const dispose of cleanup.splice(0)) dispose();
+	recordedReceipts.length = 0;
 });
 
 describe("automation editor instance identity", () => {
@@ -91,6 +97,28 @@ describe("automation editor instance identity", () => {
 			receiptId: "receipt-1",
 			connectionIdentity: firstIdentity,
 		});
+		expect(recordedReceipts).toContainEqual({
+			method: "save_project",
+			request: expect.objectContaining({ operationId: "save-1" }),
+			result: expect.objectContaining({ status: "saved" }),
+		});
+		const receipt = await bridge.request(
+			"get_operation_receipt",
+			{
+				operationId: "save-1",
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: firstIdentity,
+			},
+			1_000,
+			firstIdentity,
+		);
+		expect(receipt).toMatchObject({
+			status: "found",
+			operationId: "save-1",
+			method: "save_project",
+			connectionIdentity: firstIdentity,
+			requestConnectionIdentity: firstIdentity,
+		});
 
 		client.stop();
 		expect(client.getStatus()).toEqual({
@@ -144,6 +172,53 @@ describe("automation editor instance identity", () => {
 		});
 	});
 
+	test("closes the browser socket after receipt commit and before response delivery", async () => {
+		const bridge = createBridge();
+		let receiptCommitted = false;
+		const client = createClient(
+			`ws://127.0.0.1:${bridge.getStatus().port}/editor`,
+			async () => {
+				receiptCommitted = true;
+				return true;
+			},
+		);
+		client.start();
+		await bridge.waitForConnection(1_000);
+		const identity = bridge.getStatus().connectionIdentity;
+		if (!identity) throw new Error("v2 connection identity is missing");
+
+		let transportFailure: unknown;
+		try {
+			await bridge.request(
+				"save_project",
+				{
+					operationId: "drop-after-receipt",
+					projectId: "project-1",
+					sceneId: "scene-1",
+					expectedRevision: 0,
+					expectedContentHash: "a".repeat(64),
+					bridgeProtocolVersion: 2,
+					expectedConnectionIdentity: identity,
+				},
+				1_000,
+				identity,
+			);
+		} catch (error) {
+			transportFailure = error;
+		}
+		expect(transportFailure).toBeInstanceOf(Error);
+		expect(receiptCommitted).toBeTrue();
+		expect(client.getStatus()).toEqual({
+			protocolVersion: null,
+			connectionIdentity: null,
+		});
+		expect(recordedReceipts).toContainEqual({
+			method: "save_project",
+			request: expect.objectContaining({ operationId: "drop-after-receipt" }),
+			result: expect.objectContaining({ status: "saved" }),
+		});
+	});
+
 	test("degrades cleanly against an old server using target-free v1", async () => {
 		const protocol = createProtocolServer("v1");
 		const client = createClient(protocol.url);
@@ -170,7 +245,10 @@ describe("automation editor instance identity", () => {
 	});
 });
 
-function createClient(url: string): AutomationBridgeClient {
+function createClient(
+	url: string,
+	afterOperationReceipt?: () => Promise<boolean> | boolean,
+): AutomationBridgeClient {
 	const ids = ["editor-browser-1", "session-browser-1"];
 	const storageValues = new Map<string, string>();
 	const automation = {
@@ -184,6 +262,36 @@ function createClient(url: string): AutomationBridgeClient {
 			operationId: request.operationId,
 			receiptId: "receipt-1",
 		}),
+		recordOperationReceipt: async (
+			method: string,
+			request: unknown,
+			result: unknown,
+		) => {
+			if (
+				request &&
+				typeof request === "object" &&
+				typeof (request as { operationId?: unknown }).operationId === "string"
+			) {
+				recordedReceipts.push({ method, request, result });
+			}
+		},
+		getOperationReceipt: (request: { operationId: string }) => {
+			const receipt = recordedReceipts.find(
+				(entry) =>
+					(entry.request as { operationId?: string }).operationId ===
+					request.operationId,
+			);
+			return receipt
+				? {
+						status: "found",
+						operationId: request.operationId,
+						method: receipt.method,
+						requestFingerprint: "fingerprint",
+						result: receipt.result,
+						recordedAt: "2026-09-02T00:00:00.000Z",
+					}
+				: { status: "not-found", operationId: request.operationId };
+		},
 	} as unknown as EditorAutomation;
 	const client = new AutomationBridgeClient(automation, {
 		url,
@@ -193,6 +301,7 @@ function createClient(url: string): AutomationBridgeClient {
 			setItem: (key, value) => storageValues.set(key, value),
 		},
 		createId: () => ids.shift() ?? "unexpected-id",
+		afterOperationReceipt,
 	});
 	cleanup.push(() => client.stop());
 	return client;

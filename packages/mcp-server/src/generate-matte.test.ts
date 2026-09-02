@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
 	GenerateMatteInput,
 	MatteGenerationBridge,
@@ -10,6 +12,7 @@ describe("MatteGenerationService", () => {
 	test("transfers, produces, attaches, and replays one operation", async () => {
 		let sourcePath = "";
 		let producerCalls = 0;
+		const providerStates: string[] = [];
 		const methods: string[] = [];
 		const bridge: MatteGenerationBridge = {
 			sourceTickets: {
@@ -68,7 +71,9 @@ describe("MatteGenerationService", () => {
 			},
 		}));
 
-		const first = await service.generate(input());
+		const first = await service.generate(input(), async (event) => {
+			providerStates.push(event.state);
+		});
 		const replay = await service.generate(input());
 
 		expect(first).toMatchObject({
@@ -82,11 +87,68 @@ describe("MatteGenerationService", () => {
 		});
 		expect(replay.status).toBe("replayed");
 		expect(producerCalls).toBe(1);
+		expect(providerStates).toEqual(["prepared", "committed", "verified"]);
 		expect(methods).toEqual([
 			"read_project",
 			"transfer_source_media",
 			"attach_matte",
 		]);
+	});
+
+	test("reattaches a retained matte without rerunning the provider", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "opencut-matte-recover-"));
+		const path = join(directory, "matte.webm");
+		await writeFile(path, new Uint8Array([1, 2, 3]));
+		let producerCalls = 0;
+		const states: string[] = [];
+		const service = new MatteGenerationService(
+			{
+				sourceTickets: { create: async () => ({ url: "", outputPath: "" }) },
+				mediaTickets: {
+					create: async () => ({
+						url: "http://fixture",
+						name: "matte.webm",
+						mimeType: "video/webm",
+						size: 3,
+						sourceFingerprint: "fingerprint",
+						contentHash: "a".repeat(64),
+					}),
+				},
+				request: async (method) => {
+					expect(method).toBe("attach_matte");
+					return { status: "applied", revision: 3 };
+				},
+			},
+			() => ({
+				produce: async () => {
+					producerCalls += 1;
+					throw new Error("provider must not rerun");
+				},
+			}),
+		);
+		try {
+			const result = await service.attachRecovered(
+				input(),
+				{
+					path,
+					sha256: "a".repeat(64),
+					modelId: "fixture",
+					modelVersion: "1",
+					channel: "red",
+				},
+				async (event) => {
+					states.push(event.state);
+				},
+			);
+			expect(result).toMatchObject({
+				status: "generated-and-attached",
+				recoveredProviderArtifact: true,
+			});
+			expect(producerCalls).toBe(0);
+			expect(states).toEqual(["verified"]);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 });
 

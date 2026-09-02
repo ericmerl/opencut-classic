@@ -62,6 +62,7 @@ import {
 } from "@/wasm";
 import { getElementKeyframes } from "@/animation";
 import { analyzeAutomationAudio } from "./audio-analysis";
+import { diffAutomationSnapshots } from "./affected-objects";
 import { prepareCleanAudioAttachment } from "./attach-clean-audio";
 import { prepareMatteAttachment } from "./attach-matte";
 import { buildAudioControlPatch } from "./audio-control";
@@ -156,6 +157,9 @@ import type {
 	AutomationSaveProjectResult,
 	AutomationGetSaveReceiptRequest,
 	AutomationGetSaveReceiptResult,
+	AutomationGetOperationReceiptRequest,
+	AutomationGetOperationReceiptResult,
+	AutomationVerifyOperationReceiptRequest,
 	AutomationProjectActivatedResult,
 	AutomationProjectListResult,
 	AutomationProjectSnapshot,
@@ -325,6 +329,160 @@ export class EditorAutomation {
 			return receipt
 				? { ...receipt.result, status: "found" }
 				: { status: "not-found", operationId: request.operationId };
+		});
+	}
+
+	getOperationReceipt(
+		request: AutomationGetOperationReceiptRequest,
+	): Promise<AutomationGetOperationReceiptResult> {
+		return this.enqueue(async () => {
+			const receipt = await storageService.loadOperationReceipt(request.binding);
+			return receipt
+				? {
+						status: "found",
+						operationId: receipt.operationId,
+						binding: receipt.binding,
+						afterState: receipt.afterState,
+						result: receipt.result,
+						recordedAt: receipt.recordedAt,
+					}
+				: { status: "not-found", operationId: request.operationId };
+		});
+	}
+
+	verifyOperationReceipt(
+		request: AutomationVerifyOperationReceiptRequest,
+	): Promise<AutomationSaveProjectResult> {
+		return this.enqueue(async () => {
+			const receipt = await storageService.loadOperationReceipt(request.binding);
+			if (!receipt || receipt.binding.role !== "direct-terminal") {
+				return {
+					status: "rejected",
+					operationId: request.saveOperationId,
+					reason: "bound direct browser operation receipt was not found",
+				};
+			}
+			const state = receipt.afterState;
+			const prior = await storageService.loadSaveReceipt({
+				operationId: request.saveOperationId,
+				parseResult: parsePersistedSaveProjectResult,
+			});
+			if (prior) {
+				return saveReceiptMatchesAfterState(prior.result, state)
+					? { ...prior.result, status: "replayed" }
+					: {
+							status: "rejected",
+							operationId: request.saveOperationId,
+							reason: "linked save receipt differs from browser after-state",
+						};
+			}
+			const readback = await storageService.loadProjectFresh({
+				id: state.projectId,
+			});
+			if (
+				!readback ||
+				readback.project.currentSceneId !== state.sceneId ||
+				readback.persistence.writeVersion !== state.durableWriteVersion
+			) {
+				return verificationFailure(
+					request.saveOperationId,
+					state.projectId,
+					state.contentHashAfter,
+					null,
+					"persisted project or scene differs from browser after-state",
+				);
+			}
+			const identity = await hashProjectContent(
+				buildEditorProjectContentInput({
+					project: readback.project,
+					mediaAssets: readback.mediaAssets,
+				}),
+			);
+			const readbackHash =
+				identity.status === "hashed" ? identity.hash.digest : null;
+			if (readbackHash !== state.contentHashAfter) {
+				return verificationFailure(
+					request.saveOperationId,
+					state.projectId,
+					state.contentHashAfter,
+					readbackHash,
+					"fresh persisted content differs from browser after-state",
+				);
+			}
+			const result: PersistedAutomationSaveResult = {
+				status: "saved",
+				receiptId: `save:${state.projectId}:${readback.persistence.writeVersion}:${state.contentHashAfter}`,
+				operationId: request.saveOperationId,
+				projectId: state.projectId,
+				sceneId: state.sceneId,
+				revision: state.revisionAfter,
+				contentHash: state.contentHashAfter,
+				persistedAt: readback.persistence.snapshotAt,
+				completedAt: readback.persistence.completedAt,
+				storageSchemaVersion: readback.persistence.storageSchemaVersion,
+				writeVersion: readback.persistence.writeVersion,
+				reloadVerified: true,
+				readbackContentHash: readbackHash,
+			};
+			await storageService.saveSaveReceipt({
+				operationId: request.saveOperationId,
+				fingerprint: stableSerialize({
+					method: "verify_operation_receipt",
+					binding: request.binding,
+				}),
+				result,
+				recordedAt: new Date().toISOString(),
+			});
+			return result;
+		});
+	}
+
+	async recordOperationReceipt(
+		method: string,
+		request: unknown,
+		result: unknown,
+	): Promise<void> {
+		if (!isDurableOperationSuccess(method, result) || !isRecord(request)) return;
+		const binding = parseOperationReceiptBinding(request.operationReceiptBinding);
+		if (!binding || binding.browserMethod !== method) return;
+		const operationId = binding.outerOperationId;
+		const requestFingerprint = await sha256Text(
+			stableSerialize(stripTransientRequest(request)),
+		);
+		if (binding.browserRequestFingerprint !== requestFingerprint) {
+			throw new Error("browser operation receipt request fingerprint mismatch");
+		}
+		const resultState = operationReceiptAfterState(result);
+		if (!resultState) {
+			throw new Error("browser operation result lacks immutable after-state");
+		}
+		const readback = await storageService.loadProjectFresh({ id: resultState.projectId });
+		if (!readback || readback.project.currentSceneId !== resultState.sceneId) {
+			throw new Error("browser operation receipt persisted project identity mismatch");
+		}
+		const persistedIdentity = await hashProjectContent(
+			buildEditorProjectContentInput({
+				project: readback.project,
+				mediaAssets: readback.mediaAssets,
+			}),
+		);
+		if (
+			persistedIdentity.status !== "hashed" ||
+			persistedIdentity.hash.digest !== resultState.contentHashAfter
+		) {
+			throw new Error("browser operation receipt persisted content mismatch");
+		}
+		const afterState = {
+			...resultState,
+			sessionRevisionAfter: resultState.revisionAfter,
+			durableWriteVersion: readback.persistence.writeVersion,
+		};
+		await storageService.saveOperationReceipt({
+			operationId,
+			binding,
+			afterState,
+			result,
+			recordedAt: new Date().toISOString(),
 		});
 	}
 
@@ -549,6 +707,7 @@ export class EditorAutomation {
 				: null;
 		if (
 			readbackHash !== contentHash ||
+			readback.project.currentSceneId !== sceneId ||
 			readback.persistence.writeVersion !== write.writeVersion
 		) {
 			return {
@@ -562,16 +721,16 @@ export class EditorAutomation {
 		}
 		const result: PersistedAutomationSaveResult = {
 			status: "saved",
-			receiptId: `save:${projectId}:${write.writeVersion}:${contentHash}`,
+			receiptId: `save:${projectId}:${readback.persistence.writeVersion}:${contentHash}`,
 			operationId: request.operationId,
 			projectId,
 			sceneId,
 			revision: this.revision,
 			contentHash,
-			persistedAt: write.snapshotAt,
-			completedAt: write.completedAt,
-			storageSchemaVersion: write.storageSchemaVersion,
-			writeVersion: write.writeVersion,
+			persistedAt: readback.persistence.snapshotAt,
+			completedAt: readback.persistence.completedAt,
+			storageSchemaVersion: readback.persistence.storageSchemaVersion,
+			writeVersion: readback.persistence.writeVersion,
 			reloadVerified: true,
 			readbackContentHash: readbackHash,
 		};
@@ -740,6 +899,7 @@ export class EditorAutomation {
 				actualRevision: this.revision,
 			};
 		}
+		const beforeSnapshot = this.buildSnapshot();
 
 		let commands: Command[];
 		try {
@@ -761,11 +921,13 @@ export class EditorAutomation {
 		this.recordCommittedState();
 		await this.refreshContentIdentity();
 
+		const snapshot = this.buildSnapshot();
 		const result: AutomationAppliedResult = {
 			status: "applied",
 			operationId: plan.operationId,
 			revision: this.revision,
-			snapshot: this.buildSnapshot(),
+			snapshot,
+			affectedObjects: diffAutomationSnapshots(beforeSnapshot, snapshot),
 		};
 		this.appliedOperations.set(plan.operationId, { fingerprint, result });
 		return result;
@@ -2562,6 +2724,146 @@ function stableSerialize(value: unknown): string {
 		return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`).join(",")}}`;
 	}
 	return JSON.stringify(value);
+}
+
+function stripTransientRequest(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(stripTransientRequest);
+	if (!isRecord(value)) return value;
+	return Object.fromEntries(
+		Object.entries(value)
+			.filter(
+				([key]) =>
+					!new Set([
+						"url",
+						"ticketUrl",
+						"uploadUrl",
+						"downloadUrl",
+						"expectedConnectionIdentity",
+						"operationReceiptBinding",
+					]).has(key),
+			)
+			.map(([key, child]) => [key, stripTransientRequest(child)]),
+	);
+}
+
+function isDurableOperationSuccess(method: string, value: unknown): boolean {
+	if (!isRecord(value)) return false;
+	const expected = DURABLE_METHOD_STATUSES[method];
+	return expected?.has(String(value.status)) ?? false;
+}
+
+const DURABLE_METHOD_STATUSES: Record<string, ReadonlySet<string>> = {
+	create_project: new Set(["created", "replayed"]),
+	open_project: new Set(["opened", "replayed"]),
+	save_project: new Set(["saved", "replayed"]),
+	sync_audio: new Set(["applied", "replayed"]),
+	attach_clean_audio: new Set(["applied", "replayed"]),
+	apply_edit_plan: new Set(["applied", "replayed"]),
+	undo: new Set(["undone"]),
+	import_media: new Set(["applied", "replayed"]),
+	import_subtitles: new Set(["applied", "replayed"]),
+	transcribe_timeline: new Set(["applied", "replayed"]),
+	attach_matte: new Set(["applied", "replayed"]),
+};
+
+function parseOperationReceiptBinding(value: unknown) {
+	if (!isRecord(value) || value.version !== 1) return null;
+	if (
+		![
+			"outerOperationId",
+			"outerToolName",
+			"outerRequestFingerprint",
+			"stepId",
+			"browserMethod",
+			"browserRequestFingerprint",
+		].every((field) => typeof value[field] === "string" && value[field].length > 0) ||
+		(value.role !== "direct-terminal" && value.role !== "composite-step")
+	)
+		return null;
+	return value as unknown as import("@/services/storage/types").OperationReceiptBinding;
+}
+
+function operationReceiptAfterState(value: unknown) {
+	if (!isRecord(value)) return null;
+	const snapshot = isRecord(value.snapshot) ? value.snapshot : null;
+	const projectId =
+		typeof value.projectId === "string"
+			? value.projectId
+			: snapshot && typeof snapshot.projectId === "string"
+				? snapshot.projectId
+				: null;
+	const sceneId =
+		typeof value.sceneId === "string"
+			? value.sceneId
+			: snapshot && typeof snapshot.sceneId === "string"
+				? snapshot.sceneId
+				: null;
+	const revisionAfter =
+		typeof value.revision === "number" ? value.revision : null;
+	const contentHashAfter =
+		typeof value.contentHash === "string"
+			? value.contentHash
+			: snapshot
+				? projectContentHash(snapshot)
+				: null;
+	return projectId &&
+		sceneId &&
+		revisionAfter !== null &&
+		contentHashAfter &&
+		/^[a-f0-9]{64}$/.test(contentHashAfter)
+		? { projectId, sceneId, revisionAfter, contentHashAfter }
+		: null;
+}
+
+function projectContentHash(snapshot: Record<string, unknown>): string | null {
+	const identity = isRecord(snapshot.contentIdentity)
+		? snapshot.contentIdentity
+		: null;
+	const hash = identity && isRecord(identity.hash) ? identity.hash : null;
+	return identity?.status === "hashed" && typeof hash?.digest === "string"
+		? hash.digest
+		: null;
+}
+
+function saveReceiptMatchesAfterState(
+	receipt: PersistedAutomationSaveResult,
+	state: import("@/services/storage/types").OperationReceiptAfterState,
+): boolean {
+	return (
+		receipt.projectId === state.projectId &&
+		receipt.sceneId === state.sceneId &&
+			receipt.revision === state.revisionAfter &&
+		receipt.revision === state.sessionRevisionAfter &&
+		receipt.writeVersion === state.durableWriteVersion &&
+		receipt.contentHash === state.contentHashAfter &&
+		receipt.readbackContentHash === state.contentHashAfter &&
+		receipt.reloadVerified === true
+	);
+}
+
+function verificationFailure(
+	operationId: string,
+	projectId: string,
+	expectedContentHash: string,
+	readbackContentHash: string | null,
+	reason: string,
+): AutomationSaveProjectResult {
+	return {
+		status: "verification-failed",
+		operationId,
+		projectId,
+		reason,
+		expectedContentHash,
+		readbackContentHash,
+	};
+}
+
+async function sha256Text(value: string): Promise<string> {
+	const bytes = new TextEncoder().encode(value);
+	const digest = await crypto.subtle.digest("SHA-256", bytes);
+	return Array.from(new Uint8Array(digest), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
