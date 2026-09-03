@@ -1643,7 +1643,7 @@ async function options({
 async function evaluateRust(
 	inputs: EvaluateEditPlanOptions[],
 ): Promise<EditPlanEvaluationResponse[]> {
-	const executable = "C:\\Users\\ericm\\.cargo\\bin\\cargo.exe";
+	const executable = Bun.env.OPENCUT_TEST_CARGO_PATH ?? "cargo";
 	const process = Bun.spawn(
 		[executable, "run", "-q", "-p", "edit-plan", "--example", "evaluate_json"],
 		{
