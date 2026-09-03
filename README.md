@@ -75,7 +75,7 @@ Run the MCP server tests, every web test in an isolated process, and the Rust
 workspace tests from the repository root with one command:
 
 ```bash
-bun test
+bun run test
 ```
 
 The real-video MCP milestone is included automatically when its local tools are
