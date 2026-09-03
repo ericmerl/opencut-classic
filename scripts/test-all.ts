@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
@@ -43,11 +44,7 @@ const webTestEnvironment = {
 };
 const realVideoEnvironment = await prepareRealVideoMilestone();
 
-run({
-	label: "Shared native WASM test runtime",
-	command: wasmPack,
-	args: ["build", "rust/wasm", "--target", "nodejs", "--out-dir", "pkg-node"],
-});
+buildSharedNativeRuntime();
 
 run({
 	label: "MCP server tests",
@@ -82,6 +79,76 @@ run({
 
 if (realVideoEnvironment) runRealVideoMilestone(realVideoEnvironment);
 console.log("\nAll configured test suites passed.");
+
+/**
+ * The Node-target WASM package is a pure function of the Rust sources, the
+ * resolved dependency versions, and the toolchain that compiles them. Rebuilding
+ * it when none of those changed costs about half a minute of wasm-opt for a
+ * byte-identical artifact, so record the inputs that produced the current
+ * package and skip the build while both the stamp and its outputs still match.
+ */
+function buildSharedNativeRuntime(): void {
+	const label = "Shared native WASM test runtime";
+	const outputDirectory = join(repositoryRoot, "rust", "wasm", "pkg-node");
+	const stampPath = join(outputDirectory, ".build-stamp");
+	const outputs = [
+		join(outputDirectory, "opencut_wasm.js"),
+		join(outputDirectory, "opencut_wasm_bg.wasm"),
+	];
+	const stamp = nativeRuntimeStamp();
+	if (
+		stamp &&
+		outputs.every((path) => existsSync(path)) &&
+		readStamp(stampPath) === stamp
+	) {
+		console.log(`\n==> ${label} (unchanged, reusing pkg-node)`);
+		return;
+	}
+
+	run({
+		label,
+		command: wasmPack,
+		args: ["build", "rust/wasm", "--target", "nodejs", "--out-dir", "pkg-node"],
+	});
+	if (stamp) writeFileSync(stampPath, stamp);
+}
+
+/**
+ * Hashes every input the Node-target package is built from: the Rust sources and
+ * manifests, the resolved dependency graph, and the wasm-pack version. Returns
+ * undefined when any input cannot be read, which forces an unconditional build.
+ */
+function nativeRuntimeStamp(): string | undefined {
+	const version = spawnSync(wasmPack, ["--version"], { encoding: "utf8" });
+	if (version.error || version.status !== 0) return undefined;
+
+	const digest = createHash("sha256").update(`${version.stdout.trim()}\n`);
+	const sources = Array.from(
+		new Bun.Glob("rust/**/*.{rs,toml}").scanSync({
+			cwd: repositoryRoot,
+			onlyFiles: true,
+		}),
+	)
+		.concat("Cargo.toml", "Cargo.lock")
+		.sort((left, right) => left.localeCompare(right, "en"));
+	try {
+		for (const source of sources) {
+			digest.update(`${source.replaceAll("\\", "/")}\n`);
+			digest.update(readFileSync(join(repositoryRoot, source)));
+		}
+	} catch {
+		return undefined;
+	}
+	return digest.digest("hex");
+}
+
+function readStamp(path: string): string | undefined {
+	try {
+		return readFileSync(path, "utf8").trim();
+	} catch {
+		return undefined;
+	}
+}
 
 async function prepareRealVideoMilestone(): Promise<NodeJS.ProcessEnv | null> {
 	const url = process.env.OPENCUT_HEADLESS_INTEGRATION_URL?.trim();
