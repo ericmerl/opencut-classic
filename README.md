@@ -19,7 +19,7 @@ Thanks to [Vercel](https://vercel.com?utm_source=github-opencut&utm_campaign=oss
 ## Why?
 
 - **Privacy**: Your videos stay on your device
-- **Free features**: Most basic CapCut features are now paywalled 
+- **Free features**: Most basic CapCut features are now paywalled
 - **Simple**: People want editors that are easy to use - CapCut proved that
 
 ## Project Structure
@@ -68,6 +68,23 @@ Thanks to [Vercel](https://vercel.com?utm_source=github-opencut&utm_campaign=oss
 The application will be available at [http://localhost:3000](http://localhost:3000).
 
 The `.env.example` has sensible defaults that match the Docker Compose config — it should work out of the box.
+
+### Tests
+
+Run the MCP server tests, every web test in an isolated process, and the Rust
+workspace tests from the repository root with one command:
+
+```bash
+bun test
+```
+
+The real-video MCP milestone is included automatically when its local tools are
+configured. Its one manual prerequisite is to start the web editor first. Then
+set `OPENCUT_HEADLESS_INTEGRATION_URL` to that editor URL and
+`OPENCUT_HEADLESS_BROWSER_PATH` to Chrome or Edge. Put `ffmpeg` and `ffprobe` on
+`PATH`, or set `OPENCUT_FFMPEG_PATH` and `OPENCUT_FFPROBE_PATH`. A configured but
+unreachable editor fails immediately with a direct diagnostic instead of waiting
+for the browser connection timeout.
 
 ### Desktop setup
 
@@ -159,4 +176,3 @@ See our [Contributing Guide](.github/CONTRIBUTING.md) for detailed setup instruc
 ---
 
 ![Star History Chart](https://api.star-history.com/svg?repos=opencut-app/opencut&type=Date)
-

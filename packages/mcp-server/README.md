@@ -12,6 +12,13 @@ bun run mcp
 
 The bridge defaults to `127.0.0.1:32191`. Override both sides with `OPENCUT_BRIDGE_PORT` and `NEXT_PUBLIC_OPENCUT_BRIDGE_PORT`.
 
+The repository's complete unattended test command is `bun test` from the
+repository root. It includes the MCP server suite, isolated web suites, and
+`cargo test`. To include the real-video MCP milestone, first start the web editor
+(the only manual step), then configure `OPENCUT_HEADLESS_INTEGRATION_URL`,
+`OPENCUT_HEADLESS_BROWSER_PATH`, and ffmpeg/ffprobe as described below. The test
+command preflights the editor URL and tools before launching the milestone.
+
 For local development, the MCP process also accepts the matching `NEXT_PUBLIC_` token and port variables as fallbacks, so one ignored environment file can configure both processes.
 
 Background removal is intentionally staged separately. See [BACKGROUND_REMOVAL_SCOPE.md](./BACKGROUND_REMOVAL_SCOPE.md) for the model-independent matte foundation, browser prototype boundary, production inference requirements, and acceptance criteria.
