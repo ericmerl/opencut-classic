@@ -1,9 +1,115 @@
 import { describe, expect, test } from "bun:test";
 import type { EditorCore } from "@/core";
+import type { ProjectSaveReceiptBinding } from "@/services/storage/types";
 import type { PersistedProjectWrite } from "./project-manager";
 import { SaveManager } from "./save-manager";
 
 describe("SaveManager flush barrier", () => {
+	test("does not return a stale write when the project is already clean", async () => {
+		let saveCalls = 0;
+		const manager = createManager(async () => {
+			saveCalls += 1;
+			return receipt(saveCalls);
+		});
+
+		expect(await manager.flush()).toBeNull();
+		expect(saveCalls).toBe(0);
+		manager.markDirty();
+		const first = await manager.flush();
+		const second = await manager.flush();
+
+		expect(first).toEqual(receipt(1));
+		expect(second).toBeNull();
+		expect(saveCalls).toBe(1);
+		expect(manager.getIsDirty()).toBe(false);
+		manager.stop();
+	});
+
+	test("does not reuse another project's last write after switching projects", async () => {
+		let activeProjectId = "project-a";
+		let saveCalls = 0;
+		const manager = createManager(
+			async () => {
+				saveCalls += 1;
+				return { ...receipt(saveCalls), projectId: activeProjectId };
+			},
+			60_000,
+			() => activeProjectId,
+		);
+
+		manager.markDirty();
+		expect(await manager.flush()).toMatchObject({ projectId: "project-a" });
+		activeProjectId = "project-b";
+		expect(await manager.flush()).toBeNull();
+		expect(saveCalls).toBe(1);
+		manager.stop();
+	});
+
+	test("does not return an in-flight write for a project opened while it completes", async () => {
+		let activeProjectId = "project-a";
+		const pending = deferred<PersistedProjectWrite | null>();
+		const manager = createManager(
+			() => pending.promise,
+			60_000,
+			() => activeProjectId,
+		);
+
+		manager.markDirty();
+		const savingProjectA = manager.flush();
+		await yieldMicrotasks();
+		activeProjectId = "project-b";
+		const savingProjectB = manager.flush();
+		pending.resolve({ ...receipt(1), projectId: "project-a" });
+
+		expect(await savingProjectA).toMatchObject({ projectId: "project-a" });
+		expect(await savingProjectB).toBeNull();
+		manager.stop();
+	});
+
+	test("does not bind a project switch to the prior project's explicit save", async () => {
+		let activeProjectId = "project-a";
+		const firstWrite = deferred<PersistedProjectWrite | null>();
+		const calls: Array<{
+			projectId: string;
+			binding?: ProjectSaveReceiptBinding;
+		}> = [];
+		const manager = createManager(
+			async ({ saveReceiptBinding } = {}) => {
+				calls.push({
+					projectId: activeProjectId,
+					...(saveReceiptBinding ? { binding: saveReceiptBinding } : {}),
+				});
+				if (calls.length === 1) return firstWrite.promise;
+				return { ...receipt(calls.length), projectId: activeProjectId };
+			},
+			60_000,
+			() => activeProjectId,
+		);
+		const binding: ProjectSaveReceiptBinding = {
+			operationId: "save-project-a",
+			fingerprint: "fingerprint-a",
+			contentHash: "a".repeat(64),
+			sceneId: "scene-a",
+			revision: 4,
+		};
+
+		manager.markDirty();
+		const savingProjectA = manager.flush({ saveReceiptBinding: binding });
+		await yieldMicrotasks();
+		activeProjectId = "project-b";
+		manager.markDirty();
+		firstWrite.resolve({ ...receipt(1), projectId: "project-a" });
+
+		expect(await savingProjectA).toMatchObject({ projectId: "project-a" });
+		expect(calls).toEqual([{ projectId: "project-a", binding }]);
+		expect(await manager.flush()).toMatchObject({ projectId: "project-b" });
+		expect(calls).toEqual([
+			{ projectId: "project-a", binding },
+			{ projectId: "project-b" },
+		]);
+		manager.stop();
+	});
+
 	test("joins one in-flight save across concurrent flush callers", async () => {
 		const pending = deferred<PersistedProjectWrite | null>();
 		let saveCalls = 0;
@@ -130,12 +236,15 @@ describe("SaveManager flush barrier", () => {
 });
 
 function createManager(
-	saveCurrentProject: () => Promise<PersistedProjectWrite | null>,
+	saveCurrentProject: (options?: {
+		saveReceiptBinding?: ProjectSaveReceiptBinding;
+	}) => Promise<PersistedProjectWrite | null>,
 	debounceMs = 60_000,
+	getActiveProjectId: () => string = () => "project-1",
 ): SaveManager {
 	const editor = {
 		project: {
-			getActiveOrNull: () => ({ metadata: { id: "project-1" } }),
+			getActiveOrNull: () => ({ metadata: { id: getActiveProjectId() } }),
 			getIsLoading: () => false,
 			getMigrationState: () => ({ isMigrating: false }),
 			saveCurrentProject,

@@ -105,6 +105,68 @@ afterEach(() => {
 });
 
 describe("StorageService save envelope", () => {
+	test("embeds the save receipt identity in the project commit", async () => {
+		const service = new StorageService();
+		const contentHash = "a".repeat(64);
+		const write = await service.saveProject({
+			project: buildProject("Receipt-bound"),
+			saveReceiptBinding: {
+				operationId: "save-bound",
+				fingerprint: "b".repeat(64),
+				contentHash,
+				sceneId: "scene-1",
+				revision: 4,
+			},
+		});
+
+		expect(write.saveReceiptIdentity).toEqual({
+			version: 1,
+			operationId: "save-bound",
+			fingerprint: "b".repeat(64),
+			contentHash,
+			sceneId: "scene-1",
+			revision: 4,
+			receiptId: `save:project-1:1:${contentHash}`,
+		});
+		const readback = await new StorageService().loadProjectFresh({
+			id: "project-1",
+		});
+		expect(readback?.persistence).toEqual(write);
+
+		const rebound = await new StorageService().bindProjectSaveReceiptIdentity({
+			projectId: "project-1",
+			expectedWriteVersion: 1,
+			binding: {
+				operationId: "save-clean",
+				fingerprint: "c".repeat(64),
+				contentHash,
+				sceneId: "scene-1",
+				revision: 4,
+			},
+		});
+		expect(rebound).toMatchObject({
+			operationId: "save-clean",
+			receiptId: `save:project-1:1:${contentHash}`,
+		});
+		expect(
+			(await new StorageService().loadProjectFresh({ id: "project-1" }))
+				?.persistence,
+		).toMatchObject({ writeVersion: 1, saveReceiptIdentity: rebound });
+		expect(
+			await new StorageService().bindProjectSaveReceiptIdentity({
+				projectId: "project-1",
+				expectedWriteVersion: 1,
+				binding: {
+					operationId: "save-clean",
+					fingerprint: "d".repeat(64),
+					contentHash,
+					sceneId: "scene-1",
+					revision: 4,
+				},
+			}),
+		).toBeNull();
+	});
+
 	test("persists monotonic writes and verifies them through a fresh service", async () => {
 		const service = new StorageService();
 		const first = await service.saveProject({ project: buildProject("First") });

@@ -32,6 +32,10 @@ import { DEFAULTS } from "@/timeline/defaults";
 import { getElementFontFamilies } from "@/timeline/element-utils";
 import { getRaisedProjectFpsForImportedMedia } from "@/fps/utils";
 import type { MediaAsset } from "@/media/types";
+import type {
+	ProjectSaveReceiptBinding,
+	ProjectSaveReceiptIdentity,
+} from "@/services/storage/types";
 
 export interface MigrationState {
 	isMigrating: boolean;
@@ -47,6 +51,7 @@ export interface PersistedProjectWrite {
 	completedAt: string;
 	storageSchemaVersion: number;
 	writeVersion: number;
+	saveReceiptIdentity?: ProjectSaveReceiptIdentity;
 }
 
 export class ProjectManager {
@@ -201,7 +206,11 @@ export class ProjectManager {
 		}
 	}
 
-	async saveCurrentProject(): Promise<PersistedProjectWrite | null> {
+	async saveCurrentProject({
+		saveReceiptBinding,
+	}: {
+		saveReceiptBinding?: ProjectSaveReceiptBinding;
+	} = {}): Promise<PersistedProjectWrite | null> {
 		const activeAtStart = this.active;
 		if (!activeAtStart) return null;
 
@@ -219,6 +228,7 @@ export class ProjectManager {
 
 		const storageWrite = await storageService.saveProject({
 			project: updatedProject,
+			saveReceiptBinding,
 		});
 		if (
 			this.active === activeAtStart &&
@@ -234,6 +244,9 @@ export class ProjectManager {
 			completedAt: storageWrite.completedAt,
 			storageSchemaVersion: storageWrite.storageSchemaVersion,
 			writeVersion: storageWrite.writeVersion,
+			...(storageWrite.saveReceiptIdentity
+				? { saveReceiptIdentity: storageWrite.saveReceiptIdentity }
+				: {}),
 		};
 	}
 

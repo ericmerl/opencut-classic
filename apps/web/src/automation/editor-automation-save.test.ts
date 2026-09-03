@@ -1,9 +1,13 @@
 /// <reference types="bun" />
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type { EditorCore } from "@/core";
 import type { TProject } from "@/project/types";
+import type {
+	ProjectSaveReceiptBinding,
+	ProjectSaveReceiptIdentity,
+} from "@/services/storage/types";
 import {
 	SAVE_RECEIPT_ENVELOPE_VERSION,
 	SAVE_RECEIPT_STORAGE_SCHEMA_VERSION,
@@ -29,14 +33,33 @@ mock.module("@/services/renderer/scene-builder", () => ({
 
 const { mediaTime } = await import("@/wasm");
 const { storageService } = await import("@/services/storage/service");
+const { SaveManager } = await import("@/core/managers/save-manager");
 const { EditorAutomation } = await import("./editor-automation");
+const { parsePersistedSaveProjectResult } =
+	await import("./save-project-receipt");
+const originalBindProjectSaveReceiptIdentity =
+	storageService.bindProjectSaveReceiptIdentity;
 const originalLoadProjectFresh = storageService.loadProjectFresh;
 const originalLoadSaveReceipt = storageService.loadSaveReceipt;
 const originalSaveSaveReceipt = storageService.saveSaveReceipt;
 const originalLoadOperationReceipt = storageService.loadOperationReceipt;
 const originalSaveOperationReceipt = storageService.saveOperationReceipt;
 
+beforeEach(() => {
+	storageService.bindProjectSaveReceiptIdentity = async ({
+		projectId,
+		expectedWriteVersion,
+		binding,
+	}) => ({
+		version: 1,
+		...binding,
+		receiptId: `save:${projectId}:${expectedWriteVersion}:${binding.contentHash}`,
+	});
+});
+
 afterEach(() => {
+	storageService.bindProjectSaveReceiptIdentity =
+		originalBindProjectSaveReceiptIdentity;
 	storageService.loadProjectFresh = originalLoadProjectFresh;
 	storageService.loadSaveReceipt = originalLoadSaveReceipt;
 	storageService.saveSaveReceipt = originalSaveSaveReceipt;
@@ -131,22 +154,49 @@ describe("EditorAutomation save barrier", () => {
 		).toMatchObject({ status: "verification-failed" });
 	});
 
-	test("does not cache success until its durable receipt write completes", async () => {
+	test("reconstructs the same receipt after the envelope commits but its receipt is lost", async () => {
 		const project = buildProject("Receipt retry");
 		const scene = project.scenes[0]!;
 		let flushCalls = 0;
+		let writeVersion = 0;
+		let saveReceiptIdentity: ProjectSaveReceiptIdentity | undefined;
 		let receiptWriteCalls = 0;
 		let persistedReceipt: Parameters<typeof originalSaveSaveReceipt>[0] | null =
 			null;
+		const lostReceipts: Array<Parameters<typeof originalSaveSaveReceipt>[0]> =
+			[];
 		const editor = createEditor({
 			project,
 			scene,
-			onFlush: () => {
+			onFlush: () => undefined,
+		});
+		Object.assign(editor.project, {
+			getIsLoading: () => false,
+			getMigrationState: () => ({ isMigrating: false }),
+			saveCurrentProject: async ({
+				saveReceiptBinding,
+			}: {
+				saveReceiptBinding?: ProjectSaveReceiptBinding;
+			} = {}) => {
 				flushCalls += 1;
+				writeVersion += 1;
+				saveReceiptIdentity = saveReceiptBinding
+					? {
+							version: 1,
+							...saveReceiptBinding,
+							receiptId: `save:project-1:${writeVersion}:${saveReceiptBinding.contentHash}`,
+						}
+					: undefined;
+				return persistedWrite(writeVersion, saveReceiptIdentity);
 			},
 		});
+		const firstSaveManager = new SaveManager({ editor, debounceMs: 60_000 });
+		Object.assign(editor, { save: firstSaveManager });
+		firstSaveManager.markDirty();
 		storageService.loadProjectFresh = async () =>
-			readback({ project, writeVersion: 1 });
+			writeVersion === 0
+				? null
+				: readback({ project, writeVersion, saveReceiptIdentity });
 		storageService.loadSaveReceipt = async ({ parseResult }) => {
 			if (!persistedReceipt) return null;
 			return {
@@ -160,15 +210,19 @@ describe("EditorAutomation save barrier", () => {
 		storageService.saveSaveReceipt = async (receipt) => {
 			receiptWriteCalls += 1;
 			if (receiptWriteCalls === 1) {
+				lostReceipts.push(structuredClone(receipt));
 				throw new Error("injected receipt write failure");
 			}
 			persistedReceipt = receipt;
 		};
 		const automation = new EditorAutomation(editor);
+		await automation.readProject();
+		project.metadata.name = "Receipt retry after edit";
 		const snapshot = await automation.readProject();
 		if (snapshot.contentIdentity.status !== "hashed") {
 			throw new Error("hash blocked");
 		}
+		expect(snapshot.revision).toBe(1);
 		const request = {
 			projectId: project.metadata.id,
 			sceneId: scene.id,
@@ -182,16 +236,35 @@ describe("EditorAutomation save barrier", () => {
 			"injected receipt write failure",
 		);
 		expect(persistedReceipt).toBeNull();
+		expect(writeVersion).toBe(1);
 
-		const saved = await automation.saveProject(request);
-		expect(saved).toMatchObject({
-			status: "saved",
+		const restartedSaveManager = new SaveManager({
+			editor,
+			debounceMs: 60_000,
+		});
+		Object.assign(editor, { save: restartedSaveManager });
+		const restartedAutomation = new EditorAutomation(editor);
+		expect(
+			await restartedAutomation.recoverSaveProject({
+				...request,
+				expectedRevision: request.expectedRevision + 1,
+			}),
+		).toMatchObject({
+			status: "rejected",
 			operationId: request.operationId,
 		});
-		expect(flushCalls).toBe(2);
+		const saved = await restartedAutomation.recoverSaveProject(request);
+		expect(saved).toMatchObject({
+			status: "replayed",
+			operationId: request.operationId,
+			writeVersion: 1,
+		});
+		const lostResult = parsePersistedSaveProjectResult(lostReceipts[0]?.result);
+		expect(saved).toEqual({ ...lostResult, status: "replayed" });
+		expect(flushCalls).toBe(1);
+		expect(writeVersion).toBe(1);
 		expect(receiptWriteCalls).toBe(2);
 
-		const restartedAutomation = new EditorAutomation(editor);
 		expect(
 			await restartedAutomation.getSaveReceipt({
 				operationId: request.operationId,
@@ -204,7 +277,7 @@ describe("EditorAutomation save barrier", () => {
 			status: "replayed",
 			operationId: request.operationId,
 		});
-		expect(flushCalls).toBe(2);
+		expect(flushCalls).toBe(1);
 	});
 
 	test("verifies a bound committed receipt after revision reset without flushing", async () => {
@@ -594,9 +667,11 @@ function isTestEditorCore(value: unknown): value is EditorCore {
 function readback({
 	project,
 	writeVersion,
+	saveReceiptIdentity,
 }: {
 	project: TProject;
 	writeVersion: number;
+	saveReceiptIdentity?: ProjectSaveReceiptIdentity;
 }) {
 	return {
 		project,
@@ -607,7 +682,23 @@ function readback({
 			writeVersion,
 			snapshotAt: "2026-09-02T12:00:00.100Z",
 			completedAt: "2026-09-02T12:00:00.200Z",
+			...(saveReceiptIdentity ? { saveReceiptIdentity } : {}),
 		},
+	};
+}
+
+function persistedWrite(
+	writeVersion: number,
+	saveReceiptIdentity?: ProjectSaveReceiptIdentity,
+) {
+	return {
+		projectId: "project-1",
+		persistedAt: "2026-09-02T12:00:00.000Z",
+		snapshotAt: "2026-09-02T12:00:00.100Z",
+		completedAt: "2026-09-02T12:00:00.200Z",
+		storageSchemaVersion: 1,
+		writeVersion,
+		...(saveReceiptIdentity ? { saveReceiptIdentity } : {}),
 	};
 }
 

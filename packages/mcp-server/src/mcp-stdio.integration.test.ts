@@ -211,6 +211,19 @@ integrationTest(
 		});
 		const saveReceiptId = requireString(saved.receiptId, "receiptId");
 		const writeVersion = requireNumber(saved.writeVersion, "writeVersion");
+		const noOpSaved = await first.callTool("opencut_save_project", {
+			...saveRequest,
+			operationId: "public-save-barrier-noop",
+		});
+		expect(noOpSaved).toMatchObject({
+			status: "saved",
+			projectId,
+			receiptId: saveReceiptId,
+			writeVersion,
+			contentHash,
+			readbackContentHash: contentHash,
+			reloadVerified: true,
+		});
 		const saveReceipt = await first.callTool("opencut_get_save_receipt", {
 			...affinity(initialIdentity),
 			operationId: saveRequest.operationId,

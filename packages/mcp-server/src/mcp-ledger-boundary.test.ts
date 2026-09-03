@@ -7,6 +7,88 @@ import { McpLedgerBoundary } from "./mcp-ledger-boundary";
 import { OperationLedger } from "./operation-ledger";
 
 describe("MCP ledger handler recovery", () => {
+	test("recovers a save from its envelope receipt without redispatching the save", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "opencut-save-envelope-"));
+		const input = {
+			bridgeProtocolVersion: 2,
+			projectId: "project-1",
+			sceneId: "scene-1",
+			operationId: "save-before-response-loss",
+			expectedRevision: 8,
+			expectedContentHash: "a".repeat(64),
+		};
+		const saved = {
+			...saveReceipt(input.operationId, "a"),
+			operationId: input.operationId,
+			receiptId: `save:project-1:1:${"a".repeat(64)}`,
+		};
+		let receiptReads = 0;
+		let recoveryRequests = 0;
+		const bridge = {
+			request: async (method: string, params: unknown) => {
+				if (method === "read_project") return projectSnapshot("a");
+				if (method === "get_operation_receipt") {
+					receiptReads += 1;
+					return { status: "not-found", operationId: input.operationId };
+				}
+				if (method === "recover_save_project") {
+					recoveryRequests += 1;
+					expect(params).toEqual(input);
+					return { ...saved, status: "replayed" };
+				}
+				throw new Error(`unexpected method ${method}`);
+			},
+		} as unknown as EditorBridge;
+		let ledger = new OperationLedger(directory);
+		const interrupted = await new McpLedgerBoundary(ledger, bridge, {
+			ownerId: "opencut-mcp:101:dead-process",
+		}).execute("opencut_save_project", input, async (context) => {
+			await context.prepareBrowserMutation("save_project", input);
+			throw new Error(
+				"browser died after envelope commit, before receipt commit",
+			);
+		});
+		expect(interrupted).toMatchObject({ status: "recoverable" });
+		ledger.close();
+
+		ledger = new OperationLedger(directory);
+		let saveExecutions = 0;
+		let recoveryReads = 0;
+		const recovered = await new McpLedgerBoundary(ledger, bridge, {
+			ownerId: "opencut-mcp:202:restarted-process",
+		}).execute(
+			"opencut_save_project",
+			input,
+			async () => {
+				saveExecutions += 1;
+				return saved;
+			},
+			async () => {
+				recoveryReads += 1;
+				return bridge.request("recover_save_project", input);
+			},
+		);
+		expect(recovered).toMatchObject({
+			status: "replayed",
+			durableOperationStatus: "completed",
+			receiptId: saved.receiptId,
+			writeVersion: saved.writeVersion,
+		});
+		expect({
+			receiptReads,
+			recoveryReads,
+			recoveryRequests,
+			saveExecutions,
+		}).toEqual({
+			receiptReads: 1,
+			recoveryReads: 1,
+			recoveryRequests: 1,
+			saveExecutions: 0,
+		});
+		ledger.close();
+		await rm(directory, { recursive: true, force: true });
+	});
+
 	test("recovers pre-response browser commit through verification-only save without redispatch", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "opencut-browser-receipt-"));
 		const input = {
@@ -21,17 +103,17 @@ describe("MCP ledger handler recovery", () => {
 			operationId: input.operationId,
 			projectId: "project-1",
 			sceneId: "scene-1",
-				revision: 8,
-				snapshot: projectSnapshot("b"),
-				affectedObjects: [
-					{ objectType: "element", objectId: "clip-1", action: "updated" },
-					{
-						objectType: "relationship",
-						objectId: "link:dialogue-1",
-						action: "updated",
-					},
-				],
-			};
+			revision: 8,
+			snapshot: projectSnapshot("b"),
+			affectedObjects: [
+				{ objectType: "element", objectId: "clip-1", action: "updated" },
+				{
+					objectType: "relationship",
+					objectId: "link:dialogue-1",
+					action: "updated",
+				},
+			],
+		};
 		let mutationCalls = 0;
 		let verificationCalls = 0;
 		let receiptReads = 0;
@@ -44,7 +126,8 @@ describe("MCP ledger handler recovery", () => {
 					verificationCalls += 1;
 					return saveReceipt(input.operationId, "b");
 				}
-				if (method === "read_project") return { ...projectSnapshot("b"), revision: 0 };
+				if (method === "read_project")
+					return { ...projectSnapshot("b"), revision: 0 };
 				if (method === "get_operation_receipt") {
 					return {
 						status: "found",
@@ -83,14 +166,10 @@ describe("MCP ledger handler recovery", () => {
 		let effects = 0;
 		const recovered = await new McpLedgerBoundary(ledger, bridge, {
 			ownerId: "test-owner",
-		}).execute(
-			"opencut_apply_edit_plan",
-			input,
-			async () => {
-				effects += 1;
-				return mutation;
-			},
-		);
+		}).execute("opencut_apply_edit_plan", input, async () => {
+			effects += 1;
+			return mutation;
+		});
 		expect(recovered).toMatchObject({
 			status: "applied",
 			durableOperationStatus: "completed",
@@ -107,18 +186,22 @@ describe("MCP ledger handler recovery", () => {
 				]),
 			},
 		});
-		expect({ mutationCalls, verificationCalls, receiptReads, effects }).toEqual({
-			mutationCalls: 1,
-			verificationCalls: 1,
-			receiptReads: 1,
-			effects: 0,
-		});
+		expect({ mutationCalls, verificationCalls, receiptReads, effects }).toEqual(
+			{
+				mutationCalls: 1,
+				verificationCalls: 1,
+				receiptReads: 1,
+				effects: 0,
+			},
+		);
 		ledger.close();
 		await rm(directory, { recursive: true, force: true });
 	});
 
 	test("reconstructs an exact composite subtitle result without treating its inner receipt as terminal", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "opencut-composite-receipt-"));
+		const directory = await mkdtemp(
+			join(tmpdir(), "opencut-composite-receipt-"),
+		);
 		const input = {
 			projectId: "project-1",
 			operationId: "subtitle-composite",
@@ -154,7 +237,8 @@ describe("MCP ledger handler recovery", () => {
 						result: mutation,
 					};
 				}
-				if (method === "save_project") return saveReceipt(input.operationId, "b");
+				if (method === "save_project")
+					return saveReceipt(input.operationId, "b");
 				if (method === "read_project") return projectSnapshot("b");
 				throw new Error(`unexpected method ${method}`);
 			},
@@ -287,11 +371,9 @@ describe("MCP ledger handler recovery", () => {
 			includeAudio: true,
 		};
 		const firstLedger = new OperationLedger(directory);
-		const first = await new McpLedgerBoundary(
-			firstLedger,
-			bridge,
-			{ ownerId: "export-recovery-owner" },
-		).execute("opencut_export_project", input, async () => {
+		const first = await new McpLedgerBoundary(firstLedger, bridge, {
+			ownerId: "export-recovery-owner",
+		}).execute("opencut_export_project", input, async () => {
 			throw new Error("simulated crash after durable export commit");
 		});
 		expect(first).toMatchObject({
@@ -302,11 +384,9 @@ describe("MCP ledger handler recovery", () => {
 
 		let rendererCalls = 0;
 		const restartedLedger = new OperationLedger(directory);
-		const recovered = await new McpLedgerBoundary(
-			restartedLedger,
-			bridge,
-			{ ownerId: "export-recovery-owner" },
-		).execute(
+		const recovered = await new McpLedgerBoundary(restartedLedger, bridge, {
+			ownerId: "export-recovery-owner",
+		}).execute(
 			"opencut_export_project",
 			input,
 			async () => {

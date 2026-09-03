@@ -83,6 +83,12 @@ type BridgeRequest =
 	| {
 			kind: "request";
 			id: string;
+			method: "recover_save_project";
+			params: AutomationSaveProjectRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
 			method: "get_save_receipt";
 			params: AutomationGetSaveReceiptRequest;
 	  }
@@ -480,6 +486,8 @@ export class AutomationBridgeClient {
 				return this.automation.openProject(message.params);
 			case "save_project":
 				return this.automation.saveProject(message.params);
+			case "recover_save_project":
+				return this.automation.recoverSaveProject(message.params);
 			case "get_save_receipt":
 				return this.automation.getSaveReceipt(message.params);
 			case "get_operation_receipt":

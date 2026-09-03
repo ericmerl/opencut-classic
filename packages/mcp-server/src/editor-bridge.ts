@@ -597,6 +597,7 @@ export class EditorBridge {
 		if (
 			socket.data.protocolVersion !== CURRENT_BRIDGE_PROTOCOL_VERSION ||
 			method === "save_project" ||
+			method === "recover_save_project" ||
 			!params ||
 			typeof params !== "object"
 		) {
@@ -628,6 +629,7 @@ export class EditorBridge {
 		method: string,
 		result: unknown,
 	): void {
+		if (method === "recover_save_project") return;
 		if (
 			method === "save_project" &&
 			result &&

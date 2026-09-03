@@ -183,6 +183,7 @@ import {
 	type ProjectContentHashResult,
 } from "./project-content-hash";
 import { storageService } from "@/services/storage/service";
+import { buildSaveReceiptId } from "@/services/storage/save-receipt-identity";
 import {
 	parsePersistedSaveProjectResult,
 	type PersistedAutomationSaveResult,
@@ -321,6 +322,49 @@ export class EditorAutomation {
 		return this.enqueue(() => this.saveProjectNow(request));
 	}
 
+	recoverSaveProject(
+		request: AutomationSaveProjectRequest,
+	): Promise<AutomationSaveProjectResult | null> {
+		return this.enqueue(async () => {
+			const fingerprint = saveProjectFingerprint(request);
+			const prior = this.saveOperations.get(request.operationId);
+			if (prior) {
+				return prior.fingerprint === fingerprint
+					? { ...prior.result, status: "replayed" }
+					: {
+							status: "rejected",
+							operationId: request.operationId,
+							reason: "operationId was already used for a different save",
+						};
+			}
+			const persisted = await storageService.loadSaveReceipt({
+				operationId: request.operationId,
+				parseResult: parsePersistedSaveProjectResult,
+			});
+			if (persisted) {
+				if (persisted.fingerprint !== fingerprint) {
+					return {
+						status: "rejected",
+						operationId: request.operationId,
+						reason: "operationId was already used for a different save",
+					};
+				}
+				this.saveOperations.set(request.operationId, {
+					fingerprint,
+					result: persisted.result,
+				});
+				return { ...persisted.result, status: "replayed" };
+			}
+			const recovered = await this.recoverSaveProjectFromEnvelope({
+				request,
+				fingerprint,
+			});
+			return recovered?.status === "saved"
+				? { ...recovered, status: "replayed" }
+				: recovered;
+		});
+	}
+
 	getSaveReceipt(
 		request: AutomationGetSaveReceiptRequest,
 	): Promise<AutomationGetSaveReceiptResult> {
@@ -418,7 +462,11 @@ export class EditorAutomation {
 			}
 			const result: PersistedAutomationSaveResult = {
 				status: "saved",
-				receiptId: `save:${state.projectId}:${readback.persistence.writeVersion}:${state.contentHashAfter}`,
+				receiptId: buildSaveReceiptId({
+					projectId: state.projectId,
+					writeVersion: readback.persistence.writeVersion,
+					contentHash: state.contentHashAfter,
+				}),
 				operationId: request.saveOperationId,
 				projectId: state.projectId,
 				sceneId: state.sceneId,
@@ -634,14 +682,7 @@ export class EditorAutomation {
 		request: AutomationSaveProjectRequest,
 	): Promise<AutomationSaveProjectResult> {
 		this.reconcileExternalChanges();
-		const fingerprint = stableSerialize({
-			method: "save_project",
-			projectId: request.projectId,
-			sceneId: request.sceneId ?? null,
-			operationId: request.operationId,
-			expectedRevision: request.expectedRevision,
-			expectedContentHash: request.expectedContentHash ?? null,
-		});
+		const fingerprint = saveProjectFingerprint(request);
 		const prior = this.saveOperations.get(request.operationId);
 		if (prior) {
 			return prior.fingerprint === fingerprint
@@ -676,6 +717,15 @@ export class EditorAutomation {
 				operationId: request.operationId,
 				reason: "operationId is required",
 			};
+		}
+		const envelopeRecovery = await this.recoverSaveProjectFromEnvelope({
+			request,
+			fingerprint,
+		});
+		if (envelopeRecovery) {
+			return envelopeRecovery.status === "saved"
+				? { ...envelopeRecovery, status: "replayed" }
+				: envelopeRecovery;
 		}
 		const projectId = this.getProjectId();
 		const sceneId = this.editor.scenes.getActiveScene().id;
@@ -726,8 +776,15 @@ export class EditorAutomation {
 				actualContentHash: contentHash,
 			};
 		}
-		const write = await this.editor.save.flush();
-		if (!write || write.projectId !== projectId) {
+		const saveReceiptBinding = {
+			operationId: request.operationId,
+			fingerprint,
+			contentHash,
+			sceneId,
+			revision: this.revision,
+		};
+		const write = await this.editor.save.flush({ saveReceiptBinding });
+		if (write && write.projectId !== projectId) {
 			return {
 				status: "verification-failed",
 				operationId: request.operationId,
@@ -761,7 +818,8 @@ export class EditorAutomation {
 		if (
 			readbackHash !== contentHash ||
 			readback.project.currentSceneId !== sceneId ||
-			readback.persistence.writeVersion !== write.writeVersion
+			(write !== null &&
+				readback.persistence.writeVersion !== write.writeVersion)
 		) {
 			return {
 				status: "verification-failed",
@@ -772,9 +830,25 @@ export class EditorAutomation {
 				readbackContentHash: readbackHash,
 			};
 		}
+		const saveReceiptIdentity =
+			await storageService.bindProjectSaveReceiptIdentity({
+				projectId,
+				expectedWriteVersion: readback.persistence.writeVersion,
+				binding: saveReceiptBinding,
+			});
+		if (!saveReceiptIdentity) {
+			return {
+				status: "verification-failed",
+				operationId: request.operationId,
+				projectId,
+				reason: "persisted project could not bind the save receipt identity",
+				expectedContentHash: contentHash,
+				readbackContentHash: readbackHash,
+			};
+		}
 		const result: PersistedAutomationSaveResult = {
 			status: "saved",
-			receiptId: `save:${projectId}:${readback.persistence.writeVersion}:${contentHash}`,
+			receiptId: saveReceiptIdentity.receiptId,
 			operationId: request.operationId,
 			projectId,
 			sceneId,
@@ -794,6 +868,86 @@ export class EditorAutomation {
 			recordedAt: new Date().toISOString(),
 		});
 		this.saveOperations.set(request.operationId, { fingerprint, result });
+		return result;
+	}
+
+	private async recoverSaveProjectFromEnvelope({
+		request,
+		fingerprint,
+	}: {
+		request: AutomationSaveProjectRequest;
+		fingerprint: string;
+	}): Promise<AutomationSaveProjectResult | null> {
+		const readback = await storageService.loadProjectFresh({
+			id: request.projectId,
+		});
+		const identity = readback?.persistence.saveReceiptIdentity;
+		if (
+			!readback ||
+			!identity ||
+			identity.operationId !== request.operationId
+		) {
+			return null;
+		}
+		if (identity.fingerprint !== fingerprint) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "operationId was already used for a different save",
+			};
+		}
+		const readbackIdentity = await hashProjectContent(
+			buildEditorProjectContentInput({
+				project: readback.project,
+				mediaAssets: readback.mediaAssets,
+			}),
+		);
+		const readbackHash =
+			readbackIdentity.status === "hashed"
+				? readbackIdentity.hash.digest
+				: null;
+		const expectedReceiptId = buildSaveReceiptId({
+			projectId: request.projectId,
+			writeVersion: readback.persistence.writeVersion,
+			contentHash: identity.contentHash,
+		});
+		if (
+			identity.version !== 1 ||
+			identity.receiptId !== expectedReceiptId ||
+			readbackHash !== identity.contentHash ||
+			readback.project.currentSceneId !== identity.sceneId
+		) {
+			return {
+				status: "verification-failed",
+				operationId: request.operationId,
+				projectId: request.projectId,
+				reason: "embedded save receipt identity did not match fresh storage",
+				expectedContentHash: identity.contentHash,
+				readbackContentHash: readbackHash,
+			};
+		}
+		const result: PersistedAutomationSaveResult = {
+			status: "saved",
+			receiptId: identity.receiptId,
+			operationId: identity.operationId,
+			projectId: request.projectId,
+			sceneId: identity.sceneId,
+			revision: identity.revision,
+			contentHash: identity.contentHash,
+			persistedAt: readback.persistence.snapshotAt,
+			completedAt: readback.persistence.completedAt,
+			storageSchemaVersion: readback.persistence.storageSchemaVersion,
+			writeVersion: readback.persistence.writeVersion,
+			reloadVerified: true,
+			readbackContentHash: readbackHash,
+		};
+		await storageService.saveSaveReceipt({
+			operationId: identity.operationId,
+			fingerprint,
+			result,
+			recordedAt: new Date().toISOString(),
+		});
+		this.saveOperations.set(identity.operationId, { fingerprint, result });
 		return result;
 	}
 
@@ -2905,6 +3059,17 @@ function projectContentHash(snapshot: Record<string, unknown>): string | null {
 	return identity?.status === "hashed" && typeof hash?.digest === "string"
 		? hash.digest
 		: null;
+}
+
+function saveProjectFingerprint(request: AutomationSaveProjectRequest): string {
+	return stableSerialize({
+		method: "save_project",
+		projectId: request.projectId,
+		sceneId: request.sceneId ?? null,
+		operationId: request.operationId,
+		expectedRevision: request.expectedRevision,
+		expectedContentHash: request.expectedContentHash ?? null,
+	});
 }
 
 function saveReceiptMatchesAfterState(

@@ -20,6 +20,8 @@ import {
 	type PersistedOperationReceipt,
 	type OperationReceiptBinding,
 	type PersistedProjectWriteRecord,
+	type ProjectSaveReceiptBinding,
+	type ProjectSaveReceiptIdentity,
 	type PersistedSaveReceipt,
 	type PersistedSaveReceiptEnvelope,
 	type StorageConfig,
@@ -38,6 +40,7 @@ import { roundMediaTime } from "@/wasm";
 import { resolvePersistedMediaIdentity } from "@/media/content-identity";
 import { parseSaveReceiptEnvelope } from "./save-receipt-storage";
 import { OperationReceiptStore } from "./operation-receipt-storage";
+import { buildProjectSaveReceiptIdentity } from "./save-receipt-identity";
 
 function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 	if (!Array.isArray(raw)) return [];
@@ -161,17 +164,20 @@ class StorageService {
 
 	async saveProject({
 		project,
+		saveReceiptBinding,
 	}: {
 		project: TProject;
+		saveReceiptBinding?: ProjectSaveReceiptBinding;
 	}): Promise<PersistedProjectWriteRecord> {
 		return this.enqueueProjectWrite({
 			projectId: project.metadata.id,
-			write: () => this.writeProjectSnapshot(project),
+			write: () => this.writeProjectSnapshot(project, saveReceiptBinding),
 		});
 	}
 
 	private async writeProjectSnapshot(
 		project: TProject,
+		saveReceiptBinding?: ProjectSaveReceiptBinding,
 	): Promise<PersistedProjectWriteRecord> {
 		const duration =
 			project.metadata.duration ??
@@ -208,6 +214,13 @@ class StorageService {
 		);
 		const writeVersion = (priorEnvelope?.writeVersion ?? 0) + 1;
 		const completedAt = new Date().toISOString();
+		const saveReceiptIdentity = saveReceiptBinding
+			? buildProjectSaveReceiptIdentity({
+					projectId: project.metadata.id,
+					writeVersion,
+					binding: saveReceiptBinding,
+				})
+			: undefined;
 		const envelope: SerializedProjectEnvelope = {
 			id: project.metadata.id,
 			envelopeVersion: PROJECT_STORAGE_ENVELOPE_VERSION,
@@ -216,6 +229,7 @@ class StorageService {
 			snapshotAt,
 			completedAt,
 			project: serializedProject,
+			...(saveReceiptIdentity ? { saveReceiptIdentity } : {}),
 		};
 		await this.projectsAdapter.set({
 			key: project.metadata.id,
@@ -227,6 +241,7 @@ class StorageService {
 			writeVersion,
 			snapshotAt,
 			completedAt,
+			...(saveReceiptIdentity ? { saveReceiptIdentity } : {}),
 		};
 	}
 
@@ -252,6 +267,58 @@ class StorageService {
 				this.projectWriteTails.delete(projectId);
 			}
 		}
+	}
+
+	async bindProjectSaveReceiptIdentity({
+		projectId,
+		expectedWriteVersion,
+		binding,
+	}: {
+		projectId: string;
+		expectedWriteVersion: number;
+		binding: ProjectSaveReceiptBinding;
+	}): Promise<ProjectSaveReceiptIdentity | null> {
+		return this.enqueueProjectWrite({
+			projectId,
+			write: async () => {
+				const envelope = asProjectEnvelope(
+					await this.projectsAdapter.get(projectId),
+				);
+				if (
+					!envelope?.completedAt ||
+					envelope.writeVersion !== expectedWriteVersion
+				) {
+					return null;
+				}
+				const prior = envelope.saveReceiptIdentity;
+				if (
+					prior?.operationId === binding.operationId &&
+					(prior.fingerprint !== binding.fingerprint ||
+						prior.contentHash !== binding.contentHash)
+				) {
+					return null;
+				}
+				const identity = buildProjectSaveReceiptIdentity({
+					projectId,
+					writeVersion: envelope.writeVersion,
+					binding,
+				});
+				if (
+					prior?.version === identity.version &&
+					prior.operationId === identity.operationId &&
+					prior.fingerprint === identity.fingerprint &&
+					prior.contentHash === identity.contentHash &&
+					prior.receiptId === identity.receiptId
+				) {
+					return prior;
+				}
+				await this.projectsAdapter.set({
+					key: projectId,
+					value: { ...envelope, saveReceiptIdentity: identity },
+				});
+				return identity;
+			},
+		});
 	}
 
 	async saveSaveReceipt<T>(receipt: PersistedSaveReceipt<T>): Promise<void> {
@@ -402,6 +469,9 @@ class StorageService {
 				writeVersion: envelope.writeVersion,
 				snapshotAt: envelope.snapshotAt,
 				completedAt: envelope.completedAt,
+				...(envelope.saveReceiptIdentity
+					? { saveReceiptIdentity: envelope.saveReceiptIdentity }
+					: {}),
 			},
 		};
 	}

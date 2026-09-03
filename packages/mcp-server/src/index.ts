@@ -304,6 +304,7 @@ function createServer(): McpServer {
 							params,
 							5 * 60_000,
 						),
+					() => bridge.request("recover_save_project", params, 5 * 60_000),
 				),
 			),
 	);

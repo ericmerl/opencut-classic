@@ -1,5 +1,6 @@
 import type { EditorCore } from "@/core";
 import type { PersistedProjectWrite } from "./project-manager";
+import type { ProjectSaveReceiptBinding } from "@/services/storage/types";
 
 type SaveManagerOptions = {
 	debounceMs?: number;
@@ -71,17 +72,35 @@ export class SaveManager {
 		if (!this.isPaused) this.queueSave();
 	}
 
-	async flush(): Promise<PersistedProjectWrite | null> {
-		if (!this.editor.project.getActiveOrNull()) return null;
+	async flush({
+		saveReceiptBinding,
+	}: {
+		saveReceiptBinding?: ProjectSaveReceiptBinding;
+	} = {}): Promise<PersistedProjectWrite | null> {
+		const activeProjectId = this.editor.project.getActiveOrNull()?.metadata.id;
+		if (!activeProjectId) return null;
 		this.assertReadyForExplicitSave();
-		if (!this.getIsDirty()) this.dirtyGeneration += 1;
 		this.clearTimer();
+		const joinedOrPersisted =
+			Boolean(this.inFlightSave) || this.hasPendingSave();
 
-		do {
-			await this.getOrStartSaveDrain();
-		} while (this.hasPendingSave());
+		if (this.inFlightSave) {
+			await this.inFlightSave;
+		}
+		while (
+			this.hasPendingSave() &&
+			this.editor.project.getActiveOrNull()?.metadata.id === activeProjectId
+		) {
+			await this.getOrStartSaveDrain({
+				projectId: activeProjectId,
+				saveReceiptBinding,
+			});
+		}
 
-		return this.lastPersistedWrite;
+		return joinedOrPersisted &&
+			this.lastPersistedWrite?.projectId === activeProjectId
+			? this.lastPersistedWrite
+			: null;
 	}
 
 	getIsDirty(): boolean {
@@ -108,9 +127,21 @@ export class SaveManager {
 		}, delayMs);
 	}
 
-	private getOrStartSaveDrain(): Promise<PersistedProjectWrite | null> {
+	private getOrStartSaveDrain({
+		projectId,
+		saveReceiptBinding,
+	}: {
+		projectId?: string;
+		saveReceiptBinding?: ProjectSaveReceiptBinding;
+	} = {}): Promise<PersistedProjectWrite | null> {
 		if (this.inFlightSave) return this.inFlightSave;
-		const save = this.drainSaves();
+		const scopedProjectId =
+			projectId ?? this.editor.project.getActiveOrNull()?.metadata.id;
+		if (!scopedProjectId) return Promise.resolve(null);
+		const save = this.drainSaves({
+			projectId: scopedProjectId,
+			saveReceiptBinding,
+		});
 		this.inFlightSave = save;
 		void save.then(
 			() => this.finishSaveDrain({ save, succeeded: true }),
@@ -119,14 +150,25 @@ export class SaveManager {
 		return save;
 	}
 
-	private async drainSaves(): Promise<PersistedProjectWrite | null> {
+	private async drainSaves({
+		projectId,
+		saveReceiptBinding,
+	}: {
+		projectId: string;
+		saveReceiptBinding?: ProjectSaveReceiptBinding;
+	}): Promise<PersistedProjectWrite | null> {
 		this.isSaving = true;
 		this.clearTimer();
-		while (this.hasPendingSave()) {
+		while (
+			this.hasPendingSave() &&
+			this.editor.project.getActiveOrNull()?.metadata.id === projectId
+		) {
 			this.assertReadyForExplicitSave();
 			const generation = this.dirtyGeneration;
 			try {
-				const persistedWrite = await this.editor.project.saveCurrentProject();
+				const persistedWrite = await this.editor.project.saveCurrentProject({
+					saveReceiptBinding,
+				});
 				if (!persistedWrite) {
 					throw new Error("The active project closed before it could be saved");
 				}
