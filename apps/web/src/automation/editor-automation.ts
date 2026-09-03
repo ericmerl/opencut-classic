@@ -159,6 +159,8 @@ import type {
 	AutomationRenderPreviewFrameResult,
 	AutomationRenderPreviewRangeRequest,
 	AutomationRenderPreviewRangeResult,
+	AutomationCompareProjectStatesRequest,
+	AutomationCompareProjectStatesResult,
 	AutomationImportAppliedResult,
 	AutomationImportRequest,
 	AutomationImportResult,
@@ -195,6 +197,7 @@ import type {
 } from "./types";
 import { renderAutomationPreviewFrame } from "./render-preview-frame";
 import { renderAutomationPreviewRange } from "./render-preview-range";
+import { compareAutomationProjectStates } from "./compare-project-states";
 import {
 	buildEditorProjectContentInput,
 	hashEditorProjectContent,
@@ -241,6 +244,7 @@ async function retainVerifiedProjectSnapshot({
 		snapshot: buildCanonicalProjectState(content, {
 			projectionVersion: contentHash.projectionVersion,
 		}),
+		mediaAssets: readback.mediaAssets,
 		verification: {
 			writeVersion: readback.persistence.writeVersion,
 			receiptId: verificationReceiptId,
@@ -498,7 +502,7 @@ export class EditorAutomation {
 				parseResult: parsePersistedSaveProjectResult,
 			});
 			if (prior) {
-				return saveReceiptMatchesAfterState(prior.result, state)
+				return saveReceiptMatchesAfterState({ receipt: prior.result, state })
 					? { ...prior.result, status: "replayed" }
 					: {
 							status: "rejected",
@@ -514,13 +518,13 @@ export class EditorAutomation {
 				readback.project.currentSceneId !== state.sceneId ||
 				readback.persistence.writeVersion !== state.durableWriteVersion
 			) {
-				return verificationFailure(
-					request.saveOperationId,
-					state.projectId,
-					state.contentHashAfter,
-					null,
-					"persisted project or scene differs from browser after-state",
-				);
+				return verificationFailure({
+					operationId: request.saveOperationId,
+					projectId: state.projectId,
+					expectedContentHash: state.contentHashAfter,
+					readbackContentHash: null,
+					reason: "persisted project or scene differs from browser after-state",
+				});
 			}
 			const identity = await hashProjectContent(
 				buildEditorProjectContentInput({
@@ -535,13 +539,13 @@ export class EditorAutomation {
 				identity.status !== "hashed" ||
 				identity.hash.digest !== state.contentHashAfter
 			) {
-				return verificationFailure(
-					request.saveOperationId,
-					state.projectId,
-					state.contentHashAfter,
-					readbackHash,
-					"fresh persisted content differs from browser after-state",
-				);
+				return verificationFailure({
+					operationId: request.saveOperationId,
+					projectId: state.projectId,
+					expectedContentHash: state.contentHashAfter,
+					readbackContentHash: readbackHash,
+					reason: "fresh persisted content differs from browser after-state",
+				});
 			}
 			const result: PersistedAutomationSaveResult = {
 				status: "saved",
@@ -582,11 +586,15 @@ export class EditorAutomation {
 		});
 	}
 
-	async recordOperationReceipt(
-		method: string,
-		request: unknown,
-		result: unknown,
-	): Promise<void> {
+	async recordOperationReceipt({
+		method,
+		request,
+		result,
+	}: {
+		method: string;
+		request: unknown;
+		result: unknown;
+	}): Promise<void> {
 		if (
 			!isRecord(result) ||
 			typeof result.status !== "string" ||
@@ -620,7 +628,9 @@ export class EditorAutomation {
 		);
 		if (
 			!readback ||
-			(method === "render_preview_frame" || method === "render_preview_range"
+			(method === "render_preview_frame" ||
+			method === "render_preview_range" ||
+			method === "compare_project_states"
 				? !receiptSceneExists
 				: readback.project.currentSceneId !== resultState.sceneId)
 		) {
@@ -797,6 +807,26 @@ export class EditorAutomation {
 					this.reconcileExternalChanges();
 					const verified = await this.refreshContentIdentity();
 					return { revision: this.revision, contentIdentity: verified };
+				},
+			});
+		});
+	}
+
+	compareProjectStates(
+		request: AutomationCompareProjectStatesRequest,
+	): Promise<AutomationCompareProjectStatesResult> {
+		return this.enqueue(async () => {
+			this.reconcileExternalChanges();
+			return compareAutomationProjectStates({
+				editor: this.editor,
+				request,
+				verifyCurrentSource: async () => {
+					this.reconcileExternalChanges();
+					const identity = await this.refreshContentIdentity();
+					return {
+						revision: this.revision,
+						contentIdentity: identity,
+					};
 				},
 			});
 		});
@@ -1486,7 +1516,11 @@ export class EditorAutomation {
 				actualRevision: this.revision,
 			};
 		}
-		assertMediaTime(request.startTime, "startTime", true);
+		assertMediaTime({
+			value: request.startTime,
+			name: "startTime",
+			allowZero: true,
+		});
 		const requestedTrack = request.trackId
 			? this.getTracks().find((track) => track.id === request.trackId)
 			: undefined;
@@ -1873,14 +1907,14 @@ export class EditorAutomation {
 			};
 		}
 
-		const reference = this.findElement(
-			request.reference.trackId,
-			request.reference.elementId,
-		);
-		const target = this.findElement(
-			request.target.trackId,
-			request.target.elementId,
-		);
+		const reference = this.findElement({
+			trackId: request.reference.trackId,
+			elementId: request.reference.elementId,
+		});
+		const target = this.findElement({
+			trackId: request.target.trackId,
+			elementId: request.target.elementId,
+		});
 		if (
 			!reference ||
 			(reference.type !== "audio" && reference.type !== "video")
@@ -2205,7 +2239,10 @@ export class EditorAutomation {
 			if (!upload.ok) {
 				throw new Error(`source transfer failed with HTTP ${upload.status}`);
 			}
-			const receipt = (await upload.json()) as { bytesWritten: number };
+			const receipt = await upload.json();
+			if (!isRecord(receipt) || typeof receipt.bytesWritten !== "number") {
+				throw new Error("source transfer returned an invalid receipt");
+			}
 			return {
 				status: "transferred",
 				revision: this.revision,
@@ -2349,11 +2386,15 @@ export class EditorAutomation {
 		if (!upload.ok) {
 			throw new Error(`export transfer failed with HTTP ${upload.status}`);
 		}
-		const receipt = (await upload.json()) as {
-			outputPath: string;
-			bytesWritten: number;
-			sha256: string;
-		};
+		const receipt = await upload.json();
+		if (
+			!isRecord(receipt) ||
+			typeof receipt.outputPath !== "string" ||
+			typeof receipt.bytesWritten !== "number" ||
+			typeof receipt.sha256 !== "string"
+		) {
+			throw new Error("export transfer returned an invalid receipt");
+		}
 		const result: AutomationExportCompletedResult = {
 			status: "exported",
 			operationId: request.operationId,
@@ -2416,8 +2457,16 @@ export class EditorAutomation {
 			});
 		}
 		if (operation.kind === "insert_text") {
-			assertMediaTime(operation.startTime, "startTime", true);
-			assertMediaTime(operation.duration, "duration", false);
+			assertMediaTime({
+				value: operation.startTime,
+				name: "startTime",
+				allowZero: true,
+			});
+			assertMediaTime({
+				value: operation.duration,
+				name: "duration",
+				allowZero: false,
+			});
 			if (!operation.content.trim())
 				throw new Error("text content is required");
 			return new InsertElementCommand({
@@ -2540,8 +2589,16 @@ export class EditorAutomation {
 			const trackId = addTrack.getTrackId();
 			const insertCommands = operation.captions.map((caption, index) => {
 				if (!caption.text.trim()) throw new Error("caption text is required");
-				assertMediaTime(caption.startTime, "caption startTime", true);
-				assertMediaTime(caption.duration, "caption duration", false);
+				assertMediaTime({
+					value: caption.startTime,
+					name: "caption startTime",
+					allowZero: true,
+				});
+				assertMediaTime({
+					value: caption.duration,
+					name: "caption duration",
+					allowZero: false,
+				});
 				return new InsertElementCommand({
 					elementId: caption.elementId,
 					placement: { mode: "explicit", trackId },
@@ -2627,7 +2684,10 @@ export class EditorAutomation {
 			return buildTransitionCommand({ track, operation });
 		}
 
-		const element = this.findElement(operation.trackId, operation.elementId);
+		const element = this.findElement({
+			trackId: operation.trackId,
+			elementId: operation.elementId,
+		});
 		if (!element) {
 			throw new Error(
 				`element not found: ${operation.trackId}/${operation.elementId}`,
@@ -2660,7 +2720,11 @@ export class EditorAutomation {
 			});
 		}
 		if (operation.kind === "split") {
-			assertMediaTime(operation.splitTime, "splitTime", false);
+			assertMediaTime({
+				value: operation.splitTime,
+				name: "splitTime",
+				allowZero: false,
+			});
 			const endTime = element.startTime + element.duration;
 			if (
 				operation.splitTime <= element.startTime ||
@@ -2855,7 +2919,11 @@ export class EditorAutomation {
 			});
 		}
 		if (operation.kind === "move") {
-			assertMediaTime(operation.startTime, "startTime", true);
+			assertMediaTime({
+				value: operation.startTime,
+				name: "startTime",
+				allowZero: true,
+			});
 			const anchor = {
 				trackId: operation.trackId,
 				elementId: operation.elementId,
@@ -2904,10 +2972,13 @@ export class EditorAutomation {
 		});
 	}
 
-	private findElement(
-		trackId: string,
-		elementId: string,
-	): TimelineElement | null {
+	private findElement({
+		trackId,
+		elementId,
+	}: {
+		trackId: string;
+		elementId: string;
+	}): TimelineElement | null {
 		return (
 			this.getTracks()
 				.find((track) => track.id === trackId)
@@ -3299,11 +3370,15 @@ function validatePlanShape(plan: AutomationEditPlan): string | null {
 	return null;
 }
 
-function assertMediaTime(
-	value: number,
-	name: string,
-	allowZero: boolean,
-): void {
+function assertMediaTime({
+	value,
+	name,
+	allowZero,
+}: {
+	value: number;
+	name: string;
+	allowZero: boolean;
+}): void {
 	if (!Number.isSafeInteger(value) || (allowZero ? value < 0 : value <= 0)) {
 		throw new Error(
 			`${name} must be ${allowZero ? "non-negative" : "positive"} ticks`,
@@ -3353,7 +3428,16 @@ function parseOperationReceiptBinding(value: unknown) {
 		(value.role !== "direct-terminal" && value.role !== "composite-step")
 	)
 		return null;
-	return value as unknown as import("@/services/storage/types").OperationReceiptBinding;
+	return {
+		version: 1,
+		outerOperationId: String(value.outerOperationId),
+		outerToolName: String(value.outerToolName),
+		outerRequestFingerprint: String(value.outerRequestFingerprint),
+		role: value.role,
+		stepId: String(value.stepId),
+		browserMethod: String(value.browserMethod),
+		browserRequestFingerprint: String(value.browserRequestFingerprint),
+	} satisfies import("@/services/storage/types").OperationReceiptBinding;
 }
 
 function operationReceiptAfterState(value: unknown): {
@@ -3448,10 +3532,13 @@ function saveProjectFingerprint(request: AutomationSaveProjectRequest): string {
 	});
 }
 
-function saveReceiptMatchesAfterState(
-	receipt: PersistedAutomationSaveResult,
-	state: import("@/services/storage/types").OperationReceiptAfterState,
-): boolean {
+function saveReceiptMatchesAfterState({
+	receipt,
+	state,
+}: {
+	receipt: PersistedAutomationSaveResult;
+	state: import("@/services/storage/types").OperationReceiptAfterState;
+}): boolean {
 	return (
 		receipt.projectId === state.projectId &&
 		receipt.sceneId === state.sceneId &&
@@ -3466,13 +3553,19 @@ function saveReceiptMatchesAfterState(
 	);
 }
 
-function verificationFailure(
-	operationId: string,
-	projectId: string,
-	expectedContentHash: string,
-	readbackContentHash: string | null,
-	reason: string,
-): AutomationSaveProjectResult {
+function verificationFailure({
+	operationId,
+	projectId,
+	expectedContentHash,
+	readbackContentHash,
+	reason,
+}: {
+	operationId: string;
+	projectId: string;
+	expectedContentHash: string;
+	readbackContentHash: string | null;
+	reason: string;
+}): AutomationSaveProjectResult {
 	return {
 		status: "verification-failed",
 		operationId,

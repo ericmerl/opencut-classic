@@ -57,6 +57,91 @@ const { ComparisonSourceUnavailableError, ProjectSnapshotStore } =
 afterEach(() => databases.clear());
 
 describe("content-addressed project snapshots", () => {
+	test("retains exact canonical media bytes across store reconstruction", async () => {
+		const mediaBytes = new TextEncoder().encode("immutable source media");
+		const mediaDigest = await sha256Bytes(mediaBytes);
+		const snapshot = projectSnapshotWithMedia(mediaDigest);
+		const digest = await sha256(canonicalSerialize(snapshot));
+		const file = new File([mediaBytes], "source.mp4", {
+			type: "video/mp4",
+			lastModified: 1_725_000_000_000,
+		});
+
+		await new ProjectSnapshotStore().saveVerified({
+			...snapshotLookup(digest),
+			snapshot,
+			mediaAssets: [persistedMedia({ file, digest: mediaDigest })],
+			verification: {
+				writeVersion: 7,
+				receiptId: `save:project-1:7:${digest}`,
+				operationId: "save-7",
+				verifiedAt: "2026-09-03T12:00:00.000Z",
+			},
+		});
+
+		const retained = await new ProjectSnapshotStore().load(
+			snapshotLookup(digest),
+		);
+		expect(retained.mediaAssets).toHaveLength(1);
+		expect(retained.mediaAssets[0]).toMatchObject({
+			id: "media-1",
+			name: "source.mp4",
+			type: "video",
+			size: mediaBytes.byteLength,
+			sourceIdentity: {
+				kind: "local",
+				contentHash: { algorithm: "SHA-256", digest: mediaDigest },
+			},
+		});
+		expect(
+			new Uint8Array(await retained.mediaAssets[0]!.file.arrayBuffer()),
+		).toEqual(mediaBytes);
+	});
+
+	test("fails closed before publishing missing or mismatched canonical media", async () => {
+		const expectedMediaDigest = await sha256Bytes(
+			new TextEncoder().encode("expected source media"),
+		);
+		const snapshot = projectSnapshotWithMedia(expectedMediaDigest);
+		const digest = await sha256(canonicalSerialize(snapshot));
+		const store = new ProjectSnapshotStore();
+		const verification = {
+			writeVersion: 7,
+			receiptId: `save:project-1:7:${digest}`,
+			operationId: "save-7",
+			verifiedAt: "2026-09-03T12:00:00.000Z",
+		};
+
+		await expect(
+			store.saveVerified({
+				...snapshotLookup(digest),
+				snapshot,
+				mediaAssets: [],
+				verification,
+			}),
+		).rejects.toThrow("required media");
+		await expect(store.load(snapshotLookup(digest))).rejects.toMatchObject({
+			code: "COMPARISON_SOURCE_UNAVAILABLE",
+		});
+
+		const wrongFile = new File(["different bytes"], "source.mp4", {
+			type: "video/mp4",
+		});
+		await expect(
+			store.saveVerified({
+				...snapshotLookup(digest),
+				snapshot,
+				mediaAssets: [
+					persistedMedia({ file: wrongFile, digest: expectedMediaDigest }),
+				],
+				verification,
+			}),
+		).rejects.toThrow("immutable SHA-256 identity");
+		await expect(store.load(snapshotLookup(digest))).rejects.toMatchObject({
+			code: "COMPARISON_SOURCE_UNAVAILABLE",
+		});
+	});
+
 	test("loads an exact verified canonical snapshot after store reconstruction", async () => {
 		const snapshot = projectSnapshot();
 		const digest = await sha256(canonicalSerialize(snapshot));
@@ -69,6 +154,7 @@ describe("content-addressed project snapshots", () => {
 			},
 			projectId: "project-1",
 			snapshot,
+			mediaAssets: [],
 			verification: {
 				writeVersion: 7,
 				receiptId: `save:project-1:7:${digest}`,
@@ -88,6 +174,7 @@ describe("content-addressed project snapshots", () => {
 			},
 			projectId: "project-1",
 			snapshot,
+			mediaAssets: [],
 			firstVerifiedAt: "2026-09-03T12:00:00.000Z",
 			lastVerifiedAt: "2026-09-03T12:00:00.000Z",
 			expiresAt: "2026-12-02T12:00:00.000Z",
@@ -98,6 +185,35 @@ describe("content-addressed project snapshots", () => {
 				verifiedAt: "2026-09-03T12:00:00.000Z",
 			},
 		});
+	});
+
+	test("keeps render-complete media-free v1 envelopes loadable after the schema upgrade", async () => {
+		const snapshot = projectSnapshot();
+		const digest = await sha256(canonicalSerialize(snapshot));
+		await new ProjectSnapshotStore().saveVerified({
+			...snapshotLookup(digest),
+			snapshot,
+			mediaAssets: [],
+			verification: {
+				writeVersion: 7,
+				receiptId: `save:project-1:7:${digest}`,
+				operationId: "save-7",
+				verifiedAt: "2026-09-03T12:00:00.000Z",
+			},
+		});
+		const raw = databases
+			.get("opencut-project-snapshots/snapshots")
+			?.get(digest);
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+			throw new Error("expected a retained snapshot envelope");
+		}
+		Reflect.set(raw, "envelopeVersion", 1);
+		Reflect.set(raw, "storageSchemaVersion", 1);
+		Reflect.deleteProperty(raw, "mediaAssets");
+
+		expect(
+			await new ProjectSnapshotStore().load(snapshotLookup(digest)),
+		).toMatchObject({ snapshot, mediaAssets: [] });
 	});
 
 	test("fails with COMPARISON_SOURCE_UNAVAILABLE for missing and expired hashes", async () => {
@@ -112,6 +228,7 @@ describe("content-addressed project snapshots", () => {
 			},
 			projectId: "project-1",
 			snapshot,
+			mediaAssets: [],
 			verification: {
 				writeVersion: 7,
 				receiptId: `save:project-1:7:${digest}`,
@@ -144,6 +261,7 @@ describe("content-addressed project snapshots", () => {
 		await store.saveVerified({
 			...snapshotLookup(digest),
 			snapshot,
+			mediaAssets: [],
 			verification: {
 				writeVersion: 7,
 				receiptId: `save:project-1:7:${digest}`,
@@ -177,6 +295,7 @@ describe("content-addressed project snapshots", () => {
 		await store.saveVerified({
 			...lookup,
 			snapshot,
+			mediaAssets: [],
 			verification: {
 				writeVersion: 3,
 				receiptId: `save:project-1:3:${digest}`,
@@ -188,6 +307,7 @@ describe("content-addressed project snapshots", () => {
 			...lookup,
 			projectId: "project-2",
 			snapshot,
+			mediaAssets: [],
 			verification: {
 				writeVersion: 4,
 				receiptId: `save:project-2:4:${digest}`,
@@ -227,6 +347,7 @@ describe("content-addressed project snapshots", () => {
 				},
 				projectId: "project-1",
 				snapshot,
+				mediaAssets: [],
 				verification: {
 					writeVersion,
 					receiptId: `save:project-1:${writeVersion}:${digest}`,
@@ -264,6 +385,7 @@ describe("content-addressed project snapshots", () => {
 			store.saveVerified({
 				...snapshotLookup(digest),
 				snapshot,
+				mediaAssets: [],
 				verification: {
 					writeVersion,
 					receiptId: `save:project-1:${writeVersion}:${digest}`,
@@ -298,6 +420,7 @@ describe("content-addressed project snapshots", () => {
 			},
 			projectId: "project-1",
 			snapshot,
+			mediaAssets: [],
 			verification: {
 				writeVersion: 7,
 				receiptId: `save:project-1:7:${digest}`,
@@ -343,6 +466,7 @@ describe("content-addressed project snapshots", () => {
 				},
 				projectId: "project-1",
 				snapshot,
+				mediaAssets: [],
 				verification: {
 					writeVersion,
 					receiptId: `save:project-1:${writeVersion}:${digest}`,
@@ -370,6 +494,7 @@ describe("content-addressed project snapshots", () => {
 		}).saveVerified({
 			...snapshotLookup(oldHash),
 			snapshot: oldSnapshot,
+			mediaAssets: [],
 			verification: {
 				writeVersion: 1,
 				receiptId: `save:project-1:1:${oldHash}`,
@@ -385,6 +510,7 @@ describe("content-addressed project snapshots", () => {
 		}).saveVerified({
 			...snapshotLookup(freshHash),
 			snapshot: freshSnapshot,
+			mediaAssets: [],
 			verification: {
 				writeVersion: 2,
 				receiptId: `save:project-1:2:${freshHash}`,
@@ -418,6 +544,53 @@ function projectSnapshot(name = "Retained"): ProjectSnapshot {
 	};
 }
 
+function projectSnapshotWithMedia(mediaDigest: string): ProjectSnapshot {
+	return {
+		...projectSnapshot(),
+		mediaAssets: [
+			{
+				id: "media-1",
+				name: "source.mp4",
+				type: "video",
+				size: 22,
+				width: 1920,
+				height: 1080,
+				duration: 9_000,
+				fps: 30,
+				hasAudio: true,
+				sourceFingerprint: "source-fingerprint",
+				source: {
+					kind: "local",
+					contentHash: { algorithm: "SHA-256", digest: mediaDigest },
+				},
+				role: "timeline",
+			},
+		],
+	};
+}
+
+function persistedMedia({ file, digest }: { file: File; digest: string }) {
+	return {
+		id: "media-1",
+		name: "source.mp4",
+		type: "video" as const,
+		size: file.size,
+		lastModified: file.lastModified,
+		width: 1920,
+		height: 1080,
+		duration: 9_000,
+		fps: 30,
+		hasAudio: true,
+		sourceFingerprint: "source-fingerprint",
+		role: "timeline" as const,
+		sourceIdentity: {
+			kind: "local" as const,
+			contentHash: { algorithm: "SHA-256" as const, digest },
+		},
+		file,
+	};
+}
+
 function snapshotLookup(digest: string, projectId = "project-1") {
 	return {
 		contentHash: {
@@ -435,6 +608,14 @@ async function sha256(value: string): Promise<string> {
 		"SHA-256",
 		new TextEncoder().encode(value),
 	);
+	return Array.from(new Uint8Array(digest), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
+}
+
+async function sha256Bytes(value: Uint8Array): Promise<string> {
+	const bytes = Uint8Array.from(value);
+	const digest = await crypto.subtle.digest("SHA-256", bytes.buffer);
 	return Array.from(new Uint8Array(digest), (byte) =>
 		byte.toString(16).padStart(2, "0"),
 	).join("");

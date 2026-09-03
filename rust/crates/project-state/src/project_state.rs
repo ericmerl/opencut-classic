@@ -102,12 +102,21 @@ pub fn evaluate_automation_operation_policy(
                 "rendered" | "replayed" | "cancelled"
             )
         }
+        "compare_project_states" => {
+            matches!(
+                options.status.as_str(),
+                "rendered" | "replayed" | "cancelled"
+            )
+        }
         _ => false,
     };
     let retain_snapshot = durable_success
         && !matches!(
             options.method.as_str(),
-            "open_project" | "render_preview_frame" | "render_preview_range"
+            "open_project"
+                | "render_preview_frame"
+                | "render_preview_range"
+                | "compare_project_states"
         );
 
     AutomationOperationPolicy {
@@ -272,6 +281,8 @@ mod tests {
             ("render_preview_frame", "rendered"),
             ("render_preview_range", "rendered"),
             ("render_preview_range", "cancelled"),
+            ("compare_project_states", "rendered"),
+            ("compare_project_states", "cancelled"),
         ] {
             assert_eq!(
                 evaluate_automation_operation_policy(EvaluateAutomationOperationPolicyOptions {

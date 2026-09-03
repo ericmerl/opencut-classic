@@ -1496,3 +1496,100 @@ export type AutomationRenderPreviewRangeResult =
 				| "RENDERER_FAILED";
 			reason: string;
 	  };
+
+export interface AutomationComparisonSourceBinding {
+	revision: number;
+	projectContentHash: string;
+	projectionName: "opencut-project-content";
+	projectionVersion: 1 | 2;
+	writeVersion: number;
+	saveReceiptOperationId: string;
+	saveReceiptId: string;
+}
+
+export interface AutomationCompareProjectStatesRequest {
+	contractVersion: 1;
+	bridgeProtocolVersion: 2;
+	expectedConnectionIdentity: AutomationRenderPreviewFrameRequest["expectedConnectionIdentity"];
+	operationId: string;
+	projectId: string;
+	sceneId: string;
+	before: AutomationComparisonSourceBinding;
+	after: AutomationComparisonSourceBinding;
+	range: AutomationPreviewRangeSelector;
+	canvasSize: TCanvasSize;
+	normalization: {
+		canvas: "none";
+		color: "none";
+		fonts: "exact";
+		timing: "shared-schedule";
+	};
+	output: {
+		frameFormat: "png";
+		comparison: "side-by-side" | "wipe";
+		wipePosition?: number;
+		includeAudio: boolean;
+	};
+	pixelTolerance: number;
+	audioSampleTolerance: number;
+	beforeBaseUrl: string;
+	afterBaseUrl: string;
+	limits: { maxDurationTicks: number; maxFrames: number };
+	capabilitySnapshotHash: string;
+	wasmSha256?: string;
+}
+
+export type AutomationCompareProjectStatesResult =
+	| {
+			status: "rendered" | "cancelled";
+			contractVersion: 1;
+			operationId: string;
+			projectId: string;
+			sceneId: string;
+			revision: number;
+			contentHash: string;
+			contentHashProjectionVersion: 1 | 2;
+			capabilitySnapshotHash: string;
+			normalization: AutomationCompareProjectStatesRequest["normalization"];
+			schedule: FrameRangeSchedule;
+			before: AutomationComparisonSideEvidence;
+			after: AutomationComparisonSideEvidence;
+			renderer: {
+				provider: "opencut-web-renderer";
+				pipeline: "editor-native-before-after-comparison";
+				compositor: "opencut-wasm-webgl";
+				browser: string;
+				encoder: "browser-canvas-png-sequence";
+				environment: Record<string, unknown>;
+				executionIdentity: AutomationRenderPreviewFrameRequest["expectedConnectionIdentity"];
+			};
+			editorState: AutomationRenderPreviewFrameCompletedResult["editorState"];
+	  }
+	| {
+			status: "conflict" | "rejected";
+			operationId: string;
+			code: string;
+			reason: string;
+	  };
+
+export interface AutomationComparisonSideEvidence {
+	projectId: string;
+	sceneId: string;
+	binding: AutomationComparisonSourceBinding;
+	schedule: FrameRangeSchedule;
+	renderSource: {
+		canvas: TCanvasSize;
+		rate: { numerator: number; denominator: number };
+		sceneDurationTicks: number;
+		rendererSettingsDigest: string;
+	};
+	fontReadiness: AutomationRenderPreviewFrameCompletedResult["fontReadiness"] & {
+		substituted: false;
+	};
+	saveReceipt: AutomationSaveReceipt;
+	sourceVerification: {
+		retainedSnapshot: true;
+		expiresAt: string;
+		mediaSha256: string[];
+	};
+}

@@ -104,8 +104,18 @@ export const MUTATING_TOOL_MANIFEST = {
 		requiresSaveVerification: false,
 		protocolMutationPolicy: "v2-required",
 	},
+	opencut_compare_project_states: {
+		operationKind: "compare-project-states",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
 	opencut_cancel_preview_range: {
 		operationKind: "cancel-preview-range",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_cancel_comparison: {
+		operationKind: "cancel-comparison",
 		requiresSaveVerification: false,
 		protocolMutationPolicy: "v2-required",
 	},

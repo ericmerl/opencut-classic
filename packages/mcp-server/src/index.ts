@@ -21,6 +21,9 @@ import { PreviewEvidenceStore } from "./preview-evidence-store";
 import { PreviewFrameService } from "./preview-frame-service";
 import { RangePreviewEvidenceStore } from "./range-preview-evidence-store";
 import { RangePreviewService } from "./range-preview-service";
+import { ComparisonEvidenceStore } from "./comparison-evidence-store";
+import { ComparisonService } from "./comparison-service";
+import { nativeComparison } from "./native-comparison";
 import { readPreviewRangeLimits } from "./range-preview-config";
 import { EditPlanPreflightStore } from "./edit-plan-preflight-store";
 import { EditPlanPreflightService } from "./edit-plan-preflight-service";
@@ -92,6 +95,10 @@ import {
 	renderPreviewFrameInputSchema,
 	renderPreviewRangeInputSchema,
 	cancelPreviewRangeInputSchema,
+	compareProjectStatesInputSchema,
+	cancelComparisonInputSchema,
+	getComparisonInputSchema,
+	listComparisonsInputSchema,
 	preflightEditPlanInputSchema,
 	queueExportInputSchema,
 	queueExportBatchInputSchema,
@@ -146,11 +153,20 @@ const rangePreviewEvidence = new RangePreviewEvidenceStore(
 	previewRangeLimits,
 );
 await rangePreviewEvidence.readiness();
+const comparisonEvidence = new ComparisonEvidenceStore(
+	process.env.OPENCUT_COMPARISON_EVIDENCE_DIR ??
+		join(exportReceipts.directory, "comparison-evidence"),
+	port,
+	previewRangeLimits,
+	nativeComparison,
+);
+await comparisonEvidence.readiness();
 const bridge = new EditorBridge({
 	token,
 	port,
 	previewEvidence,
 	rangePreviewEvidence,
+	comparisonEvidence,
 });
 let capabilitySnapshots: CapabilitySnapshotService;
 const previewFrames = new PreviewFrameService(bridge, previewEvidence, () =>
@@ -159,6 +175,12 @@ const previewFrames = new PreviewFrameService(bridge, previewEvidence, () =>
 const previewRanges = new RangePreviewService(
 	bridge,
 	rangePreviewEvidence,
+	previewRangeLimits,
+	() => capabilitySnapshots.capture(),
+);
+const comparisons = new ComparisonService(
+	bridge,
+	comparisonEvidence,
 	previewRangeLimits,
 	() => capabilitySnapshots.capture(),
 );
@@ -606,6 +628,79 @@ function createServer(): McpServer {
 			inputSchema: listPreviewRangesInputSchema,
 		},
 		async (input) => toolResult(await previewRanges.list(input)),
+	);
+
+	server.registerTool(
+		"opencut_compare_project_states",
+		{
+			description:
+				"Render two retained, hash-locked project states on one exact schedule and produce durable source, side-by-side or wipe, pixel-diff, region, and optional audio comparison evidence.",
+			inputSchema: compareProjectStatesInputSchema,
+		},
+		async (input) => {
+			await Promise.all([
+				assertSaveReceiptEditorAffinity({
+					saveReceiptOperationId: input.before.saveReceiptOperationId,
+					expectedConnectionIdentity: input.expectedConnectionIdentity,
+				}),
+				assertSaveReceiptEditorAffinity({
+					saveReceiptOperationId: input.after.saveReceiptOperationId,
+					expectedConnectionIdentity: input.expectedConnectionIdentity,
+				}),
+			]);
+			const ledgerRecord = await operationLedger.get(input.operationId);
+			if (ledgerRecord?.record.status === "completed") {
+				const receipt = await comparisons.verifyOperationReceipt(
+					input.operationId,
+				);
+				if (!receipt)
+					throw new Error(
+						"terminal comparison operation has no durable evidence receipt",
+					);
+			}
+			return toolResult(
+				await ledgerBoundary.execute(
+					"opencut_compare_project_states",
+					input,
+					(context) => comparisons.compare(input, context),
+					(context) => comparisons.recover(input, context),
+				),
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_cancel_comparison",
+		{
+			description:
+				"Durably request cancellation of an inline before/after comparison.",
+			inputSchema: cancelComparisonInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute("opencut_cancel_comparison", input, () =>
+					comparisons.cancel(input.targetOperationId),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_comparison",
+		{
+			description:
+				"Read live progress or an integrity-verified terminal comparison receipt.",
+			inputSchema: getComparisonInputSchema,
+		},
+		async ({ receiptId }) => toolResult(await comparisons.get(receiptId)),
+	);
+
+	server.registerTool(
+		"opencut_list_comparisons",
+		{
+			description: "List durable before/after comparison jobs and receipts.",
+			inputSchema: listComparisonsInputSchema,
+		},
+		async (input) => toolResult(await comparisons.list(input)),
 	);
 
 	server.registerTool(

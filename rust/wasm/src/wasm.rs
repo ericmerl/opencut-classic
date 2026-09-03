@@ -9,6 +9,7 @@ mod masks;
 #[cfg(target_arch = "wasm32")]
 mod perf;
 
+pub use comparison::*;
 #[cfg(target_arch = "wasm32")]
 pub use compositor::*;
 pub use edit_plan::*;

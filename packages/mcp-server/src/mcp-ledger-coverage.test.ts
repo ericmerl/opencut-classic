@@ -26,7 +26,7 @@ describe("complete mutating handler ledger coverage", () => {
 		});
 	});
 
-	test("exactly replays and rejects changed reuse for all 28 mutators", async () => {
+	test("exactly replays and rejects changed reuse for all 30 mutators", async () => {
 		const ledger = new OperationLedger(directory);
 		const boundary = new McpLedgerBoundary(ledger, verificationBridge());
 		try {
@@ -186,6 +186,20 @@ function operationInput(
 	toolName: MutatingToolName,
 	operationId: string,
 ): Record<string, unknown> {
+	if (toolName === "opencut_compare_project_states") {
+		return {
+			bridgeProtocolVersion: 2,
+			operationId,
+			projectId: "project-1",
+			sceneId: "scene-1",
+			before: {
+				revision: 0,
+				projectContentHash: "b".repeat(64),
+				projectionName: "opencut-project-content",
+				projectionVersion: 2,
+			},
+		};
+	}
 	if (toolName === "opencut_record_export_inspection") {
 		return {
 			bridgeProtocolVersion: 2,
@@ -290,11 +304,27 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 			receiptId: `preview-range:${operationId}`,
 		};
 	}
+	if (toolName === "opencut_compare_project_states") {
+		return {
+			status: "rendered",
+			operationId,
+			receiptId: `comparison:${operationId}`,
+			projectId: "project-1",
+			sceneId: "scene-1",
+		};
+	}
 	if (toolName === "opencut_cancel_preview_range") {
 		return {
 			status: "cancellation-requested",
 			operationId,
 			targetOperationId: "range-1",
+		};
+	}
+	if (toolName === "opencut_cancel_comparison") {
+		return {
+			status: "cancellation-requested",
+			operationId,
+			targetOperationId: "comparison-1",
 		};
 	}
 	const status = statusByTool[toolName];

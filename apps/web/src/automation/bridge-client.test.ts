@@ -413,11 +413,15 @@ function createClient(
 			operationId: request.operationId,
 			receiptId: "receipt-1",
 		}),
-		recordOperationReceipt: async (
-			method: string,
-			request: unknown,
-			result: unknown,
-		) => {
+		recordOperationReceipt: async ({
+			method,
+			request,
+			result,
+		}: {
+			method: string;
+			request: unknown;
+			result: unknown;
+		}) => {
 			if (
 				request &&
 				typeof request === "object" &&

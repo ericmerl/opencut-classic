@@ -3,7 +3,9 @@ import { sha256Bytes } from "./preview-render-common";
 
 const FONT_READY_TIMEOUT_MS = 30_000;
 
-export async function waitForFonts(tracks: SceneTracks): Promise<{
+export async function waitForFonts(
+	tracks: SceneTracks | readonly SceneTracks[],
+): Promise<{
 	status: "ready";
 	families: string[];
 	descriptors: Array<{
@@ -29,7 +31,9 @@ export async function waitForFonts(tracks: SceneTracks): Promise<{
 	descriptorsSha256: string;
 }> {
 	if (!document.fonts) throw new Error("font readiness API is unavailable");
-	const requested = collectFontDescriptors(tracks);
+	const requested = collectFontDescriptors(
+		Array.isArray(tracks) ? tracks : [tracks],
+	);
 	const loadedByDescriptor = await Promise.race([
 		Promise.all([
 			document.fonts.ready.then(() => [] as FontFace[]),
@@ -110,7 +114,7 @@ export async function waitForFonts(tracks: SceneTracks): Promise<{
 	};
 }
 
-function collectFontDescriptors(tracks: SceneTracks): Array<{
+function collectFontDescriptors(trackSets: readonly SceneTracks[]): Array<{
 	family: string;
 	style: string;
 	weight: string;
@@ -168,7 +172,7 @@ function collectFontDescriptors(tracks: SceneTracks): Array<{
 			}
 		}
 	};
-	visit(tracks);
+	for (const tracks of trackSets) visit(tracks);
 	return [...values.values()].sort((left, right) =>
 		JSON.stringify(left).localeCompare(JSON.stringify(right)),
 	);

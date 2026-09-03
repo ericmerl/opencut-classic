@@ -156,7 +156,7 @@ export const renderPreviewFrameInputSchema = z
 	})
 	.strict()
 	.superRefine((value, context) => {
-		if (value.canvasSize.width * value.canvasSize.height > 16_777_216) {
+		if (value.canvasSize.width * value.canvasSize.height > 8_294_400) {
 			context.addIssue({
 				code: "custom",
 				path: ["canvasSize"],
@@ -178,7 +178,7 @@ export const listPreviewFramesInputSchema = z
 	})
 	.strict();
 
-const previewRangeSelectorSchema = z.discriminatedUnion("kind", [
+export const previewRangeSelectorSchema = z.discriminatedUnion("kind", [
 	z
 		.object({
 			kind: z.literal("media-time"),
@@ -271,6 +271,147 @@ export const listPreviewRangesInputSchema = z
 		limit: z.number().int().min(1).max(100).default(25),
 	})
 	.strict();
+
+export const comparisonSourceBindingSchema = z
+	.object({
+		revision: z.number().int().nonnegative(),
+		projectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+		projectionName: z.literal("opencut-project-content"),
+		projectionVersion: z.union([z.literal(1), z.literal(2)]),
+		writeVersion: z.number().int().positive(),
+		saveReceiptOperationId: operationIdSchema,
+		saveReceiptId: z.string().min(1).max(512),
+	})
+	.strict();
+
+const comparisonCanvasSizeSchema = z
+	.object({
+		width: z.number().int().min(16).max(4096),
+		height: z.number().int().min(16).max(4096),
+	})
+	.strict();
+
+const comparisonNormalizationSchema = z
+	.object({
+		canvas: z.literal("none"),
+		color: z.literal("none"),
+		fonts: z.literal("exact"),
+		timing: z.literal("shared-schedule"),
+	})
+	.strict();
+
+const comparisonOutputSchema = z
+	.object({
+		frameFormat: z.literal("png"),
+		comparison: z.enum(["side-by-side", "wipe"]),
+		wipePosition: z.number().min(0).max(1).optional(),
+		includeAudio: z.literal(true),
+	})
+	.strict()
+	.superRefine((value, context) => {
+		if (value.comparison === "wipe" && value.wipePosition === undefined) {
+			context.addIssue({
+				code: "custom",
+				path: ["wipePosition"],
+				message: "wipe comparisons require wipePosition",
+			});
+		}
+		if (value.comparison !== "wipe" && value.wipePosition !== undefined) {
+			context.addIssue({
+				code: "custom",
+				path: ["wipePosition"],
+				message: "wipePosition is only valid for wipe comparisons",
+			});
+		}
+	});
+
+export const compareProjectStatesInputSchema = z
+	.object({
+		contractVersion: z.literal(1),
+		bridgeProtocolVersion: z.literal(2),
+		expectedConnectionIdentity: connectionIdentitySchema,
+		operationId: operationIdSchema,
+		projectId: z.string().min(1),
+		sceneId: z.string().min(1),
+		before: comparisonSourceBindingSchema,
+		after: comparisonSourceBindingSchema,
+		range: previewRangeSelectorSchema,
+		canvasSize: comparisonCanvasSizeSchema,
+		normalization: comparisonNormalizationSchema,
+		output: comparisonOutputSchema,
+		pixelTolerance: z.number().int().min(0).max(255),
+		audioSampleTolerance: z.number().int().min(0).max(32_767),
+	})
+	.strict()
+	.superRefine((value, context) => {
+		if (value.canvasSize.width * value.canvasSize.height > 16_777_216) {
+			context.addIssue({
+				code: "custom",
+				path: ["canvasSize"],
+				message: "comparison canvas exceeds the 8294400-pixel limit",
+				input: value,
+			});
+		}
+		if (
+			value.output.comparison === "side-by-side" &&
+			value.canvasSize.width * value.canvasSize.height * 2 > 16_777_216
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["canvasSize"],
+				message:
+					"side-by-side comparison output exceeds the 16777216-pixel composite limit",
+				input: value,
+			});
+		}
+		const start =
+			value.range.kind === "media-time"
+				? value.range.startTicks
+				: value.range.startFrameIndex;
+		const end =
+			value.range.kind === "media-time"
+				? value.range.endTicksExclusive
+				: value.range.endFrameIndexExclusive;
+		if (end <= start) {
+			context.addIssue({
+				code: "custom",
+				path: ["range"],
+				message: "comparison range end must be greater than its start",
+				input: value,
+			});
+		}
+	});
+
+export const cancelComparisonInputSchema = z
+	.object({
+		bridgeProtocolVersion: z.literal(2),
+		expectedConnectionIdentity: connectionIdentitySchema,
+		operationId: operationIdSchema,
+		targetOperationId: operationIdSchema,
+	})
+	.strict();
+
+export const getComparisonInputSchema = z
+	.object({ receiptId: z.string().min(1).max(512) })
+	.strict();
+
+export const listComparisonsInputSchema = z
+	.object({
+		projectId: z.string().min(1).optional(),
+		sceneId: z.string().min(1).optional(),
+		limit: z.number().int().min(1).max(100).default(25),
+	})
+	.strict();
+
+export type ComparisonSourceBinding = z.infer<
+	typeof comparisonSourceBindingSchema
+>;
+export type CompareProjectStatesInput = z.infer<
+	typeof compareProjectStatesInputSchema
+>;
+export type CancelComparisonInput = z.infer<typeof cancelComparisonInputSchema>;
+export type GetComparisonInput = z.infer<typeof getComparisonInputSchema>;
+export type ListComparisonsInput = z.infer<typeof listComparisonsInputSchema>;
 
 const backgroundSchema = z.discriminatedUnion("type", [
 	z.object({ type: z.literal("color"), color: z.string().min(1) }).strict(),

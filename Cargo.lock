@@ -972,6 +972,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "comparison"
+version = "0.1.0"
+dependencies = [
+ "bridge",
+ "serde",
+ "serde_json",
+ "time",
+ "tsify-next",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "compositor"
 version = "0.1.0"
 dependencies = [
@@ -3881,6 +3893,7 @@ name = "opencut-wasm"
 version = "0.2.10"
 dependencies = [
  "bridge",
+ "comparison",
  "compositor",
  "console_error_panic_hook",
  "edit-plan",

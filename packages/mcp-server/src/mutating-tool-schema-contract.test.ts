@@ -7,10 +7,12 @@ import {
 import {
 	attachCleanAudioInputSchema,
 	attachMatteInputSchema,
+	cancelComparisonInputSchema,
 	cancelExportBatchInputSchema,
 	cancelExportJobInputSchema,
 	cancelPreviewRangeInputSchema,
 	cleanAudioInputSchema,
+	compareProjectStatesInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
 	exportProjectInputSchema,
@@ -264,14 +266,67 @@ const cases: SchemaCase[] = [
 		v2Only: true,
 	},
 	{
+		name: "opencut_compare_project_states",
+		schema: compareProjectStatesInputSchema,
+		input: {
+			contractVersion: 1,
+			projectId: "project-1",
+			sceneId: "scene-1",
+			before: {
+				revision: 1,
+				projectContentHash: hash,
+				projectionName: "opencut-project-content",
+				projectionVersion: 2,
+				writeVersion: 1,
+				saveReceiptOperationId: "save-before",
+				saveReceiptId: "save:before",
+			},
+			after: {
+				revision: 2,
+				projectContentHash: "b".repeat(64),
+				projectionName: "opencut-project-content",
+				projectionVersion: 2,
+				writeVersion: 2,
+				saveReceiptOperationId: "save-after",
+				saveReceiptId: "save:after",
+			},
+			range: {
+				kind: "frame-index",
+				startFrameIndex: 0,
+				endFrameIndexExclusive: 1,
+			},
+			canvasSize: { width: 320, height: 180 },
+			normalization: {
+				canvas: "none",
+				color: "none",
+				fonts: "exact",
+				timing: "shared-schedule",
+			},
+			output: {
+				frameFormat: "png",
+				comparison: "side-by-side",
+				includeAudio: true,
+			},
+			pixelTolerance: 0,
+			audioSampleTolerance: 0,
+		},
+		v2Only: true,
+	},
+	{
 		name: "opencut_cancel_preview_range",
 		schema: cancelPreviewRangeInputSchema,
 		input: { targetOperationId: "range-operation" },
 	},
+	{
+		name: "opencut_cancel_comparison",
+		schema: cancelComparisonInputSchema,
+		input: { targetOperationId: "comparison-operation" },
+		v2Only: true,
+	},
 ];
 
 describe("all mutating public MCP schema versions", () => {
-	test("covers exactly the 28 registered mutation identities", () => {
+	test("covers exactly the 30 registered mutation identities", () => {
 		expect(cases.map(({ name }) => String(name)).sort()).toEqual(
 			Object.keys(MUTATING_TOOL_MANIFEST).map(String).sort(),
 		);

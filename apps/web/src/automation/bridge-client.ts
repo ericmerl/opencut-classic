@@ -12,6 +12,7 @@ import type {
 	AutomationImportSubtitlesRequest,
 	AutomationRenderPreviewFrameRequest,
 	AutomationRenderPreviewRangeRequest,
+	AutomationCompareProjectStatesRequest,
 	AutomationReadProjectRequest,
 	AutomationExportSubtitlesRequest,
 	AutomationOpenProjectRequest,
@@ -146,6 +147,12 @@ type BridgeRequest =
 			id: string;
 			method: "render_preview_range";
 			params: AutomationRenderPreviewRangeRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "compare_project_states";
+			params: AutomationCompareProjectStatesRequest;
 	  }
 	| {
 			kind: "request";
@@ -381,11 +388,11 @@ export class AutomationBridgeClient {
 			this.validateRequestTarget(message.target);
 			this.validatePayloadAffinity(message);
 			const result = await this.dispatch(message);
-			await this.automation.recordOperationReceipt(
-				message.method,
-				message.params,
+			await this.automation.recordOperationReceipt({
+				method: message.method,
+				request: message.params,
 				result,
-			);
+			});
 			if (
 				(await this.options.afterOperationReceipt?.({
 					method: message.method,
@@ -577,6 +584,8 @@ export class AutomationBridgeClient {
 				return this.automation.renderPreviewFrame(message.params);
 			case "render_preview_range":
 				return this.automation.renderPreviewRange(message.params);
+			case "compare_project_states":
+				return this.automation.compareProjectStates(message.params);
 			case "import_media":
 				return this.automation.importMedia(message.params);
 			case "import_subtitles":

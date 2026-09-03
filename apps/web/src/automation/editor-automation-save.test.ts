@@ -615,17 +615,17 @@ describe("EditorAutomation save barrier", () => {
 			stored = receipt;
 		};
 
-		await automation.recordOperationReceipt(
-			"render_preview_frame",
-			{ ...requestWithoutBinding, operationReceiptBinding: binding },
-			{
+		await automation.recordOperationReceipt({
+			method: "render_preview_frame",
+			request: { ...requestWithoutBinding, operationReceiptBinding: binding },
+			result: {
 				status: "rendered",
 				projectId: project.metadata.id,
 				sceneId: requestedScene.id,
 				revision: snapshot.revision,
 				contentIdentity: snapshot.contentIdentity,
 			},
-		);
+		});
 
 		expect(stored).toMatchObject({
 			operationId: binding.outerOperationId,
@@ -636,6 +636,41 @@ describe("EditorAutomation save barrier", () => {
 		});
 		expect(project.currentSceneId).toBe(activeScene.id);
 		expect(retainedSnapshots).toHaveLength(0);
+
+		const comparisonRequest = {
+			...requestWithoutBinding,
+			operationId: "compare-non-active",
+		};
+		const comparisonBinding = {
+			...binding,
+			outerOperationId: "compare-non-active",
+			outerToolName: "opencut_compare_project_states",
+			stepId: "comparison-render",
+			browserMethod: "compare_project_states",
+			browserRequestFingerprint: createHash("sha256")
+				.update(stableSerializeForTest(comparisonRequest))
+				.digest("hex"),
+		};
+		await automation.recordOperationReceipt({
+			method: "compare_project_states",
+			request: {
+				...comparisonRequest,
+				operationReceiptBinding: comparisonBinding,
+			},
+			result: {
+				status: "rendered",
+				projectId: project.metadata.id,
+				sceneId: requestedScene.id,
+				revision: snapshot.revision,
+				contentHash: snapshot.contentIdentity.hash.digest,
+				contentHashProjectionVersion:
+					snapshot.contentIdentity.hash.projectionVersion,
+			},
+		});
+		expect(stored).toMatchObject({
+			operationId: comparisonBinding.outerOperationId,
+			afterState: { sceneId: requestedScene.id, durableWriteVersion: 9 },
+		});
 	});
 
 	test("retains a verified mutating browser result before its operation receipt", async () => {
@@ -672,16 +707,16 @@ describe("EditorAutomation save barrier", () => {
 			publicationOrder.push("receipt");
 		};
 
-		await automation.recordOperationReceipt(
-			"apply_edit_plan",
-			{ ...requestWithoutBinding, operationReceiptBinding: binding },
-			{
+		await automation.recordOperationReceipt({
+			method: "apply_edit_plan",
+			request: { ...requestWithoutBinding, operationReceiptBinding: binding },
+			result: {
 				status: "applied",
 				operationId: requestWithoutBinding.operationId,
 				revision: snapshot.revision,
 				snapshot,
 			},
-		);
+		});
 
 		expect(retainedSnapshots).toHaveLength(1);
 		expect(retainedSnapshots[0]).toMatchObject({

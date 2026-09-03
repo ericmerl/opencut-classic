@@ -10,6 +10,7 @@ members = [
     "rust/crates/masks",
     "rust/crates/edit-plan",
     "rust/crates/project-state",
+    "rust/crates/comparison",
     "rust/wasm",
     "rust/crates/compositor",
 ]

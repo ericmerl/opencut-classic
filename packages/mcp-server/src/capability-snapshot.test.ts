@@ -71,10 +71,39 @@ describe("CapabilitySnapshotService", () => {
 					maxFrames: 300,
 				},
 			},
+			comparison: {
+				status: "ready",
+				contractVersion: 1,
+				sourceProjection: {
+					name: "opencut-project-content",
+					version: 2,
+					supportedVersions: [1, 2],
+				},
+				outputs: ["side-by-side", "wipe", "pixel-diff"],
+				normalization: {
+					canvas: "none",
+					color: "none",
+					fonts: "exact",
+					timing: "shared-schedule",
+				},
+				limits: {
+					maxDurationSeconds: 10,
+					maxDurationTicks: 1_200_000,
+					maxFrames: 300,
+				},
+			},
 		});
 		expect((snapshot.tools as Record<string, unknown>).registered).toEqual(
 			REGISTERED_TOOL_NAMES,
 		);
+		for (const name of [
+			"opencut_compare_project_states",
+			"opencut_cancel_comparison",
+			"opencut_get_comparison",
+			"opencut_list_comparisons",
+		] as const) {
+			expect(REGISTERED_TOOL_NAMES).toContain(name);
+		}
 		expect(
 			(snapshot.tools as Record<string, unknown>).editPlanOperationVariants,
 		).toEqual(EDIT_PLAN_OPERATION_VARIANTS);

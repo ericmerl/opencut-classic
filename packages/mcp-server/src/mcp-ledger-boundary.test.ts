@@ -523,3 +523,105 @@ function exportResult(outputPath: string) {
 		},
 	};
 }
+
+describe("comparison ledger policy", () => {
+	test("binds ledger before-state to the immutable comparison source without reading live editor state", async () => {
+		const directory = await mkdtemp(
+			join(tmpdir(), "opencut-comparison-ledger-"),
+		);
+		const ledger = new OperationLedger(directory);
+		let bridgeRequests = 0;
+		const bridge = {
+			request: async () => {
+				bridgeRequests += 1;
+				throw new Error(
+					"comparison policy must not resolve live project state",
+				);
+			},
+		} as unknown as EditorBridge;
+		const diffHash = "c".repeat(64);
+		const compositeHash = "d".repeat(64);
+		try {
+			const result = await new McpLedgerBoundary(ledger, bridge).execute(
+				"opencut_compare_project_states",
+				{
+					bridgeProtocolVersion: 2,
+					operationId: "comparison-ledger-1",
+					projectId: "project-1",
+					sceneId: "scene-1",
+					before: {
+						revision: 4,
+						projectContentHash: "a".repeat(64),
+						projectionName: "opencut-project-content",
+						projectionVersion: 2,
+					},
+				},
+				async () => ({
+					status: "rendered",
+					schemaVersion: "opencut.comparison-receipt.v1",
+					receiptId: "comparison:comparison-ledger-1",
+					projectId: "project-1",
+					sceneId: "scene-1",
+					checksum: "e".repeat(64),
+					scheduleSha256: "f".repeat(64),
+					operationHistory: {
+						beforeSaveOperationId: "save-before",
+						afterSaveOperationId: "save-after",
+						comparisonOperationId: "comparison-ledger-1",
+					},
+					frames: [
+						{
+							diff: {
+								path: "C:/comparisons/diff.png",
+								bytes: 123,
+								pngSha256: diffHash,
+							},
+							comparison: {
+								path: "C:/comparisons/side-by-side.png",
+								bytes: 456,
+								pngSha256: compositeHash,
+							},
+						},
+					],
+				}),
+			);
+			expect(result).toMatchObject({
+				durableOperationStatus: "completed",
+				operationDisposition: "applied-verified",
+			});
+			const record = await ledger.get("comparison-ledger-1");
+			expect(record?.record).toMatchObject({
+				projectId: "project-1",
+				sceneId: "scene-1",
+				revisionBefore: 4,
+				contentHashBefore: "a".repeat(64),
+				contentHashProjectionVersionBefore: 1,
+				requiresSaveVerification: false,
+				artifacts: [
+					{
+						artifactId: diffHash,
+						kind: "receipt",
+						state: "verified",
+						sha256: diffHash,
+						bytes: 123,
+						path: "C:/comparisons/diff.png",
+						mimeType: "image/png",
+					},
+					{
+						artifactId: compositeHash,
+						kind: "receipt",
+						state: "verified",
+						sha256: compositeHash,
+						bytes: 456,
+						path: "C:/comparisons/side-by-side.png",
+						mimeType: "image/png",
+					},
+				],
+			});
+			expect(bridgeRequests).toBe(0);
+		} finally {
+			ledger.close();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+});

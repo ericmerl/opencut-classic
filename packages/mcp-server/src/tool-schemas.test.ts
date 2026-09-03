@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
 	attachCleanAudioInputSchema,
 	attachMatteInputSchema,
+	cancelComparisonInputSchema,
 	cleanAudioInputSchema,
 	cancelExportBatchInputSchema,
 	cancelExportJobInputSchema,
 	generateMatteInputSchema,
+	getComparisonInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
 	exportProjectInputSchema,
@@ -19,10 +21,12 @@ import {
 	saveProjectInputSchema,
 	listExportBatchesInputSchema,
 	listExportJobsInputSchema,
+	listComparisonsInputSchema,
 	queueExportBatchInputSchema,
 	queueExportInputSchema,
 	recordExportInspectionInputSchema,
 	renderPreviewRangeInputSchema,
+	compareProjectStatesInputSchema,
 	runExportJobsInputSchema,
 	searchStickersInputSchema,
 	startEditorWorkerInputSchema,
@@ -42,6 +46,135 @@ const connectionIdentity = {
 	editorSessionId: "session-1",
 	connectionGeneration: 1,
 };
+
+describe("OpenCut immutable project-state comparison contract", () => {
+	const binding = {
+		revision: 4,
+		projectContentHash: "a".repeat(64),
+		projectionName: "opencut-project-content" as const,
+		projectionVersion: 2 as const,
+		writeVersion: 7,
+		saveReceiptOperationId: "save-operation-1",
+		saveReceiptId: "save:project-1:7",
+	};
+	const base = {
+		contractVersion: 1 as const,
+		bridgeProtocolVersion: 2 as const,
+		expectedConnectionIdentity: connectionIdentity,
+		operationId: "comparison-1",
+		projectId: "project-1",
+		sceneId: "scene-1",
+		before: binding,
+		after: {
+			...binding,
+			revision: 5,
+			projectContentHash: "b".repeat(64),
+			writeVersion: 8,
+			saveReceiptOperationId: "save-operation-2",
+			saveReceiptId: "save:project-1:8",
+		},
+		range: {
+			kind: "frame-index" as const,
+			startFrameIndex: 0,
+			endFrameIndexExclusive: 2,
+		},
+		canvasSize: { width: 320, height: 180 },
+		normalization: {
+			canvas: "none" as const,
+			color: "none" as const,
+			fonts: "exact" as const,
+			timing: "shared-schedule" as const,
+		},
+		output: {
+			frameFormat: "png" as const,
+			comparison: "side-by-side" as const,
+			includeAudio: true as const,
+		},
+		pixelTolerance: 0,
+		audioSampleTolerance: 0,
+	};
+
+	test("accepts exact immutable bindings and both half-open range selectors", () => {
+		expect(compareProjectStatesInputSchema.safeParse(base).success).toBe(true);
+		expect(
+			compareProjectStatesInputSchema.safeParse({
+				...base,
+				range: {
+					kind: "media-time",
+					startTicks: 0,
+					endTicksExclusive: 120_000,
+				},
+				output: {
+					frameFormat: "png",
+					comparison: "wipe",
+					wipePosition: 0.5,
+					includeAudio: true,
+				},
+				pixelTolerance: 255,
+				audioSampleTolerance: 32_767,
+			}).success,
+		).toBe(true);
+	});
+
+	test("rejects implicit normalization, invalid wipe controls, ranges, and bounds", () => {
+		for (const invalid of [
+			{ ...base, output: { ...base.output, includeAudio: false } },
+			{ ...base, normalization: { ...base.normalization, canvas: "scale" } },
+			{
+				...base,
+				output: { ...base.output, wipePosition: 0.5 },
+			},
+			{
+				...base,
+				output: { ...base.output, comparison: "wipe" },
+			},
+			{
+				...base,
+				range: {
+					kind: "frame-index",
+					startFrameIndex: 2,
+					endFrameIndexExclusive: 2,
+				},
+			},
+			{ ...base, canvasSize: { width: 4096, height: 4097 } },
+			{ ...base, canvasSize: { width: 4096, height: 4096 } },
+			{ ...base, pixelTolerance: 256 },
+			{ ...base, audioSampleTolerance: 32_768 },
+			{ ...base, unexpected: true },
+		]) {
+			expect(compareProjectStatesInputSchema.safeParse(invalid).success).toBe(
+				false,
+			);
+		}
+	});
+
+	test("requires strict v2 identity for compare and cancellation and strict reads", () => {
+		expect(
+			cancelComparisonInputSchema.safeParse({
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: connectionIdentity,
+				operationId: "cancel-1",
+				targetOperationId: "comparison-1",
+			}).success,
+		).toBe(true);
+		expect(
+			cancelComparisonInputSchema.safeParse({
+				operationId: "cancel-1",
+				targetOperationId: "comparison-1",
+			}).success,
+		).toBe(false);
+		expect(
+			getComparisonInputSchema.parse({ receiptId: "comparison:1" }),
+		).toEqual({ receiptId: "comparison:1" });
+		expect(
+			listComparisonsInputSchema.parse({ projectId: "project-1" }),
+		).toEqual({ projectId: "project-1", limit: 25 });
+		expect(
+			listComparisonsInputSchema.safeParse({ projectId: "project-1", x: 1 })
+				.success,
+		).toBe(false);
+	});
+});
 
 describe("OpenCut preview range contract", () => {
 	const base = {

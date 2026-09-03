@@ -87,30 +87,36 @@ export class McpLedgerBoundary {
 		const requiresVerifiedBrowserHash =
 			toolName === "opencut_apply_edit_plan" &&
 			input.bridgeProtocolVersion === 2;
-		const before = !operationUsesProjectPreconditions(toolName)
-			? {}
-			: existing
-				? {
-						projectId:
-							definition.operationKind === "create-project"
-								? null
-								: (stringField(input, "projectId") ??
-									existing.record.projectId),
-						sceneId:
-							definition.operationKind === "create-project"
-								? null
-								: (stringField(input, "sceneId") ??
-									(requiresVerifiedBrowserHash
-										? existing.record.sceneId
-										: suppliedContentHash
-											? null
-											: existing.record.sceneId)),
-						revision: existing.record.revisionBefore,
-						contentHash: existing.record.contentHashBefore,
-						contentHashProjectionVersion:
-							existing.record.contentHashProjectionVersionBefore,
-					}
-				: await this.resolveBeforeState(input, requiresVerifiedBrowserHash);
+		const comparisonBefore =
+			toolName === "opencut_compare_project_states"
+				? comparisonSourceState(input)
+				: null;
+		const before = comparisonBefore
+			? comparisonBefore
+			: !operationUsesProjectPreconditions(toolName)
+				? {}
+				: existing
+					? {
+							projectId:
+								definition.operationKind === "create-project"
+									? null
+									: (stringField(input, "projectId") ??
+										existing.record.projectId),
+							sceneId:
+								definition.operationKind === "create-project"
+									? null
+									: (stringField(input, "sceneId") ??
+										(requiresVerifiedBrowserHash
+											? existing.record.sceneId
+											: suppliedContentHash
+												? null
+												: existing.record.sceneId)),
+							revision: existing.record.revisionBefore,
+							contentHash: existing.record.contentHashBefore,
+							contentHashProjectionVersion:
+								existing.record.contentHashProjectionVersionBefore,
+						}
+					: await this.resolveBeforeState(input, requiresVerifiedBrowserHash);
 		const result = await executeLedgeredOperation({
 			ledger: this.ledger,
 			input,
@@ -733,6 +739,33 @@ function protocolContext(input: ToolInput): ToolInput {
 	};
 }
 
+function comparisonSourceState(input: ToolInput) {
+	const source = isRecord(input.before) ? input.before : null;
+	const projectId = stringField(input, "projectId");
+	const sceneId = stringField(input, "sceneId");
+	const contentHash = source && stringField(source, "projectContentHash");
+	const revision = source?.revision;
+	if (
+		!projectId ||
+		!sceneId ||
+		!contentHash ||
+		!/^[a-f0-9]{64}$/.test(contentHash) ||
+		!Number.isInteger(revision) ||
+		Number(revision) < 0 ||
+		source?.projectionName !== "opencut-project-content" ||
+		(source.projectionVersion !== 1 && source.projectionVersion !== 2)
+	) {
+		throw new Error("comparison before binding is invalid");
+	}
+	return {
+		projectId,
+		sceneId,
+		revision: Number(revision),
+		contentHash,
+		contentHashProjectionVersion: 1 as const,
+	};
+}
+
 function verifiedAffectedObjects(
 	toolName: MutatingToolName,
 	_input: ToolInput,
@@ -781,6 +814,9 @@ function verifiedAffectedObjects(
 				);
 			}
 		}
+	}
+	if (toolName === "opencut_compare_project_states") {
+		add("file", result.receiptId, action);
 	}
 	add(
 		"media",
@@ -838,7 +874,8 @@ function operationAction(
 		return "exported";
 	if (
 		toolName === "opencut_render_preview_frame" ||
-		toolName === "opencut_render_preview_range"
+		toolName === "opencut_render_preview_range" ||
+		toolName === "opencut_compare_project_states"
 	)
 		return "processed";
 	if (
@@ -849,7 +886,8 @@ function operationAction(
 	if (
 		toolName === "opencut_cancel_export_job" ||
 		toolName === "opencut_cancel_export_batch" ||
-		toolName === "opencut_cancel_preview_range"
+		toolName === "opencut_cancel_preview_range" ||
+		toolName === "opencut_cancel_comparison"
 	)
 		return "cancelled";
 	if (toolName === "opencut_record_export_inspection") return "inspected";
@@ -929,6 +967,8 @@ function receiptEvidence(receipt: OperationSaveReceipt) {
 
 function terminalEvidence(value: unknown) {
 	if (!isRecord(value)) return {};
+	const comparisonEvidence = comparisonTerminalEvidence(value);
+	if (comparisonEvidence) return comparisonEvidence;
 	const rangeEvidence = previewRangeTerminalEvidence(value);
 	if (rangeEvidence) return rangeEvidence;
 	const outputPath = stringField(value, "outputPath");
@@ -1012,6 +1052,71 @@ function terminalEvidence(value: unknown) {
 						},
 					]
 				: undefined,
+	};
+}
+
+function comparisonTerminalEvidence(value: Record<string, unknown>) {
+	if (
+		value.schemaVersion !== "opencut.comparison-receipt.v1" ||
+		typeof value.receiptId !== "string" ||
+		!Array.isArray(value.frames)
+	) {
+		return null;
+	}
+	const artifacts = value.frames.flatMap((candidate) => {
+		if (!isRecord(candidate)) return [];
+		return [candidate.diff, candidate.comparison].flatMap((artifact) => {
+			if (!isRecord(artifact)) return [];
+			const sha256 = stringField(artifact, "pngSha256");
+			const path = stringField(artifact, "path");
+			if (!sha256 || !/^[a-f0-9]{64}$/.test(sha256) || !path) return [];
+			return [
+				{
+					artifactId: sha256,
+					kind: "receipt" as const,
+					state: "verified" as const,
+					sha256,
+					bytes: typeof artifact.bytes === "number" ? artifact.bytes : null,
+					path,
+					mimeType: "image/png",
+				},
+			];
+		});
+	});
+	const operationHistory = isRecord(value.operationHistory)
+		? value.operationHistory
+		: null;
+	return {
+		artifacts,
+		checkpoints: [
+			{
+				checkpointId: value.receiptId,
+				kind: "job" as const,
+				state: "verified" as const,
+				recordedAt: new Date().toISOString(),
+				metadata: {
+					frameCount: value.frames.length,
+					scheduleSha256: stringField(value, "scheduleSha256"),
+					checksum: stringField(value, "checksum"),
+					beforeSaveOperationId:
+						operationHistory &&
+						stringField(operationHistory, "beforeSaveOperationId"),
+					afterSaveOperationId:
+						operationHistory &&
+						stringField(operationHistory, "afterSaveOperationId"),
+				},
+			},
+		],
+		affectedObjects: [
+			{
+				objectType: "file" as const,
+				objectId: value.receiptId,
+				action:
+					value.status === "cancelled"
+						? ("cancelled" as const)
+						: ("processed" as const),
+			},
+		],
 	};
 }
 
@@ -1287,7 +1392,20 @@ const MUTATOR_RESULT_CONTRACTS = {
 		["rendered", "replayed", "cancelled"],
 		rejected,
 	),
+	opencut_compare_project_states: contract(
+		["rendered", "replayed", "cancelled"],
+		rejected,
+	),
 	opencut_cancel_preview_range: contract(
+		[
+			"cancellation-requested",
+			"cancelled",
+			"already-succeeded",
+			"already-failed",
+		],
+		rejectedOrMissing,
+	),
+	opencut_cancel_comparison: contract(
 		[
 			"cancellation-requested",
 			"cancelled",

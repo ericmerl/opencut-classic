@@ -141,6 +141,7 @@ export class RangePreviewEvidenceStore {
 		directory: string,
 		private port: number,
 		private limits: PreviewRangeLimits,
+		private basePath = "preview-range",
 	) {
 		this.directory = resolve(directory);
 		this.recordsDirectory = join(this.directory, "records");
@@ -158,6 +159,7 @@ export class RangePreviewEvidenceStore {
 
 	async createSession(input: {
 		operationId: string;
+		operationLedgerId?: string;
 		inputFingerprint: string;
 		semanticInputHash: string;
 		projectId: string;
@@ -251,7 +253,7 @@ export class RangePreviewEvidenceStore {
 				frames: [],
 				audio: null,
 				evidence: null,
-				operationLedgerId: input.operationId,
+				operationLedgerId: input.operationLedgerId ?? input.operationId,
 				checksum: null,
 			};
 			if (!prior) await this.write(candidate);
@@ -264,7 +266,7 @@ export class RangePreviewEvidenceStore {
 			expiresAt: Date.now() + 30 * 60_000,
 		});
 		return {
-			baseUrl: `http://127.0.0.1:${this.port}/preview-range/${token}`,
+			baseUrl: `http://127.0.0.1:${this.port}/${this.basePath}/${token}`,
 			record,
 		};
 	}

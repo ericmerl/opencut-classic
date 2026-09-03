@@ -1,0 +1,21 @@
+[package]
+name = "comparison"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+path = "src/comparison.rs"
+
+[dependencies]
+bridge = { version = "0.1.0", path = "../bridge" }
+serde = { version = "1.0.228", features = ["derive"] }
+tsify-next = { version = "0.5", optional = true }
+wasm-bindgen = { version = "0.2.116", optional = true }
+time = { version = "0.1.0", path = "../time" }
+
+[dev-dependencies]
+serde_json = "1.0.145"
+
+[features]
+wasm = ["dep:wasm-bindgen", "dep:tsify-next", "tsify-next/js", "time/wasm"]

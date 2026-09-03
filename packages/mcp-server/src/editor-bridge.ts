@@ -5,6 +5,8 @@ import { MediaTickets } from "./media-tickets";
 import { SourceTickets } from "./source-tickets";
 import { PreviewEvidenceStore } from "./preview-evidence-store";
 import { RangePreviewEvidenceStore } from "./range-preview-evidence-store";
+import { ComparisonEvidenceStore } from "./comparison-evidence-store";
+import { nativeComparison } from "./native-comparison";
 import { readPreviewRangeLimits } from "./range-preview-config";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,6 +69,7 @@ export class EditorBridge {
 	readonly sourceTickets: SourceTickets;
 	readonly previewEvidence: PreviewEvidenceStore;
 	readonly rangePreviewEvidence: RangePreviewEvidenceStore;
+	readonly comparisonEvidence: ComparisonEvidenceStore;
 
 	constructor(
 		private options: {
@@ -76,6 +79,7 @@ export class EditorBridge {
 			serverInstanceId?: string;
 			previewEvidence?: PreviewEvidenceStore;
 			rangePreviewEvidence?: RangePreviewEvidenceStore;
+			comparisonEvidence?: ComparisonEvidenceStore;
 		},
 	) {
 		this.serverInstanceId = options.serverInstanceId ?? randomUUID();
@@ -94,6 +98,14 @@ export class EditorBridge {
 				join(tmpdir(), `opencut-preview-ranges-${this.serverInstanceId}`),
 				options.port,
 				readPreviewRangeLimits(),
+			);
+		this.comparisonEvidence =
+			options.comparisonEvidence ??
+			new ComparisonEvidenceStore(
+				join(tmpdir(), `opencut-comparisons-${this.serverInstanceId}`),
+				options.port,
+				readPreviewRangeLimits(),
+				nativeComparison,
 			);
 		this.server = Bun.serve<SocketData>({
 			hostname: "127.0.0.1",
@@ -300,6 +312,9 @@ export class EditorBridge {
 		}
 		if (url.pathname.startsWith("/preview-range/")) {
 			return this.handlePreviewRangeRequest(request, url, origin);
+		}
+		if (url.pathname.startsWith("/comparison-capture/")) {
+			return this.handleComparisonCaptureRequest(request, url, origin);
 		}
 		if (url.pathname.startsWith("/bootstrap/")) {
 			return this.handleBootstrapRequest(request, url, origin);
@@ -514,6 +529,60 @@ export class EditorBridge {
 		} catch (error) {
 			return new Response(
 				error instanceof Error ? error.message : "Preview-range upload failed",
+				{ status: 409, headers },
+			);
+		}
+	}
+
+	private async handleComparisonCaptureRequest(
+		request: Request,
+		url: URL,
+		origin: string | null,
+	): Promise<Response> {
+		const remainder = url.pathname.slice("/comparison-capture/".length);
+		const slash = remainder.indexOf("/");
+		const token = slash < 0 ? remainder : remainder.slice(0, slash);
+		const part = slash < 0 ? "" : remainder.slice(slash + 1);
+		const headers = transferCorsHeaders(origin);
+		if (request.method === "OPTIONS") {
+			return this.comparisonEvidence.hasCaptureTicket(token)
+				? new Response(null, { status: 204, headers })
+				: new Response("Expired or invalid comparison-capture ticket", {
+						status: 404,
+						headers,
+					});
+		}
+		if (request.method === "GET" && part === "status") {
+			try {
+				return Response.json(
+					await this.comparisonEvidence.statusCapture(token),
+					{ headers },
+				);
+			} catch (error) {
+				return new Response(
+					error instanceof Error
+						? error.message
+						: "Comparison-capture status failed",
+					{ status: 404, headers },
+				);
+			}
+		}
+		if (request.method !== "PUT") {
+			return new Response("Method not allowed", {
+				status: 405,
+				headers: { ...headers, Allow: "GET, PUT, OPTIONS" },
+			});
+		}
+		try {
+			return Response.json(
+				await this.comparisonEvidence.receiveCapture(token, part, request),
+				{ headers },
+			);
+		} catch (error) {
+			return new Response(
+				error instanceof Error
+					? error.message
+					: "Comparison-capture upload failed",
 				{ status: 409, headers },
 			);
 		}
