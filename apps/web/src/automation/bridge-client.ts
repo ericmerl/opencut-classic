@@ -22,8 +22,16 @@ import type {
 	AutomationTranscriptionRequest,
 } from "./types";
 import type { AutomationTimelineQueryRequest } from "./timeline-query";
+import { readRuntimeCapabilities } from "./runtime-capabilities";
 
 type BridgeRequest =
+	| {
+			kind: "request";
+			id: string;
+			method: "read_runtime_capabilities";
+			params: object;
+			target?: AutomationConnectionIdentity;
+	  }
 	| {
 			kind: "request";
 			id: string;
@@ -465,6 +473,8 @@ export class AutomationBridgeClient {
 
 	private dispatch(message: BridgeRequest): unknown | Promise<unknown> {
 		switch (message.method) {
+			case "read_runtime_capabilities":
+				return readRuntimeCapabilities();
 			case "read_project":
 				return this.automation.readProject(message.params);
 			case "query_timeline":

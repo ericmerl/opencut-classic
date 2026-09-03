@@ -36,6 +36,7 @@ export class ExportJobQueue {
 		private options: {
 			autoRun?: boolean;
 			ensureEditor?: (projectId: string) => Promise<unknown>;
+			capabilitySnapshotHash?: () => Promise<string>;
 		} = {},
 	) {
 		this.unsubscribe = bridge.onConnectionChange((connected) => {
@@ -86,17 +87,23 @@ export class ExportJobQueue {
 			}
 			return { job: existing, replayed: true };
 		}
+		const capabilitySnapshotHash =
+			input.capabilitySnapshotHash ??
+			(await this.options.capabilitySnapshotHash?.());
+		const inputWithCapabilities = capabilitySnapshotHash
+			? { ...input, capabilitySnapshotHash }
+			: input;
 		const persistedInput =
 			input.bridgeProtocolVersion === 2
 				? {
-						...input,
+						...inputWithCapabilities,
 						queuedProjectPersistence: await captureQueuedProjectPersistence(
 							this.bridge,
-							input,
+							inputWithCapabilities,
 							jobId,
 						),
 					}
-				: input;
+				: inputWithCapabilities;
 		const timestamp = new Date().toISOString();
 		const created = await this.store.create({
 			schemaVersion: 1,
@@ -474,6 +481,7 @@ function exportJobFingerprint(input: ExportProjectInput): string {
 		expectedConnectionIdentity,
 		requestConnectionIdentity,
 		queuedProjectPersistence: _queuedProjectPersistence,
+		capabilitySnapshotHash: _capabilitySnapshotHash,
 		...semanticInput
 	} = input;
 	const durableIdentity =
@@ -489,6 +497,7 @@ function exportJobFingerprint(input: ExportProjectInput): string {
 function legacyExportJobFingerprint(input: ExportProjectInput): string {
 	const {
 		queuedProjectPersistence: _queuedProjectPersistence,
+		capabilitySnapshotHash: _capabilitySnapshotHash,
 		...legacyInput
 	} = input;
 	return stableSerialize(legacyInput);

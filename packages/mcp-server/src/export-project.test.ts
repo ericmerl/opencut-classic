@@ -100,19 +100,26 @@ describe("ExportProjectService", () => {
 			bridge,
 			receipts,
 			validator,
+			async () => "c".repeat(64),
 		).export(input(directory));
 		const replay = await new ExportProjectService(
 			bridge,
 			new ExportReceiptStore(join(directory, "receipts")),
 			validator,
+			async () => "d".repeat(64),
 		).export(input(directory));
 
 		expect(first).toMatchObject({
 			status: "exported",
+			capabilitySnapshotHash: "c".repeat(64),
 			validation: { status: "validated", fullDecode: true },
 			inspection: { status: "pending", outputSha256: "a".repeat(64) },
 		});
-		expect(replay).toMatchObject({ status: "replayed", replayed: true });
+		expect(replay).toMatchObject({
+			status: "replayed",
+			replayed: true,
+			capabilitySnapshotHash: "c".repeat(64),
+		});
 		expect(requestCount).toBe(3);
 		expect(verifyCount).toBe(2);
 		expect(exportRequest).toMatchObject({

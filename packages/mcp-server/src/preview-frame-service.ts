@@ -36,6 +36,7 @@ export class PreviewFrameService {
 	constructor(
 		private bridge: EditorBridge,
 		private store: PreviewEvidenceStore,
+		private capabilitySnapshotHash?: () => Promise<string>,
 	) {}
 
 	async render(
@@ -44,6 +45,7 @@ export class PreviewFrameService {
 	): Promise<Record<string, unknown>> {
 		const prior = await this.store.getByOperation(input.operationId);
 		if (prior) return response(prior, "replayed");
+		const capabilitySnapshotHash = await this.capabilitySnapshotHash?.();
 		const ticket = this.store.createTicket(
 			input.operationId,
 			input.canvasSize.width,
@@ -57,7 +59,7 @@ export class PreviewFrameService {
 			"exact-frame-render",
 			5 * 60_000,
 		);
-		return this.finalize(input, browserResult);
+		return this.finalize(input, browserResult, capabilitySnapshotHash);
 	}
 
 	async recover(
@@ -67,7 +69,9 @@ export class PreviewFrameService {
 		const prior = await this.store.getByOperation(input.operationId);
 		if (prior) return response(prior, "replayed");
 		const recovered = await context.recoverBrowserStep("exact-frame-render");
-		return recovered ? this.finalize(input, recovered) : null;
+		return recovered
+			? this.finalize(input, recovered, await this.capabilitySnapshotHash?.())
+			: null;
 	}
 
 	async get(receiptId: string) {
@@ -93,6 +97,7 @@ export class PreviewFrameService {
 	private async finalize(
 		input: RenderPreviewFrameInput,
 		value: unknown,
+		capabilitySnapshotHash?: string,
 	): Promise<Record<string, unknown>> {
 		if (!isRecord(value))
 			throw new Error("editor returned an invalid exact-frame result");
@@ -124,16 +129,18 @@ export class PreviewFrameService {
 				format: input.format,
 			}),
 		);
-		const capabilityHash = sha256(
-			stableSerialize({
-				contractVersion: 2,
-				timebase: 120_000,
-				format: "png",
-				maxWidth: 4096,
-				maxHeight: 4096,
-				maxPixels: 16_777_216,
-			}),
-		);
+		const capabilityHash =
+			capabilitySnapshotHash ??
+			sha256(
+				stableSerialize({
+					contractVersion: 2,
+					timebase: 120_000,
+					format: "png",
+					maxWidth: 4096,
+					maxHeight: 4096,
+					maxPixels: 16_777_216,
+				}),
+			);
 		const receiptId = `preview:${input.operationId}`;
 		const receipt: PreviewFrameReceipt = {
 			schemaVersion: 2,

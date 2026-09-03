@@ -53,7 +53,9 @@ describe("preview frame response-loss recovery", () => {
 				throw new Error("simulated socket response loss");
 			},
 		};
-		const service = new PreviewFrameService(bridge as never, store);
+		const service = new PreviewFrameService(bridge as never, store, async () =>
+			"c".repeat(64),
+		);
 		const input = previewInput();
 		await expect(service.render(input, context(null))).rejects.toThrow(
 			"response loss",
@@ -80,6 +82,7 @@ describe("preview frame response-loss recovery", () => {
 		expect(recovered).toMatchObject({
 			status: "rendered",
 			operationId: input.operationId,
+			renderer: { capabilityHash: "c".repeat(64) },
 		});
 		store.close();
 

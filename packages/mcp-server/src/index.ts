@@ -4,6 +4,7 @@ import * as z from "zod/v4";
 import { join } from "node:path";
 import { EditorBridge, type BridgeConnectionIdentity } from "./editor-bridge";
 import { AudioCleanupService } from "./clean-audio";
+import { CapabilitySnapshotService } from "./capability-snapshot";
 import { ExportBatchQueue } from "./export-batches";
 import { ExportJobQueue } from "./export-jobs";
 import { ExportProjectService } from "./export-project";
@@ -102,6 +103,16 @@ const token =
 if (!token || token.length < 32) {
 	throw new Error("OPENCUT_BRIDGE_TOKEN must contain at least 32 characters");
 }
+const serverPackageMetadata: unknown = await Bun.file(
+	join(import.meta.dir, "../package.json"),
+).json();
+if (
+	!isRecord(serverPackageMetadata) ||
+	typeof serverPackageMetadata.version !== "string"
+) {
+	throw new Error("MCP server package version is unavailable");
+}
+const serverVersion = serverPackageMetadata.version;
 const port = parsePort(
 	process.env.OPENCUT_BRIDGE_PORT ??
 		process.env.NEXT_PUBLIC_OPENCUT_BRIDGE_PORT ??
@@ -115,7 +126,10 @@ const previewEvidence = new PreviewEvidenceStore(
 );
 await previewEvidence.readiness();
 const bridge = new EditorBridge({ token, port, previewEvidence });
-const previewFrames = new PreviewFrameService(bridge, previewEvidence);
+let capabilitySnapshots: CapabilitySnapshotService;
+const previewFrames = new PreviewFrameService(bridge, previewEvidence, () =>
+	capabilitySnapshots.snapshotHash(),
+);
 const normalizeAudio = new NormalizeAudioOperation(bridge);
 const audioCleanup = new AudioCleanupService(
 	bridge,
@@ -127,6 +141,7 @@ const projectExports = new ExportProjectService(
 	bridge,
 	exportReceipts,
 	exportValidator,
+	() => capabilitySnapshots.snapshotHash(),
 );
 const editorWorker = ManagedEditorWorker.fromEnvironment(
 	bridge,
@@ -136,12 +151,36 @@ const exportJobs = new ExportJobQueue(
 	bridge,
 	projectExports,
 	ExportJobQueue.storeForReceiptDirectory(exportReceipts.directory),
-	{ ensureEditor: (projectId) => editorWorker.ensureConnected(projectId) },
+	{
+		ensureEditor: (projectId) => editorWorker.ensureConnected(projectId),
+		capabilitySnapshotHash: () => capabilitySnapshots.snapshotHash(),
+	},
 );
 const exportBatches = new ExportBatchQueue(
 	exportJobs,
 	ExportBatchQueue.storeForReceiptDirectory(exportReceipts.directory),
 );
+capabilitySnapshots = new CapabilitySnapshotService({
+	bridge,
+	worker: editorWorker,
+	stateDirectory: exportReceipts.directory,
+	queueState: async () => {
+		const jobs = await exportJobs.list({ limit: Number.MAX_SAFE_INTEGER });
+		const counts = {
+			total: jobs.length,
+			queued: 0,
+			running: 0,
+			completed: 0,
+			failed: 0,
+			cancelled: 0,
+		};
+		for (const job of jobs) counts[job.status] += 1;
+		return {
+			jobs: counts,
+			batches: (await exportBatches.store.list()).length,
+		};
+	},
+});
 const matteGeneration = new MatteGenerationService(
 	bridge,
 	undefined,
@@ -175,11 +214,20 @@ const completedProjectOperations = new Map<
 
 function createServer(): McpServer {
 	const server = new McpServer(
-		{ name: "opencut-classic", version: "0.1.0" },
+		{ name: "opencut-classic", version: serverVersion },
 		{
 			instructions:
-				"Call opencut_connection_status first. List, create, or open a project as needed. Read the active project before editing and pass its exact projectId and revision into every mutation.",
+				"Call opencut_capabilities first. List, create, or open a project as needed. Read the active project before editing and pass its exact projectId and revision into every mutation.",
 		},
+	);
+
+	server.registerTool(
+		"opencut_capabilities",
+		{
+			description:
+				"Return a hashable build, instance, tool, editor, renderer, provider, font, media-tool, queue, and disk readiness snapshot without starting the editor or spending provider credits.",
+		},
+		async () => toolResult(await capabilitySnapshots.capture()),
 	);
 
 	server.registerTool(

@@ -37,7 +37,7 @@ export const connectionIdentitySchema = z.object({
 const connectionAffinitySchema = z.union([
 	z.object({
 		bridgeProtocolVersion: z.literal(1).optional(),
-		expectedConnectionIdentity: z.undefined().optional(),
+		expectedConnectionIdentity: z.never().optional(),
 	}),
 	z.object({
 		bridgeProtocolVersion: z.literal(2),
@@ -332,7 +332,7 @@ const elementRefSchema = z.object({
 	elementId: z.string().min(1),
 });
 
-const editOperationSchema = z.discriminatedUnion("kind", [
+export const editOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("insert_text"),
 		content: z.string().min(1),
@@ -771,6 +771,10 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		elementId: z.string().min(1),
 	}),
 ]);
+
+export const EDIT_PLAN_OPERATION_VARIANTS = editOperationSchema.options
+	.map((option) => option.shape.kind.value)
+	.sort();
 
 export const editPlanInputSchema = z
 	.object({

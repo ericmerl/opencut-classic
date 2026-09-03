@@ -120,7 +120,10 @@ describe("ExportJobQueue", () => {
 			queueBridge,
 			{ export: async () => ({ status: "unexpected" }) },
 			new ExportJobStore(directory),
-			{ autoRun: false },
+			{
+				autoRun: false,
+				capabilitySnapshotHash: async () => "c".repeat(64),
+			},
 		);
 		const queued = await firstQueue.enqueue({
 			jobId: "job-affinity",
@@ -136,6 +139,7 @@ describe("ExportJobQueue", () => {
 			contentHashProjectionVersion: 2,
 			writeVersion: 7,
 		});
+		expect(queued.job.input.capabilitySnapshotHash).toBe("c".repeat(64));
 		firstQueue.stop();
 
 		let openedWith: unknown;
@@ -191,6 +195,7 @@ describe("ExportJobQueue", () => {
 			expectedRevision: 0,
 			expectedConnectionIdentity: reconnectedIdentity,
 			requestConnectionIdentity: queuedIdentity,
+			capabilitySnapshotHash: "c".repeat(64),
 		});
 		queue.stop();
 	});

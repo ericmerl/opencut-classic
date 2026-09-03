@@ -21,6 +21,7 @@ export interface ExportProjectInput {
 	canvasSize?: { width: number; height: number };
 	expectedProjectContentHash?: string;
 	queuedProjectPersistence?: QueuedProjectPersistence;
+	capabilitySnapshotHash?: string;
 }
 
 export interface QueuedProjectPersistence {
@@ -49,14 +50,19 @@ export class ExportProjectService {
 		private bridge: ExportProjectBridge,
 		private receipts: ExportReceiptStore,
 		private validator: ExportValidator,
+		private capabilitySnapshotHash?: () => Promise<string>,
 	) {}
 
 	async export(input: ExportProjectInput): Promise<Record<string, unknown>> {
 		const expectedIdentity = expectedV2Identity(input);
 		const requestIdentity =
 			input.requestConnectionIdentity ?? expectedIdentity ?? null;
+		const {
+			capabilitySnapshotHash: _capabilitySnapshotHash,
+			...fingerprintedInput
+		} = input;
 		const fingerprint = stableSerialize({
-			...input,
+			...fingerprintedInput,
 			expectedConnectionIdentity: requestIdentity,
 			requestConnectionIdentity: undefined,
 		});
@@ -80,6 +86,8 @@ export class ExportProjectService {
 				receiptPath: this.receipts.receiptPath(input.operationId),
 			};
 		}
+		const capabilitySnapshotHash =
+			input.capabilitySnapshotHash ?? (await this.capabilitySnapshotHash?.());
 
 		const snapshot = readProjectSnapshot(
 			await this.bridge.request(
@@ -272,6 +280,7 @@ export class ExportProjectService {
 			receiptPath: this.receipts.receiptPath(input.operationId),
 			exportReceiptId: input.operationId,
 			container: input.format,
+			...(capabilitySnapshotHash ? { capabilitySnapshotHash } : {}),
 			renderer: {
 				provider: "opencut-web-renderer",
 				pipeline: "editor-native-export",
