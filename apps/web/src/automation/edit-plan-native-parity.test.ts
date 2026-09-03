@@ -1643,16 +1643,34 @@ async function options({
 async function evaluateRust(
 	inputs: EvaluateEditPlanOptions[],
 ): Promise<EditPlanEvaluationResponse[]> {
-	const executable = "C:\\Users\\ericm\\.cargo\\bin\\cargo.exe";
-	const process = Bun.spawn(
-		[executable, "run", "-q", "-p", "edit-plan", "--example", "evaluate_json"],
-		{
-			cwd: resolve(import.meta.dir, "../../../.."),
-			stdin: "pipe",
-			stdout: "pipe",
-			stderr: "pipe",
-		},
-	);
+	const executable =
+		globalThis.process.env.OPENCUT_TEST_CARGO_PATH?.trim() || "cargo";
+	let process: Bun.Subprocess<"pipe", "pipe", "pipe">;
+	try {
+		process = Bun.spawn(
+			[
+				executable,
+				"run",
+				"-q",
+				"-p",
+				"edit-plan",
+				"--example",
+				"evaluate_json",
+			],
+			{
+				cwd: resolve(import.meta.dir, "../../../.."),
+				stdin: "pipe",
+				stdout: "pipe",
+				stderr: "pipe",
+			},
+		);
+	} catch (error) {
+		throw new Error(
+			`Could not run cargo as "${executable}". Put cargo on PATH or set OPENCUT_TEST_CARGO_PATH to its full path. (${
+				error instanceof Error ? error.message : String(error)
+			})`,
+		);
+	}
 	process.stdin.write(JSON.stringify(inputs));
 	process.stdin.end();
 	const [exitCode, stdout, stderr] = await Promise.all([
