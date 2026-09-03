@@ -13,6 +13,22 @@ const webPreload = join(
 	"opencut-wasm.setup.ts",
 );
 const mcpRoot = join(repositoryRoot, "packages", "mcp-server", "src");
+const cargo = findExecutable({
+	name: process.platform === "win32" ? "cargo.exe" : "cargo",
+	fallbacks:
+		process.platform === "win32"
+			? [join(homedir(), ".cargo", "bin", "cargo.exe")]
+			: [join(homedir(), ".cargo", "bin", "cargo")],
+});
+if (!cargo) {
+	fail(
+		"Rust tests: cargo was not found on PATH or in the standard rustup home",
+	);
+}
+const webTestEnvironment = {
+	...process.env,
+	OPENCUT_TEST_CARGO_PATH: cargo,
+};
 const realVideoEnvironment = await prepareRealVideoMilestone();
 
 run({
@@ -36,21 +52,10 @@ for (const testPath of webTests) {
 		label: testPath.slice(repositoryRoot.length + 1),
 		command: process.execPath,
 		args: ["test", "--preload", webPreload, testPath],
+		env: webTestEnvironment,
 	});
 }
 
-const cargo = findExecutable({
-	name: process.platform === "win32" ? "cargo.exe" : "cargo",
-	fallbacks:
-		process.platform === "win32"
-			? [join(homedir(), ".cargo", "bin", "cargo.exe")]
-			: [join(homedir(), ".cargo", "bin", "cargo")],
-});
-if (!cargo) {
-	fail(
-		"Rust tests: cargo was not found on PATH or in the standard rustup home",
-	);
-}
 run({
 	label: "Rust workspace tests",
 	command: cargo,
