@@ -51,7 +51,43 @@ integrationTest(
 			dropBrowserResponseOperationId: "public-receipt-recovery-audio",
 		});
 		const initialStatus = await first.callTool("opencut_connection_status", {});
-		expect(initialStatus.connected).toBe(false);
+		expect(initialStatus).toMatchObject({
+			connected: false,
+			protocolCompatibility: {
+				status: "ready",
+				protocolV1Mutation: {
+					enabled: false,
+					scope: "protocol-bearing-mutations",
+				},
+			},
+		});
+		for (const request of [
+			{
+				operationId: "public-v1-mutation-disabled",
+				bridgeProtocolVersion: 1,
+			},
+			{ operationId: "public-omitted-mutation-disabled" },
+		]) {
+			const blockedV1Mutation = await first.callTool(
+				"opencut_run_export_jobs",
+				request,
+			);
+			expect(blockedV1Mutation).toMatchObject({
+				status: "rejected",
+				code: "PROTOCOL_V1_MUTATION_DISABLED",
+				retryable: false,
+				operationId: request.operationId,
+				details: {
+					configurationFlag: "OPENCUT_ENABLE_PROTOCOL_V1_MUTATION",
+					nextAction: expect.stringContaining("bridgeProtocolVersion 2"),
+				},
+			});
+			expect(
+				await first.callTool("opencut_get_operation", {
+					operationId: request.operationId,
+				}),
+			).toMatchObject({ operation: null, versions: [] });
+		}
 		await first.callTool("opencut_start_editor_worker", {});
 		const connected = await first.callTool("opencut_connection_status", {});
 		expect(connected).toMatchObject({ connected: true });
@@ -730,6 +766,7 @@ class McpStdioHarness {
 			stdio: ["pipe", "pipe", "pipe"],
 			env: {
 				...process.env,
+				OPENCUT_ENABLE_PROTOCOL_V1_MUTATION: undefined,
 				OPENCUT_BRIDGE_TOKEN: randomBytes(32).toString("hex"),
 				OPENCUT_BRIDGE_PORT: String(this.options.bridgePort),
 				OPENCUT_HEADLESS_EDITOR_URL: this.options.baseUrl,

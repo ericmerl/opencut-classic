@@ -53,6 +53,7 @@ import {
 	getOperationInputSchema,
 	listOperationHistoryInputSchema,
 } from "./operation-tool-schemas";
+import { readProtocolCompatibility } from "./protocol-compatibility";
 import {
 	attachMatteInputSchema,
 	attachCleanAudioInputSchema,
@@ -163,7 +164,10 @@ const operationLedger = new OperationLedger(
 		join(exportReceipts.directory, "operation-ledger"),
 );
 await operationLedger.readiness();
-const ledgerBoundary = new McpLedgerBoundary(operationLedger, bridge);
+const protocolCompatibility = readProtocolCompatibility();
+const ledgerBoundary = new McpLedgerBoundary(operationLedger, bridge, {
+	allowProtocolV1Mutation: protocolCompatibility.protocolV1Mutation.enabled,
+});
 const completedProjectOperations = new Map<
 	string,
 	{ fingerprint: string; result: Record<string, unknown> }
@@ -185,7 +189,11 @@ function createServer(): McpServer {
 				"Report whether an authenticated OpenCut editor is connected.",
 		},
 		async () =>
-			toolResult({ ...bridge.getStatus(), worker: editorWorker.getStatus() }),
+			toolResult({
+				...bridge.getStatus(),
+				worker: editorWorker.getStatus(),
+				protocolCompatibility,
+			}),
 	);
 
 	server.registerTool(

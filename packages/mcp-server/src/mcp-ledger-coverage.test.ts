@@ -188,6 +188,7 @@ function operationInput(
 ): Record<string, unknown> {
 	if (toolName === "opencut_record_export_inspection") {
 		return {
+			bridgeProtocolVersion: 2,
 			operationId: `export-${operationId}`,
 			inspectionOperationId: operationId,
 		};
@@ -197,6 +198,7 @@ function operationInput(
 		toolName !== "opencut_create_project"
 	) {
 		return {
+			bridgeProtocolVersion: 2,
 			operationId,
 			projectId: "project-1",
 			sceneId: "scene-1",
@@ -204,7 +206,7 @@ function operationInput(
 			expectedProjectContentHash: "b".repeat(64),
 		};
 	}
-	return { operationId };
+	return { bridgeProtocolVersion: 2, operationId };
 }
 
 function verifiedSave(operationId: string) {

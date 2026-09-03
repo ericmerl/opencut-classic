@@ -22,6 +22,7 @@ import {
 	type OperationConnectionAffinity,
 	type OperationSaveReceipt,
 } from "./operation-ledger";
+import { protocolMutationRejection } from "./protocol-compatibility";
 
 type ToolInput = Record<string, unknown>;
 
@@ -46,6 +47,7 @@ export class McpLedgerBoundary {
 		private bridge: EditorBridge,
 		private options: {
 			ownerId?: string;
+			allowProtocolV1Mutation?: boolean;
 			afterEffect?: (details: {
 				toolName: MutatingToolName;
 				operationId: string;
@@ -67,6 +69,13 @@ export class McpLedgerBoundary {
 	): Promise<unknown> {
 		const definition = mutatingToolDefinition(toolName);
 		const operationId = readOperationId(toolName, input);
+		const compatibilityRejection = protocolMutationRejection({
+			input,
+			operationId,
+			allowProtocolV1Mutation: this.options.allowProtocolV1Mutation ?? false,
+			protocolMutationPolicy: definition.protocolMutationPolicy,
+		});
+		if (compatibilityRejection) return compatibilityRejection;
 		const existing = await this.ledger.get(operationId);
 		const suppliedContentHash =
 			stringField(input, "expectedProjectContentHash") ??

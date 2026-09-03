@@ -34,7 +34,10 @@ describe("SubtitleImportOperation durable recovery", () => {
 			};
 			const fixture = bridgeFixture();
 			ledger = new OperationLedger(directory);
-			let operation = new SubtitleImportOperation(fixture.bridge, subtitleFiles);
+			let operation = new SubtitleImportOperation(
+				fixture.bridge,
+				subtitleFiles,
+			);
 			const interrupted = await new McpLedgerBoundary(ledger, fixture.bridge, {
 				ownerId: "subtitle-import-owner",
 			}).execute(
@@ -97,6 +100,7 @@ describe("SubtitleImportOperation durable recovery", () => {
 });
 
 const INPUT: SubtitleImportInput = {
+	bridgeProtocolVersion: 2,
 	path: "C:/captions.srt",
 	projectId: "project-1",
 	operationId: "subtitle-source-restart",

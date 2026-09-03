@@ -203,6 +203,7 @@ describe("MCP ledger handler recovery", () => {
 			join(tmpdir(), "opencut-composite-receipt-"),
 		);
 		const input = {
+			bridgeProtocolVersion: 2,
 			projectId: "project-1",
 			operationId: "subtitle-composite",
 			expectedRevision: 7,
@@ -361,6 +362,7 @@ describe("MCP ledger handler recovery", () => {
 	test("terminalizes a durable export receipt without rerendering", async () => {
 		const bridge = buildBridge();
 		const input = {
+			bridgeProtocolVersion: 2,
 			operationId: "export-recovery-1",
 			projectId: "project-1",
 			expectedRevision: 4,

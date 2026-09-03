@@ -12,6 +12,12 @@ bun run mcp
 
 The bridge defaults to `127.0.0.1:32191`. Override both sides with `OPENCUT_BRIDGE_PORT` and `NEXT_PUBLIC_OPENCUT_BRIDGE_PORT`.
 
+Protocol v1 reads remain available, but mutation is disabled by default because
+it has no connection affinity or retry-stable operation identity. Use explicit
+protocol v2 requests for mutation. For temporary legacy compatibility only, set
+`OPENCUT_ENABLE_PROTOCOL_V1_MUTATION=1`; `opencut_connection_status` will then
+report the compatibility mode as `degraded`.
+
 The repository's complete unattended test command is `bun test` from the
 repository root. It includes the MCP server suite, isolated web suites, and
 `cargo test`. To include the real-video MCP milestone, first start the web editor

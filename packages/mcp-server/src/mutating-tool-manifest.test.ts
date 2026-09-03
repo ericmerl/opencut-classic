@@ -35,4 +35,23 @@ describe("mutating MCP tool manifest", () => {
 		);
 		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(26);
 	});
+
+	test("exempts only pre-affinity worker lifecycle controls from the v2 gate", () => {
+		const bootstrapControls = Object.entries(MUTATING_TOOL_MANIFEST)
+			.filter(
+				([, definition]) =>
+					definition.protocolMutationPolicy === "bootstrap-control",
+			)
+			.map(([toolName]) => toolName)
+			.sort();
+		expect(bootstrapControls).toEqual([
+			"opencut_start_editor_worker",
+			"opencut_stop_editor_worker",
+		]);
+		expect(
+			Object.values(MUTATING_TOOL_MANIFEST).filter(
+				(definition) => definition.protocolMutationPolicy === "v2-required",
+			),
+		).toHaveLength(24);
+	});
 });

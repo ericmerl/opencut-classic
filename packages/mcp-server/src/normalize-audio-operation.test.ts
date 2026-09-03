@@ -29,15 +29,15 @@ describe("NormalizeAudioOperation durable recovery", () => {
 			const reference = await new McpLedgerBoundary(
 				referenceLedger,
 				referenceBridge.bridge,
-				{ ownerId: "normalize-reference-owner" },
-			).execute(
-				"opencut_normalize_audio",
-				INPUT,
-				(context) =>
-					new NormalizeAudioOperation(referenceBridge.bridge).execute(
-						INPUT,
-						context,
-					),
+				{
+					ownerId: "normalize-reference-owner",
+					allowProtocolV1Mutation: true,
+				},
+			).execute("opencut_normalize_audio", INPUT, (context) =>
+				new NormalizeAudioOperation(referenceBridge.bridge).execute(
+					INPUT,
+					context,
+				),
 			);
 			const referenceResult = operationResult(reference);
 			expect(referenceResult).toMatchObject({
@@ -56,7 +56,10 @@ describe("NormalizeAudioOperation durable recovery", () => {
 			const interrupted = await new McpLedgerBoundary(
 				recoveryLedger,
 				interruptedBridge.bridge,
-				{ ownerId: "normalize-recovery-owner" },
+				{
+					ownerId: "normalize-recovery-owner",
+					allowProtocolV1Mutation: true,
+				},
 			).execute(
 				"opencut_normalize_audio",
 				INPUT,
@@ -76,7 +79,10 @@ describe("NormalizeAudioOperation durable recovery", () => {
 			const recovered = await new McpLedgerBoundary(
 				recoveryLedger,
 				interruptedBridge.bridge,
-				{ ownerId: "normalize-recovery-owner" },
+				{
+					ownerId: "normalize-recovery-owner",
+					allowProtocolV1Mutation: true,
+				},
 			).execute(
 				"opencut_normalize_audio",
 				INPUT,
@@ -160,7 +166,9 @@ function normalizationBridge(interruptAfterApply: boolean) {
 					afterAnalysis += 1;
 					return analyzed(8, AFTER_HASH, -16, -1.5, "after-warning");
 				}
-				throw new Error(`unexpected analysis revision ${params.expectedRevision}`);
+				throw new Error(
+					`unexpected analysis revision ${params.expectedRevision}`,
+				);
 			}
 			if (method === "apply_edit_plan") {
 				apply += 1;
@@ -172,7 +180,9 @@ function normalizationBridge(interruptAfterApply: boolean) {
 			}
 			if (method === "get_operation_receipt") {
 				receiptLookup += 1;
-				if (JSON.stringify(params.binding) !== JSON.stringify(capturedBinding)) {
+				if (
+					JSON.stringify(params.binding) !== JSON.stringify(capturedBinding)
+				) {
 					return { status: "not-found", operationId: INPUT.operationId };
 				}
 				return {
@@ -277,7 +287,9 @@ function operationResult(value: unknown): unknown {
 	}
 	const operationRecord = (value as Record<string, unknown>).operationRecord;
 	if (!operationRecord || typeof operationRecord !== "object") {
-		throw new Error(`ledger result lacks operationRecord: ${JSON.stringify(value)}`);
+		throw new Error(
+			`ledger result lacks operationRecord: ${JSON.stringify(value)}`,
+		);
 	}
 	return (operationRecord as Record<string, unknown>).result;
 }
