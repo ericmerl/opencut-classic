@@ -27,6 +27,15 @@ const KEYS = [
 export type Key = (typeof KEYS)[number];
 
 const KEY_SET: ReadonlySet<string> = new Set(KEYS);
+const MODIFIER_KEY_SET: ReadonlySet<string> = new Set<ModifierKeys>([
+	"ctrl",
+	"alt",
+	"shift",
+	"ctrl+shift",
+	"alt+shift",
+	"ctrl+alt",
+	"ctrl+alt+shift",
+]);
 
 export function isKey(value: string): value is Key {
 	return KEY_SET.has(value);
@@ -37,6 +46,16 @@ export type ModifierBasedShortcutKey = `${ModifierKeys}+${Key}`;
 export type SingleCharacterShortcutKey = `${Key}`;
 
 export type ShortcutKey = ModifierBasedShortcutKey | SingleCharacterShortcutKey;
+
+export function isShortcutKey(value: string): value is ShortcutKey {
+	if (isKey(value)) return true;
+	const separator = value.lastIndexOf("+");
+	if (separator < 0) return false;
+	return (
+		MODIFIER_KEY_SET.has(value.slice(0, separator)) &&
+		isKey(value.slice(separator + 1))
+	);
+}
 
 export type KeybindingConfig = {
 	[key in ShortcutKey]?: TActionWithOptionalArgs;

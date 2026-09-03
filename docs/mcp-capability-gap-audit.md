@@ -68,7 +68,7 @@ An adversarial review of `docs/mcp-production-parity-spec.md` on 2026-09-02 (rev
 | Local timeline transcription: Fully supported | Partially supported. Model downloaded at run time, cache undeclared, no provenance in results, in-memory idempotency. | Row D |
 | Non-export provider completion maps are in memory | Provider results are durable in a second SQLite job model with no cancel, retry, progress, heartbeat, rerun after `unknown`, or MCP query tool. | Row K |
 | Browser-independent rendering: production-critical | Optional future enhancement. The hidden managed browser is the accepted production renderer. | Row K |
-| Test evidence "validated" | Evidence passes per file. The combined web run has 13 order-dependent failures from process-global module mocks, the real-Chrome milestone is opt-in and needs a manually started dev server, the Rust/JavaScript parity test hardcodes one developer's cargo path (`apps/web/src/automation/edit-plan-native-parity.test.ts:1154`), and `.github/workflows/bun-ci.yml` runs no tests. | Current-state summary, P0 item 7 |
+| Test evidence "validated" | Validated on 2026-09-03 with the repository-root `bun test` command: 206 MCP tests passed; all 73 web test files passed in isolated processes; the complete Rust workspace passed; and the configured real-video MCP stdio milestone passed 59 assertions through Chrome, save/restart replay, export, full decode, and frame verification. The runner resolves Cargo from `PATH` or the standard rustup home, preflights Chrome, ffmpeg/ffprobe, and editor reachability, and CI invokes the same command. | Current-state summary, P0 item 7 |
 
 ### Owner decisions (2026-09-02)
 
@@ -307,7 +307,7 @@ Every item in P0 and P1 is required for production parity. P2 items are not. Pri
 4. Content-addressed canonical snapshot retention (90 days) so comparisons and packages can load historical states.
 5. Exact-time frame (done), range preview, and before/after comparison with hash-locked artifacts.
 6. One durable job model for export, preview ranges, transcription, providers, QC, and packaging, with running cancellation, explicit retry, progress, and a resolution path for uncertain outcomes. Concurrency inside one instance is a queue; parallelism is additional instances.
-7. Test discipline: one unattended command runs every cited acceptance test on this PC with no order-dependent failures and no machine-specific paths; the real-video milestone runs in that command.
+7. Test discipline (done 2026-09-03): one unattended `bun test` command runs the MCP, isolated web, Rust, and configured real-video suites with no order-dependent failures or machine-specific test paths; CI invokes the same command.
 
 ### P1: Production editing required for parity
 
