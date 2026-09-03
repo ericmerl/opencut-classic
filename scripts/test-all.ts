@@ -107,11 +107,85 @@ console.log("\nAll configured test suites passed.");
  * sequential run.
  */
 async function runWebTests(testPaths: string[]): Promise<void> {
-	const workers = Math.max(1, Math.min(webWorkerLimit(), testPaths.length));
-	console.log(
-		`\n==> Web tests (${testPaths.length} isolated processes, ${workers} at a time)`,
-	);
+	const isolated: string[] = [];
+	const shareable: string[] = [];
+	for (const path of testPaths) {
+		(needsOwnProcess(path) ? isolated : shareable).push(path);
+	}
 
+	const workers = Math.max(1, Math.min(webWorkerLimit(), isolated.length));
+	console.log(
+		`\n==> Web tests (${shareable.length} sharing one process, ${isolated.length} isolated, ${workers} at a time)`,
+	);
+	await Promise.all([
+		runIsolatedWebTests(isolated, workers),
+		runSharedWebTests(shareable),
+	]);
+}
+
+/**
+ * Suites that neither replace a module nor write to a global cannot disturb one
+ * another, so they run together in a single process and pay for one startup
+ * between them. Membership is derived from the file, never from a list someone
+ * has to remember to update: a suite that later starts mocking moves itself
+ * back into its own process.
+ */
+function needsOwnProcess(path: string): boolean {
+	const source = readFileSync(path, "utf8");
+	return (
+		source.includes("mock.module(") ||
+		source.includes("Object.assign(globalThis") ||
+		source.includes("spyOn(") ||
+		/globalThis\.[A-Za-z_$][\w$]*\s*=/.test(source)
+	);
+}
+
+async function runSharedWebTests(testPaths: string[]): Promise<void> {
+	if (testPaths.length === 0) return;
+	// Shuffled so that no suite can come to depend on the order of its
+	// neighbours; the seed is printed so a failing order can be replayed.
+	const seed = webShuffleSeed();
+	const shuffled = shuffle(testPaths, seed);
+	const label = `Web tests (shared process, seed ${seed})`;
+	const { exitCode, stdout, stderr } = await start({
+		label,
+		command: process.execPath,
+		args: ["test", "--preload", webPreload, ...shuffled],
+		env: webTestEnvironment,
+	}).finished;
+	console.log(`\n==> ${label}`);
+	process.stdout.write(stdout);
+	process.stderr.write(stderr);
+	if (exitCode !== 0) {
+		fail(
+			`Web tests: the shared process exited with status ${exitCode}. Reproduce this order with OPENCUT_TEST_SHUFFLE_SEED=${seed}`,
+		);
+	}
+}
+
+function webShuffleSeed(): number {
+	const configured = Number(process.env.OPENCUT_TEST_SHUFFLE_SEED?.trim());
+	if (Number.isInteger(configured)) return configured;
+	return Math.floor(Math.random() * 2 ** 31);
+}
+
+function shuffle(values: string[], seed: number): string[] {
+	// A tiny deterministic generator keeps the seed meaningful across processes.
+	let state = (seed || 1) >>> 0;
+	const shuffled = values.slice();
+	for (let index = shuffled.length - 1; index > 0; index--) {
+		state = (state * 1_664_525 + 1_013_904_223) >>> 0;
+		const swap = state % (index + 1);
+		[shuffled[index], shuffled[swap]] = [shuffled[swap], shuffled[index]];
+	}
+	return shuffled;
+}
+
+async function runIsolatedWebTests(
+	testPaths: string[],
+	workers: number,
+): Promise<void> {
+	if (testPaths.length === 0) return;
 	const queue = testPaths.slice();
 	const failures: string[] = [];
 	async function consume(): Promise<void> {
