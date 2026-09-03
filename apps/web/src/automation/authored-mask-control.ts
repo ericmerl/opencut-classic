@@ -10,6 +10,7 @@ import type { FreeformPathPoint } from "@/masks/freeform/path";
 import type { MaskableElement, TimelineElement } from "@/timeline";
 import { isMaskableElement } from "@/timeline/element-utils";
 import { coerceParamValue } from "@/params";
+import { snapToStep } from "@/utils/math";
 import type {
 	AutomationEditOperation,
 	AutomationMaskParamValue,
@@ -19,6 +20,57 @@ type MaskOperation = Extract<
 	AutomationEditOperation,
 	{ kind: "set_mask" | "remove_mask" }
 >;
+
+const TEXT_MASK_STRING_ENUMS = {
+	fontWeight: ["normal", "bold"],
+	fontStyle: ["normal", "italic"],
+	textDecoration: ["none", "underline", "line-through"],
+} as const;
+
+function textMaskEnumValues(key: string): readonly string[] | undefined {
+	switch (key) {
+		case "fontWeight":
+			return TEXT_MASK_STRING_ENUMS.fontWeight;
+		case "fontStyle":
+			return TEXT_MASK_STRING_ENUMS.fontStyle;
+		case "textDecoration":
+			return TEXT_MASK_STRING_ENUMS.textDecoration;
+		default:
+			return undefined;
+	}
+}
+
+function buildTextMaskParam({
+	key,
+	value,
+}: {
+	key: string;
+	value: AutomationMaskParamValue;
+}): string | number | undefined {
+	if (key === "content" || key === "fontFamily") {
+		if (typeof value !== "string") {
+			throw new Error(`invalid value for mask parameter ${key}`);
+		}
+		return value;
+	}
+	if (key === "letterSpacing" || key === "lineHeight") {
+		if (typeof value !== "number" || !Number.isFinite(value)) {
+			throw new Error(`invalid value for mask parameter ${key}`);
+		}
+		return Math.max(
+			key === "letterSpacing" ? -100 : 0.1,
+			snapToStep({ value, step: 0.1 }),
+		);
+	}
+	const accepted = textMaskEnumValues(key);
+	if (accepted) {
+		if (typeof value !== "string" || !accepted.includes(value)) {
+			throw new Error(`invalid value for mask parameter ${key}`);
+		}
+		return value;
+	}
+	return undefined;
+}
 
 function validatePath(value: AutomationMaskParamValue): FreeformPathPoint[] {
 	if (!Array.isArray(value)) throw new Error("mask path must be an array");
@@ -89,6 +141,13 @@ function buildMask({
 			}
 			params.closed = requestedValue;
 			continue;
+		}
+		if (operation.maskType === "text") {
+			const textValue = buildTextMaskParam({ key, value: requestedValue });
+			if (textValue !== undefined) {
+				params[key] = textValue;
+				continue;
+			}
 		}
 		const param = definition.params.find((candidate) => candidate.key === key);
 		if (!param)

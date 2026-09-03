@@ -5,12 +5,17 @@ import type { MediaAsset } from "@/media/types";
 import type {
 	ClipAudioReplacementAttachment,
 	SceneTracks,
+	TScene,
 	TimelineElement,
 } from "@/timeline";
 import type {
 	AutomationAudioReplacementSnapshot,
 	AutomationEditOperation,
 } from "./types";
+import {
+	countProjectAssetReferences,
+	countSceneAssetReferences,
+} from "./project-media-references";
 
 type AudioCapableElement = Extract<
 	TimelineElement,
@@ -20,6 +25,7 @@ type AudioCapableElement = Extract<
 export function buildAudioReplacementControlCommand({
 	operation,
 	projectId,
+	projectScenes,
 	tracks,
 }: {
 	operation: Extract<
@@ -27,6 +33,7 @@ export function buildAudioReplacementControlCommand({
 		{ kind: "set_audio_replacement_state" | "remove_audio_replacement" }
 	>;
 	projectId: string;
+	projectScenes?: readonly TScene[];
 	tracks: SceneTracks;
 }): Command {
 	const element = findAudioCapableElement({
@@ -47,6 +54,7 @@ export function buildAudioReplacementControlCommand({
 			},
 		});
 	}
+	const replacementAssetId = element.audioReplacement.assetId;
 
 	const commands: Command[] = [
 		updateAudioReplacement({
@@ -55,16 +63,21 @@ export function buildAudioReplacementControlCommand({
 			audioReplacement: undefined,
 		}),
 	];
-	if (
-		countAudioReplacementReferences({
-			tracks,
-			assetId: element.audioReplacement.assetId,
-		}) === 1
-	) {
+	const referenceCount = projectScenes
+		? countProjectAssetReferences({
+				projectScenes,
+				assetId: replacementAssetId,
+			})
+		: countSceneAssetReferences({
+				tracks,
+				assetId: replacementAssetId,
+			});
+	if (referenceCount === 1) {
 		commands.push(
 			new RemoveMediaAssetCommand({
 				projectId,
-				assetId: element.audioReplacement.assetId,
+				assetId: replacementAssetId,
+				deferPersistence: true,
 			}),
 		);
 	}
@@ -159,6 +172,21 @@ export function countAudioReplacementReferences({
 			(element.type === "audio" || element.type === "video") &&
 			element.audioReplacement?.assetId === assetId,
 	).length;
+}
+
+export function countProjectAudioReplacementReferences({
+	projectScenes,
+	assetId,
+}: {
+	projectScenes: readonly TScene[];
+	assetId: string;
+}): number {
+	return projectScenes.reduce(
+		(count, scene) =>
+			count +
+			countAudioReplacementReferences({ tracks: scene.tracks, assetId }),
+		0,
+	);
 }
 
 export function findAudioCapableElement({

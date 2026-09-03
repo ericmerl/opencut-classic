@@ -4,6 +4,17 @@ import { describe, expect, mock, test } from "bun:test";
 import type { CommandResult } from "@/commands/base-command";
 import type { SceneTracks, VideoElement } from "@/timeline";
 
+mock.module("opencut-wasm", () => ({
+	TICKS_PER_SECOND: () => 120000,
+	lastFrameTime: () => 0,
+	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) =>
+		Math.round(seconds * 120000),
+	mediaTimeToSeconds: ({ time }: { time: number }) => time / 120000,
+	parseTimecode: () => 0,
+	roundToFrame: ({ time }: { time: number }) => time,
+	snappedSeekTime: ({ time }: { time: number }) => time,
+}));
+
 let activeTracks: SceneTracks;
 let rippleEnabled = false;
 

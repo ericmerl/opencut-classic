@@ -16,6 +16,8 @@ import {
 	subMediaTime,
 } from "@/wasm";
 import { cloneCompoundTracks } from "./duplicate-elements";
+import type { ObjectIdAllocation } from "opencut-wasm";
+import { ResolvedObjectIds } from "@/automation/resolved-object-ids";
 
 export class SplitElementsCommand extends Command {
 	private savedState: SceneTracks | null = null;
@@ -23,20 +25,36 @@ export class SplitElementsCommand extends Command {
 	private readonly elements: { trackId: string; elementId: string }[];
 	private readonly splitTime: MediaTime;
 	private readonly retainSide: "both" | "left" | "right";
+	private readonly rightElementIds: Map<string, string>;
+	private readonly resolvedIds: ResolvedObjectIds;
 
 	constructor({
 		elements,
 		splitTime,
 		retainSide = "both",
+		rightElementIds,
+		resolvedAllocations,
 	}: {
 		elements: { trackId: string; elementId: string }[];
 		splitTime: MediaTime;
 		retainSide?: "both" | "left" | "right";
+		rightElementIds?: string[];
+		resolvedAllocations?: ObjectIdAllocation[];
 	}) {
 		super();
 		this.elements = elements;
 		this.splitTime = splitTime;
 		this.retainSide = retainSide;
+		if (rightElementIds && rightElementIds.length !== elements.length) {
+			throw new Error("right-side IDs must match split elements");
+		}
+		this.rightElementIds = new Map(
+			elements.map((element, index) => [
+				`${element.trackId}\0${element.elementId}`,
+				rightElementIds?.[index] ?? generateUUID(),
+			]),
+		);
+		this.resolvedIds = new ResolvedObjectIds(resolvedAllocations);
 	}
 
 	getRightSideElements(): { trackId: string; elementId: string }[] {
@@ -61,6 +79,7 @@ export class SplitElementsCommand extends Command {
 				return track;
 			}
 
+			const replacedSourceIds = new Map<string, string>();
 			const elements = track.elements.flatMap((element) => {
 				const shouldSplit = elementsToSplit.some(
 					(target) => target.elementId === element.id,
@@ -117,6 +136,18 @@ export class SplitElementsCommand extends Command {
 					animations: element.animations,
 					splitTime: relativeTime,
 					shouldIncludeSplitBoundary: true,
+					resolveLeftBoundaryId: (propertyPath) =>
+						this.resolvedIds.take({
+							role: "split-left-boundary-keyframe",
+							sourceId: propertyPath,
+							fallback: generateUUID,
+						}),
+					resolveRightBoundaryId: (propertyPath) =>
+						this.resolvedIds.take({
+							role: "split-right-boundary-keyframe",
+							sourceId: propertyPath,
+							fallback: generateUUID,
+						}),
 				});
 				let splitResult: TimelineElement[];
 
@@ -141,17 +172,22 @@ export class SplitElementsCommand extends Command {
 						},
 					];
 				} else if (this.retainSide === "right") {
-					const newId = generateUUID();
+					const newId = this.requireRightElementId({
+						trackId: track.id,
+						elementId: element.id,
+					});
 					this.rightSideElements.push({
 						trackId: track.id,
 						elementId: newId,
 					});
+					replacedSourceIds.set(element.id, newId);
+					const rightOwned = cloneSplitRightOwnedIdentities({
+						element,
+						resolvedIds: this.resolvedIds,
+					});
 					splitResult = [
 						{
-							...element,
-							...(element.type === "compound"
-								? { tracks: cloneCompoundTracks(element.tracks) }
-								: {}),
+							...rightOwned,
 							id: newId,
 							startTime: this.splitTime,
 							duration: rightVisibleDuration,
@@ -163,17 +199,21 @@ export class SplitElementsCommand extends Command {
 						},
 					];
 				} else {
-					const secondElementId = generateUUID();
+					const secondElementId = this.requireRightElementId({
+						trackId: track.id,
+						elementId: element.id,
+					});
 					this.rightSideElements.push({
 						trackId: track.id,
 						elementId: secondElementId,
 					});
+					const rightOwned = cloneSplitRightOwnedIdentities({
+						element,
+						resolvedIds: this.resolvedIds,
+					});
 					splitResult = [
 						{
 							...element,
-							...(element.type === "compound"
-								? { tracks: cloneCompoundTracks(element.tracks) }
-								: {}),
 							duration: leftVisibleDuration,
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
@@ -181,7 +221,7 @@ export class SplitElementsCommand extends Command {
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
 						},
 						{
-							...element,
+							...rightOwned,
 							id: secondElementId,
 							startTime: this.splitTime,
 							duration: rightVisibleDuration,
@@ -197,7 +237,25 @@ export class SplitElementsCommand extends Command {
 				return splitResult;
 			});
 
-			return { ...track, elements } as TTrack;
+			const remappedElements = elements.map((element) => {
+				if (!("transitionIn" in element) || !element.transitionIn) {
+					return element;
+				}
+				const remappedFromId = replacedSourceIds.get(
+					element.transitionIn.fromElementId,
+				);
+				return remappedFromId
+					? {
+							...element,
+							transitionIn: {
+								...element.transitionIn,
+								fromElementId: remappedFromId,
+							},
+						}
+					: element;
+			});
+
+			return { ...track, elements: remappedElements } as TTrack;
 		};
 
 		const updatedTracks: SceneTracks = {
@@ -205,6 +263,7 @@ export class SplitElementsCommand extends Command {
 			main: splitTrack(this.savedState.main),
 			audio: this.savedState.audio.map((track) => splitTrack(track)),
 		};
+		this.resolvedIds.assertExhausted();
 
 		editor.timeline.updateTracks(updatedTracks);
 
@@ -220,4 +279,78 @@ export class SplitElementsCommand extends Command {
 			editor.timeline.updateTracks(this.savedState);
 		}
 	}
+
+	private requireRightElementId({
+		trackId,
+		elementId,
+	}: {
+		trackId: string;
+		elementId: string;
+	}): string {
+		const id = this.rightElementIds.get(`${trackId}\0${elementId}`);
+		if (!id) throw new Error("missing resolved right-side element ID");
+		return id;
+	}
+}
+
+function cloneSplitRightOwnedIdentities({
+	element,
+	resolvedIds,
+}: {
+	element: TimelineElement;
+	resolvedIds: ResolvedObjectIds;
+}): TimelineElement {
+	let right: TimelineElement = {
+		...element,
+		groupId: element.groupId
+			? resolvedIds.take({
+					role: "split-group",
+					sourceId: element.groupId,
+					fallback: generateUUID,
+				})
+			: undefined,
+		linkId: element.linkId
+			? resolvedIds.take({
+					role: "split-link",
+					sourceId: element.linkId,
+					fallback: generateUUID,
+				})
+			: undefined,
+	};
+	if ("effects" in right && right.effects) {
+		right = {
+			...right,
+			effects: right.effects.map((effect) => ({
+				...effect,
+				id: resolvedIds.take({
+					role: "split-effect",
+					sourceId: effect.id,
+					fallback: generateUUID,
+				}),
+			})),
+		};
+	}
+	if ("masks" in right && right.masks) {
+		right = {
+			...right,
+			masks: right.masks.map((mask) => ({
+				...mask,
+				id: resolvedIds.take({
+					role: "split-mask",
+					sourceId: mask.id,
+					fallback: generateUUID,
+				}),
+			})),
+		};
+	}
+	return right.type === "compound"
+		? {
+				...right,
+				tracks: cloneCompoundTracks({
+					tracks: right.tracks,
+					resolvedIds,
+					prefix: "split",
+				}),
+			}
+		: right;
 }

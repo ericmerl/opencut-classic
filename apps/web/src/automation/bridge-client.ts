@@ -6,6 +6,7 @@ import type {
 	AutomationAttachMatteRequest,
 	AutomationCreateProjectRequest,
 	AutomationEditPlan,
+	AutomationEditPlanPreflightRequest,
 	AutomationExportRequest,
 	AutomationImportRequest,
 	AutomationImportSubtitlesRequest,
@@ -15,6 +16,7 @@ import type {
 	AutomationSaveProjectRequest,
 	AutomationGetSaveReceiptRequest,
 	AutomationGetOperationReceiptRequest,
+	AutomationGetEditPlanPreflightReceiptRequest,
 	AutomationVerifyOperationReceiptRequest,
 	AutomationStickerSearchRequest,
 	AutomationTransferSourceRequest,
@@ -95,6 +97,12 @@ type BridgeRequest =
 	| {
 			kind: "request";
 			id: string;
+			method: "get_edit_plan_preflight_receipt";
+			params: AutomationGetEditPlanPreflightReceiptRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
 			method: "verify_operation_receipt";
 			params: AutomationVerifyOperationReceiptRequest;
 	  }
@@ -151,6 +159,12 @@ type BridgeRequest =
 			id: string;
 			method: "transcribe_timeline";
 			params: AutomationTranscriptionRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "preflight_edit_plan";
+			params: AutomationEditPlanPreflightRequest;
 	  }
 	| {
 			kind: "request";
@@ -336,6 +350,7 @@ export class AutomationBridgeClient {
 
 		try {
 			this.validateRequestTarget(message.target);
+			this.validatePayloadAffinity(message);
 			const result = await this.dispatch(message);
 			await this.automation.recordOperationReceipt(
 				message.method,
@@ -348,7 +363,10 @@ export class AutomationBridgeClient {
 					request: message.params,
 					result,
 				})) ||
-				consumeBrowserResponseDrop(message.params)
+				consumeBrowserResponseDrop({
+					method: message.method,
+					params: message.params,
+				})
 			) {
 				// This test-only fault point models an abrupt browser/editor shutdown after
 				// the durable receipt commits and before a response can be delivered.
@@ -456,6 +474,32 @@ export class AutomationBridgeClient {
 		}
 	}
 
+	private validatePayloadAffinity(message: BridgeRequest): void {
+		if (
+			message.method !== "preflight_edit_plan" &&
+			message.method !== "apply_edit_plan"
+		) {
+			return;
+		}
+		if (message.params.bridgeProtocolVersion !== 2) return;
+		if (
+			!this.connectionIdentity ||
+			!identitiesEqual(
+				message.params.expectedConnectionIdentity,
+				this.connectionIdentity,
+			)
+		) {
+			throw new AutomationBridgeProtocolError(
+				"STALE_CONNECTION",
+				"Edit-plan source identity does not match this editor connection",
+				{
+					expectedIdentity: this.connectionIdentity,
+					actualIdentity: message.params.expectedConnectionIdentity,
+				},
+			);
+		}
+	}
+
 	private dispatch(message: BridgeRequest): unknown | Promise<unknown> {
 		switch (message.method) {
 			case "read_project":
@@ -484,10 +528,14 @@ export class AutomationBridgeClient {
 				return this.automation.getSaveReceipt(message.params);
 			case "get_operation_receipt":
 				return this.automation.getOperationReceipt(message.params);
+			case "get_edit_plan_preflight_receipt":
+				return this.automation.getEditPlanPreflightReceipt(message.params);
 			case "verify_operation_receipt":
 				return this.automation.verifyOperationReceipt(message.params);
 			case "apply_edit_plan":
 				return this.automation.applyEditPlan(message.params);
+			case "preflight_edit_plan":
+				return this.automation.preflightEditPlan(message.params);
 			case "export_project":
 				return this.automation.exportProject(message.params);
 			case "render_preview_frame":
@@ -517,12 +565,24 @@ export class AutomationBridgeClient {
 	}
 }
 
-function consumeBrowserResponseDrop(params: unknown): boolean {
+function consumeBrowserResponseDrop({
+	method,
+	params,
+}: {
+	method: string;
+	params: unknown;
+}): boolean {
 	if (typeof window === "undefined" || !isRecord(params)) return false;
 	const binding = isRecord(params.operationReceiptBinding)
 		? params.operationReceiptBinding
 		: null;
-	const operationId = binding?.outerOperationId;
+	const operationId =
+		typeof binding?.outerOperationId === "string"
+			? binding.outerOperationId
+			: method === "preflight_edit_plan" &&
+				  typeof params.preflightId === "string"
+				? params.preflightId
+				: undefined;
 	if (typeof operationId !== "string") return false;
 	try {
 		if (

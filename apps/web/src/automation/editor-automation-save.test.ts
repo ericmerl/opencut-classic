@@ -12,6 +12,9 @@ import type { TScene } from "@/timeline";
 
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
+	evaluateEditPlan: () => {
+		throw new Error("save tests must not evaluate an edit plan");
+	},
 	formatTimecode: () => "00:00",
 	lastFrameTime: () => 0,
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) => seconds * 120000,

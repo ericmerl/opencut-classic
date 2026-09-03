@@ -2,6 +2,7 @@ import type { Command } from "@/commands/base-command";
 import { UpdateElementsCommand } from "@/commands/timeline/element/update-elements";
 import type { TimelineElement } from "@/timeline";
 import type { AutomationEditOperation } from "./types";
+import { buildDurationClampBoundaryIds } from "./duration-clamp-boundary-ids";
 
 type CaptionCorrection = Extract<
 	AutomationEditOperation,
@@ -22,6 +23,9 @@ export function buildCaptionCorrectionCommand({
 				trackId: operation.trackId,
 				elementId: operation.elementId,
 				patch,
+				durationClampBoundaryIds: buildDurationClampBoundaryIds({
+					resolvedAllocations: operation.resolvedAllocations,
+				}),
 			},
 		],
 	});

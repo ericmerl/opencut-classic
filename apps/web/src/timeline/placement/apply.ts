@@ -6,7 +6,6 @@ import type {
 	SceneTracks,
 	TextTrack,
 	TimelineElement,
-	TimelineTrack,
 	VideoTrack,
 } from "@/timeline";
 import { generateUUID } from "@/utils/id";
@@ -19,11 +18,13 @@ export function applyPlacement({
 	placementResult,
 	elements,
 	newTrackInsertIndexOverride,
+	newTrackId: requestedNewTrackId,
 }: {
 	tracks: SceneTracks;
 	placementResult: PlacementResult;
 	elements: TimelineElement[];
 	newTrackInsertIndexOverride?: number;
+	newTrackId?: string;
 }): { updatedTracks: SceneTracks; targetTrackId: string } | null {
 	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
 	if (placementResult.kind === "existingTrack") {
@@ -44,7 +45,10 @@ export function applyPlacement({
 		return { updatedTracks, targetTrackId: targetTrack.id };
 	}
 
-	const newTrackId = generateUUID();
+	const newTrackId = requestedNewTrackId ?? generateUUID();
+	if (orderedTracks.some((track) => track.id === newTrackId)) {
+		return null;
+	}
 	const insertIndex =
 		newTrackInsertIndexOverride ?? placementResult.insertIndex;
 	const updatedTracks =

@@ -2,7 +2,7 @@
 
 import { describe, expect, mock, test } from "bun:test";
 import type { MediaAsset } from "@/media/types";
-import type { SceneTracks, VideoElement } from "@/timeline";
+import type { SceneTracks, TScene, VideoElement } from "@/timeline";
 
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
@@ -23,6 +23,7 @@ const {
 	buildMatteAttachment,
 	buildMatteSnapshot,
 	countMatteReferences,
+	countProjectMatteReferences,
 	validateMatteAsset,
 } = await import("./matte-control");
 
@@ -146,5 +147,27 @@ describe("matte control", () => {
 				assetId: "matte-1",
 			}),
 		).toBe(2);
+		expect(
+			countProjectMatteReferences({
+				projectScenes: [
+					scene({ id: "scene-1", tracks: tracks([element("clip-1")]) }),
+					scene({ id: "scene-2", tracks: tracks([element("clip-2")]) }),
+				],
+				assetId: "matte-1",
+			}),
+		).toBe(2);
 	});
 });
+
+function scene({ id, tracks }: { id: string; tracks: SceneTracks }): TScene {
+	const timestamp = new Date("2026-09-02T00:00:00.000Z");
+	return {
+		id,
+		name: id,
+		isMain: id === "scene-1",
+		tracks,
+		bookmarks: [],
+		createdAt: timestamp,
+		updatedAt: timestamp,
+	};
+}

@@ -2,6 +2,7 @@
 
 import { describe, expect, mock, test } from "bun:test";
 import type { VideoElement } from "@/timeline";
+import type { AutomationMaskParamValue } from "./types";
 
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
@@ -110,5 +111,67 @@ describe("authored mask control", () => {
 				},
 			}),
 		).toThrow("requires at least three points");
+	});
+
+	test("accepts and coerces the complete text mask parameter contract", () => {
+		const patch = buildAuthoredMaskPatch({
+			element: buildElement(),
+			operation: {
+				kind: "set_mask",
+				trackId: "main",
+				elementId: "clip-1",
+				maskId: "text-1",
+				maskType: "text",
+				params: {
+					content: "MASK",
+					fontFamily: "Inter",
+					fontWeight: "bold",
+					fontStyle: "italic",
+					textDecoration: "line-through",
+					letterSpacing: -100.06,
+					lineHeight: 1.26,
+					fontSize: 24.4,
+				},
+			},
+		});
+
+		expect(patch.masks?.[0]).toMatchObject({
+			id: "text-1",
+			type: "text",
+			params: {
+				content: "MASK",
+				fontFamily: "Inter",
+				fontWeight: "bold",
+				fontStyle: "italic",
+				textDecoration: "line-through",
+				letterSpacing: -100,
+				lineHeight: 1.3,
+				fontSize: 24,
+			},
+		});
+	});
+
+	test("rejects invalid text mask typography values", () => {
+		const invalidParams: Array<Record<string, AutomationMaskParamValue>> = [
+			{ fontWeight: "semibold" },
+			{ fontStyle: "oblique" },
+			{ textDecoration: "overline" },
+			{ lineHeight: Number.POSITIVE_INFINITY },
+		];
+		for (const params of invalidParams) {
+			expect(() =>
+				buildAuthoredMaskPatch({
+					element: buildElement(),
+					operation: {
+						kind: "set_mask",
+						trackId: "main",
+						elementId: "clip-1",
+						maskId: "text-invalid",
+						maskType: "text",
+						params,
+					},
+				}),
+			).toThrow("invalid value for mask parameter");
+		}
 	});
 });

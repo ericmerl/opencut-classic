@@ -24,9 +24,11 @@ interface LocalRegion {
 export function buildAudioDuckingPatch({
 	element,
 	control,
+	resolveKeyframeId,
 }: {
 	element: TimelineElement;
 	control: AudioDuckingControl;
+	resolveKeyframeId?: (localTime: MediaTime) => string;
 }): Partial<TimelineElement> {
 	if (element.type !== "audio" && element.type !== "video") {
 		throw new Error("audio ducking requires a video or audio element");
@@ -67,6 +69,7 @@ export function buildAudioDuckingPatch({
 			time: mediaTime({ ticks: point.time }),
 			value: point.value,
 			interpolation: "linear",
+			keyframeId: resolveKeyframeId?.(mediaTime({ ticks: point.time })),
 			channelLayout: target.channelLayout,
 			coerceValue: target.coerceValue,
 		});

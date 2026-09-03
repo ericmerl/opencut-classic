@@ -5,14 +5,20 @@ import type { MediaAsset } from "@/media/types";
 import type {
 	ClipMatteAttachment,
 	SceneTracks,
+	TScene,
 	TimelineElement,
 	VideoElement,
 } from "@/timeline";
 import type { AutomationEditOperation, AutomationMatteSnapshot } from "./types";
+import {
+	countProjectAssetReferences,
+	countSceneAssetReferences,
+} from "./project-media-references";
 
 export function buildMatteControlCommand({
 	operation,
 	projectId,
+	projectScenes,
 	tracks,
 }: {
 	operation: Extract<
@@ -20,6 +26,7 @@ export function buildMatteControlCommand({
 		{ kind: "set_matte_state" | "remove_matte" }
 	>;
 	projectId: string;
+	projectScenes?: readonly TScene[];
 	tracks: SceneTracks;
 }): Command {
 	const element = findVideoElement({
@@ -36,6 +43,7 @@ export function buildMatteControlCommand({
 			matte: { ...element.matte, enabled: operation.enabled },
 		});
 	}
+	const matteAssetId = element.matte.assetId;
 
 	const commands: Command[] = [
 		updateMatte({
@@ -44,11 +52,18 @@ export function buildMatteControlCommand({
 			matte: undefined,
 		}),
 	];
-	if (countMatteReferences({ tracks, assetId: element.matte.assetId }) === 1) {
+	const referenceCount = projectScenes
+		? countProjectAssetReferences({
+				projectScenes,
+				assetId: matteAssetId,
+			})
+		: countSceneAssetReferences({ tracks, assetId: matteAssetId });
+	if (referenceCount === 1) {
 		commands.push(
 			new RemoveMediaAssetCommand({
 				projectId,
-				assetId: element.matte.assetId,
+				assetId: matteAssetId,
+				deferPersistence: true,
 			}),
 		);
 	}
@@ -157,6 +172,20 @@ export function countMatteReferences({
 	return allElements(tracks).filter(
 		(element) => element.type === "video" && element.matte?.assetId === assetId,
 	).length;
+}
+
+export function countProjectMatteReferences({
+	projectScenes,
+	assetId,
+}: {
+	projectScenes: readonly TScene[];
+	assetId: string;
+}): number {
+	return projectScenes.reduce(
+		(count, scene) =>
+			count + countMatteReferences({ tracks: scene.tracks, assetId }),
+		0,
+	);
 }
 
 export function findVideoElement({

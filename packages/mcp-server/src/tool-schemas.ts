@@ -37,7 +37,7 @@ export const connectionIdentitySchema = z.object({
 const connectionAffinitySchema = z.union([
 	z.object({
 		bridgeProtocolVersion: z.literal(1).optional(),
-		expectedConnectionIdentity: z.undefined().optional(),
+		expectedConnectionIdentity: z.never().optional(),
 	}),
 	z.object({
 		bridgeProtocolVersion: z.literal(2),
@@ -102,15 +102,19 @@ export function withProjectMutationSafety<T extends z.ZodType>(schema: T) {
 	});
 }
 
-const frameRateSchema = z.object({
-	numerator: z.number().int().positive(),
-	denominator: z.number().int().positive(),
-});
+const frameRateSchema = z
+	.object({
+		numerator: z.number().int().positive(),
+		denominator: z.number().int().positive(),
+	})
+	.strict();
 
-const canvasSizeSchema = z.object({
-	width: z.number().int().positive(),
-	height: z.number().int().positive(),
-});
+const canvasSizeSchema = z
+	.object({
+		width: z.number().int().positive(),
+		height: z.number().int().positive(),
+	})
+	.strict();
 
 export const previewTimeSelectorSchema = z.discriminatedUnion("kind", [
 	z
@@ -175,11 +179,13 @@ export const listPreviewFramesInputSchema = z
 	.strict();
 
 const backgroundSchema = z.discriminatedUnion("type", [
-	z.object({ type: z.literal("color"), color: z.string().min(1) }),
-	z.object({
-		type: z.literal("blur"),
-		blurIntensity: z.number().nonnegative(),
-	}),
+	z.object({ type: z.literal("color"), color: z.string().min(1) }).strict(),
+	z
+		.object({
+			type: z.literal("blur"),
+			blurIntensity: z.number().int().nonnegative(),
+		})
+		.strict(),
 ]);
 
 export const timelineQueryInputSchema = z
@@ -205,42 +211,47 @@ export const searchStickersInputSchema = z.object({
 	limit: z.number().int().min(1).max(200).default(50),
 });
 
-const captionStyleSchema = z.object({
-	fontFamily: z.string().min(1).optional(),
-	fontSize: z
-		.number()
-		.positive()
-		.describe(
-			"Font size in OpenCut app units. Typical captions use 4 through 8; the default is 5.",
-		)
-		.optional(),
-	color: z.string().min(1).optional(),
-	textAlign: z.enum(["left", "center", "right"]).optional(),
-	fontWeight: z.enum(["normal", "bold"]).optional(),
-	fontStyle: z.enum(["normal", "italic"]).optional(),
-	textDecoration: z.enum(["none", "underline", "line-through"]).optional(),
-	letterSpacing: z.number().optional(),
-	lineHeight: z.number().positive().optional(),
-	background: z
-		.object({
-			enabled: z.boolean(),
-			color: z.string().min(1),
-			cornerRadius: z.number().optional(),
-			paddingX: z.number().optional(),
-			paddingY: z.number().optional(),
-			offsetX: z.number().optional(),
-			offsetY: z.number().optional(),
-		})
-		.optional(),
-	placement: z
-		.object({
-			verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
-			marginLeftRatio: z.number().min(0).max(1).optional(),
-			marginRightRatio: z.number().min(0).max(1).optional(),
-			marginVerticalRatio: z.number().min(0).max(1).optional(),
-		})
-		.optional(),
-});
+const captionStyleSchema = z
+	.object({
+		fontFamily: z.string().min(1).optional(),
+		fontSize: z
+			.number()
+			.positive()
+			.describe(
+				"Font size in OpenCut app units. Typical captions use 4 through 8; the default is 5.",
+			)
+			.optional(),
+		fontSizeRatioOfPlayHeight: z.number().positive().optional(),
+		color: z.string().min(1).optional(),
+		textAlign: z.enum(["left", "center", "right"]).optional(),
+		fontWeight: z.enum(["normal", "bold"]).optional(),
+		fontStyle: z.enum(["normal", "italic"]).optional(),
+		textDecoration: z.enum(["none", "underline", "line-through"]).optional(),
+		letterSpacing: z.number().optional(),
+		lineHeight: z.number().positive().optional(),
+		background: z
+			.object({
+				enabled: z.boolean(),
+				color: z.string().min(1),
+				cornerRadius: z.number().optional(),
+				paddingX: z.number().optional(),
+				paddingY: z.number().optional(),
+				offsetX: z.number().optional(),
+				offsetY: z.number().optional(),
+			})
+			.strict()
+			.optional(),
+		placement: z
+			.object({
+				verticalAlign: z.enum(["top", "middle", "bottom"]).optional(),
+				marginLeftRatio: z.number().min(0).max(1).optional(),
+				marginRightRatio: z.number().min(0).max(1).optional(),
+				marginVerticalRatio: z.number().min(0).max(1).optional(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict();
 
 const audioFadeSchema = z
 	.object({
@@ -263,6 +274,7 @@ const audioFadeSchema = z
 			.default(-60)
 			.describe("Gain at the silent ends of the fades, in dB."),
 	})
+	.strict()
 	.describe(
 		"Replace the clip's volume envelope with linear fades. Omitted durations default to zero; setting both to zero clears existing volume keyframes.",
 	);
@@ -282,6 +294,7 @@ const normalizedRectSchema = z
 		width: z.number().min(0.001).max(1),
 		height: z.number().min(0.001).max(1),
 	})
+	.strict()
 	.refine((rect) => rect.x + rect.width <= 1, {
 		message: "x + width must be at most 1",
 	})
@@ -289,15 +302,17 @@ const normalizedRectSchema = z
 		message: "y + height must be at most 1",
 	});
 
-const freeformPathPointSchema = z.object({
-	id: z.string().trim().min(1),
-	x: z.number().finite(),
-	y: z.number().finite(),
-	inX: z.number().finite(),
-	inY: z.number().finite(),
-	outX: z.number().finite(),
-	outY: z.number().finite(),
-});
+const freeformPathPointSchema = z
+	.object({
+		id: z.string().trim().min(1),
+		x: z.number().finite(),
+		y: z.number().finite(),
+		inX: z.number().finite(),
+		inY: z.number().finite(),
+		outX: z.number().finite(),
+		outY: z.number().finite(),
+	})
+	.strict();
 
 const maskParamValueSchema = z.union([
 	z.string(),
@@ -327,44 +342,110 @@ const relationshipScopeSchema = z
 	.enum(["element", "group", "link", "all"])
 	.default("all");
 
-const elementRefSchema = z.object({
-	trackId: z.string().min(1),
-	elementId: z.string().min(1),
-});
+const elementRefSchema = z
+	.object({
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+	})
+	.strict();
+export const allocationRoleSchema = z.enum([
+	"element",
+	"caption-track",
+	"caption-element",
+	"track",
+	"compound-element",
+	"compound-auto-track",
+	"compound-empty-main-track",
+	"source-audio-track",
+	"source-audio-element",
+	"source-audio-link",
+	"element-auto-track",
+	"effect",
+	"keyframe",
+	"transition",
+	"mask",
+	"group",
+	"link",
+	"duplicate-element",
+	"duplicate-track",
+	"duplicate-transition",
+	"duplicate-group",
+	"duplicate-link",
+	"duplicate-effect",
+	"duplicate-mask",
+	"duplicate-keyframe",
+	"duplicate-nested-keyframe",
+	"duplicate-nested-track",
+	"duplicate-nested-element",
+	"duplicate-nested-transition",
+	"break-apart-element",
+	"split-right",
+	"split-group",
+	"split-link",
+	"split-effect",
+	"split-mask",
+	"split-left-boundary-keyframe",
+	"split-right-boundary-keyframe",
+	"duration-clamp-left-boundary-keyframe",
+	"duration-clamp-right-boundary-keyframe",
+	"split-nested-keyframe",
+	"split-nested-track",
+	"split-nested-element",
+	"split-nested-transition",
+]);
+const objectIdAllocationSchema = z
+	.object({
+		role: allocationRoleSchema,
+		sourceId: z.string().min(1),
+		resolvedId: z.string().min(1),
+	})
+	.strict();
 
-const editOperationSchema = z.discriminatedUnion("kind", [
+const baseEditOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("insert_text"),
+		elementId: z.string().trim().min(1).optional(),
 		content: z.string().min(1),
 		startTime: z.number().int().nonnegative(),
 		duration: z.number().int().positive(),
+		autoTrackId: z.string().trim().min(1).optional(),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("insert_graphic"),
+		elementId: z.string().trim().min(1).optional(),
 		definitionId: z.string().trim().min(1),
 		name: z.string().trim().min(1).optional(),
 		startTime: z.number().int().nonnegative(),
 		duration: z.number().int().positive(),
 		trackId: z.string().min(1).optional(),
 		params: elementParamRecordSchema.optional(),
+		autoTrackId: z.string().trim().min(1).optional(),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("insert_sticker"),
+		elementId: z.string().trim().min(1).optional(),
 		stickerId: z.string().trim().min(1),
 		name: z.string().trim().min(1).optional(),
 		startTime: z.number().int().nonnegative(),
 		duration: z.number().int().positive(),
 		trackId: z.string().min(1).optional(),
 		params: elementParamRecordSchema.optional(),
+		autoTrackId: z.string().trim().min(1).optional(),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("insert_adjustment_layer"),
+		elementId: z.string().trim().min(1).optional(),
 		effectType: z.string().trim().min(1),
 		name: z.string().trim().min(1).optional(),
 		startTime: z.number().int().nonnegative(),
 		duration: z.number().int().positive(),
 		trackId: z.string().min(1).optional(),
 		params: elementParamRecordSchema.optional(),
+		autoTrackId: z.string().trim().min(1).optional(),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("add_track"),
@@ -403,13 +484,17 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		),
 	z.object({
 		kind: z.literal("insert_captions"),
+		trackId: z.string().trim().min(1).optional(),
 		captions: z
 			.array(
-				z.object({
-					text: z.string().trim().min(1),
-					startTime: z.number().int().nonnegative(),
-					duration: z.number().int().positive(),
-				}),
+				z
+					.object({
+						elementId: z.string().trim().min(1).optional(),
+						text: z.string().trim().min(1),
+						startTime: z.number().int().nonnegative(),
+						duration: z.number().int().positive(),
+					})
+					.strict(),
 			)
 			.min(1),
 		style: captionStyleSchema.optional(),
@@ -422,6 +507,7 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			text: z.string().trim().min(1).optional(),
 			startTime: z.number().int().nonnegative().optional(),
 			duration: z.number().int().positive().optional(),
+			resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 		})
 		.refine(
 			(value) =>
@@ -440,7 +526,9 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("duplicate_elements"),
 		elements: z.array(elementRefSchema).min(1),
+		duplicateIds: z.array(z.string().trim().min(1)).min(1).optional(),
 		relationshipScope: relationshipScopeSchema,
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("create_compound"),
@@ -449,11 +537,16 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		elements: z.array(elementRefSchema).min(2),
 		relationshipScope: relationshipScopeSchema,
 		targetTrackId: z.string().trim().min(1).optional(),
+		autoTrackId: z.string().trim().min(1).optional(),
+		emptyMainTrackId: z.string().trim().min(1).optional(),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("break_apart_compound"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
+		restoredElementIds: z.array(z.string().trim().min(1)).optional(),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("set_group"),
@@ -514,6 +607,7 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 					x: z.number().min(0).max(1),
 					y: z.number().min(0).max(1),
 				})
+				.strict()
 				.optional(),
 			targetRect: normalizedRectSchema.optional(),
 			layout: reframeLayoutSchema.optional(),
@@ -563,16 +657,21 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		kind: z.literal("separate_source_audio"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
+		audioTrackId: z.string().trim().min(1).optional(),
+		audioElementId: z.string().trim().min(1).optional(),
+		linkId: z.string().trim().min(1).optional(),
 	}),
 	z.object({
 		kind: z.literal("duck_audio"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
 		regions: z.array(
-			z.object({
-				startTime: z.number().int().nonnegative(),
-				duration: z.number().int().positive(),
-			}),
+			z
+				.object({
+					startTime: z.number().int().nonnegative(),
+					duration: z.number().int().positive(),
+				})
+				.strict(),
 		),
 		reductionDb: z.number().positive().max(60).default(12),
 		attackDuration: z.number().int().nonnegative().default(12_000),
@@ -679,6 +778,7 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 		elementId: z.string().min(1),
 		rate: z.number().min(0.01).max(5),
 		maintainPitch: z.boolean().optional(),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("trim"),
@@ -711,11 +811,13 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			.nonnegative()
 			.describe("Amount removed from the end of the source, in ticks."),
 		ripple: z.boolean().default(false),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("split"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
+		rightElementId: z.string().trim().min(1).optional(),
 		splitTime: z
 			.number()
 			.int()
@@ -723,6 +825,7 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 			.describe("Absolute timeline split position in canonical media ticks."),
 		retainSide: z.enum(["both", "left", "right"]).optional(),
 		ripple: z.boolean().default(false),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
 		kind: z.literal("set_matte_state"),
@@ -772,6 +875,138 @@ const editOperationSchema = z.discriminatedUnion("kind", [
 	}),
 ]);
 
+const resolvedAllocationKinds = new Set([
+	"insert_text",
+	"insert_graphic",
+	"insert_sticker",
+	"insert_adjustment_layer",
+	"duplicate_elements",
+	"create_compound",
+	"break_apart_compound",
+	"update_caption",
+	"set_retime",
+	"trim",
+	"split",
+]);
+const resolvedSkipFields = new Map<string, Set<string>>(
+	[...resolvedAllocationKinds].map((kind) => [
+		kind,
+		new Set([
+			"resolvedAllocations",
+			...([
+				"insert_text",
+				"insert_graphic",
+				"insert_sticker",
+				"insert_adjustment_layer",
+				"create_compound",
+			].includes(kind)
+				? ["autoTrackId"]
+				: []),
+			...(kind === "create_compound" ? ["emptyMainTrackId"] : []),
+		]),
+	]),
+);
+const resolvedCaptionSchema = z
+	.object({
+		elementId: z.string().trim().min(1).nullable(),
+		text: z.string().trim().min(1),
+		startTime: z.number().int().nonnegative(),
+		duration: z.number().int().positive(),
+		resolvedName: z.string().trim().min(1),
+		resolvedContent: z.string().trim().min(1),
+		resolvedParams: elementParamRecordSchema,
+		resolvedLayoutVersion: z.literal("opencut.caption-layout.v1"),
+		resolvedLayoutEngine: z.literal("browser-canvas-2d"),
+	})
+	.strict();
+
+/**
+ * Rust emits a JSON-only resolved DTO. Non-skipped Option fields are required
+ * and explicit null, while the small allocation plumbing set retains its
+ * declared optional transport shape.
+ */
+export const resolvedEditOperationSchema = z.discriminatedUnion(
+	"kind",
+	baseEditOperationSchema.options.map((schema) => {
+		const strict: z.ZodObject = schema.strict();
+		const kind = (strict.shape.kind as z.ZodLiteral<string>).value;
+		const skipFields = resolvedSkipFields.get(kind) ?? new Set<string>();
+		const resolvedShape: Record<string, z.ZodType> = {};
+		for (const [fieldName, fieldSchema] of Object.entries(strict.shape)) {
+			if (skipFields.has(fieldName)) continue;
+			if (fieldSchema instanceof z.ZodOptional) {
+				const inner = fieldSchema.unwrap() as unknown as z.ZodType;
+				resolvedShape[fieldName] = inner.nullable();
+			} else if (fieldSchema instanceof z.ZodDefault) {
+				resolvedShape[fieldName] = fieldSchema.unwrap() as unknown as z.ZodType;
+			}
+		}
+		if (kind === "insert_captions") {
+			resolvedShape.captions = z.array(resolvedCaptionSchema).min(1);
+		}
+		return strict.safeExtend(resolvedShape).strict();
+	}) as typeof baseEditOperationSchema.options,
+);
+
+export const editOperationSchema = z.discriminatedUnion(
+	"kind",
+	baseEditOperationSchema.options.map((schema) => {
+		const strict: z.ZodObject = schema.strict();
+		const kind = (strict.shape.kind as z.ZodLiteral<string>).value;
+		return resolvedAllocationKinds.has(kind)
+			? strict.safeExtend({ resolvedAllocations: z.never().optional() })
+			: strict;
+	}) as typeof baseEditOperationSchema.options,
+);
+
+export const preflightPolicySchema = z
+	.object({
+		warningPolicy: z.enum(["allow", "reject-any"]),
+		providerExecution: z.literal("forbidden"),
+		costPolicy: z.enum(["require-exact", "allow-bounded", "allow-unavailable"]),
+	})
+	.strict();
+
+/**
+ * Read-only V2 contract. This intentionally does not use the legacy mutation
+ * wrappers because a preflight ID identifies an immutable evidence receipt,
+ * not an editor mutation.
+ */
+export const preflightEditPlanInputSchema = z
+	.object({
+		contractVersion: z.literal(2),
+		bridgeProtocolVersion: z.literal(2),
+		expectedConnectionIdentity: connectionIdentitySchema.strict(),
+		preflightId: operationIdSchema,
+		projectId: z.string().min(1).max(256),
+		sceneId: z.string().min(1).max(256),
+		expectedRevision: z.number().int().nonnegative(),
+		expectedProjectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+		expectedWriteVersion: z.number().int().positive(),
+		saveReceiptOperationId: operationIdSchema,
+		expectedSaveReceiptId: z.string().min(1).max(512),
+		description: z.string().trim().min(1).max(4_096),
+		operations: z.array(editOperationSchema).min(1).max(1_000),
+		policy: preflightPolicySchema,
+	})
+	.strict();
+
+export const getEditPlanPreflightInputSchema = z
+	.object({
+		receiptId: z.string().min(1).max(512),
+		verifyIntegrity: z.literal(true).default(true),
+	})
+	.strict();
+
+export const listEditPlanPreflightsInputSchema = z
+	.object({
+		projectId: z.string().min(1).max(256).optional(),
+		sceneId: z.string().min(1).max(256).optional(),
+		limit: z.number().int().min(1).max(100).default(25),
+		cursor: z.string().min(1).max(512).optional(),
+	})
+	.strict();
+
 export const editPlanInputSchema = z
 	.object({
 		projectId: z.string().min(1),
@@ -779,6 +1014,15 @@ export const editPlanInputSchema = z
 		expectedRevision: z.number().int().nonnegative(),
 		description: z.string().min(1),
 		operations: z.array(editOperationSchema).min(1),
+		preflight: z
+			.object({
+				receiptId: z.string().min(1).max(512),
+				planFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+				preflightFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+				planDiffHash: z.string().regex(/^[a-f0-9]{64}$/),
+			})
+			.strict()
+			.optional(),
 	})
 	.superRefine((plan, context) => {
 		for (const [index, operation] of plan.operations.entries()) {

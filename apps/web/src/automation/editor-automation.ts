@@ -45,8 +45,8 @@ import {
 	MIN_RETIME_RATE,
 } from "@/retime";
 import { DEFAULT_CANVAS_PRESETS } from "@/canvas/sizes";
-import type { TProjectSettings } from "@/project/types";
-import { buildSubtitleTextElement } from "@/subtitles/build-subtitle-text-element";
+import type { TProject, TProjectSettings } from "@/project/types";
+import type { MediaAsset } from "@/media/types";
 import { buildCaptionTrackInsertion } from "@/subtitles/insert";
 import { parseSubtitleFile } from "@/subtitles/parse";
 import { serializeSubtitles } from "@/subtitles/serialize";
@@ -63,6 +63,17 @@ import {
 import { getElementKeyframes } from "@/animation";
 import { analyzeAutomationAudio } from "./audio-analysis";
 import { diffAutomationSnapshots } from "./affected-objects";
+import { executeStrictNativeEditPlan } from "./edit-plan-native-apply";
+import { evaluateNativeEditPlanPreflight } from "./edit-plan-native-preflight";
+import { editPlanPreflightReceiptStore } from "./edit-plan-preflight-receipt";
+import { toAutomationResolvedOperation } from "./edit-plan-operation-adapter";
+import { buildCaptionElementForNativeApply } from "./edit-plan-caption-materialization";
+import {
+	ResolvedObjectIds,
+	resolveElementAutoTrackId,
+} from "./resolved-object-ids";
+import { generateUUID } from "@/utils/id";
+import { buildDurationClampBoundaryIds } from "./duration-clamp-boundary-ids";
 import { prepareCleanAudioAttachment } from "./attach-clean-audio";
 import { prepareMatteAttachment } from "./attach-matte";
 import { buildAudioControlPatch } from "./audio-control";
@@ -131,6 +142,8 @@ import type {
 	AutomationAttachMatteResult,
 	AutomationEditOperation,
 	AutomationEditPlan,
+	AutomationEditPlanPreflightRequest,
+	AutomationEditPlanPreflightResult,
 	AutomationElementSnapshot,
 	AutomationEffectCatalogEntry,
 	AutomationStickerSearchRequest,
@@ -161,6 +174,8 @@ import type {
 	AutomationGetSaveReceiptResult,
 	AutomationGetOperationReceiptRequest,
 	AutomationGetOperationReceiptResult,
+	AutomationGetEditPlanPreflightReceiptRequest,
+	AutomationGetEditPlanPreflightReceiptResult,
 	AutomationVerifyOperationReceiptRequest,
 	AutomationProjectActivatedResult,
 	AutomationProjectListResult,
@@ -510,6 +525,18 @@ export class EditorAutomation {
 
 	applyEditPlan(plan: AutomationEditPlan): Promise<AutomationMutationResult> {
 		return this.enqueue(() => this.applyEditPlanNow(plan));
+	}
+
+	preflightEditPlan(
+		request: AutomationEditPlanPreflightRequest,
+	): Promise<AutomationEditPlanPreflightResult> {
+		return this.enqueue(() => this.preflightEditPlanNow(request));
+	}
+
+	getEditPlanPreflightReceipt(
+		request: AutomationGetEditPlanPreflightReceiptRequest,
+	): Promise<AutomationGetEditPlanPreflightReceiptResult> {
+		return this.enqueue(() => editPlanPreflightReceiptStore.query(request));
 	}
 
 	importMedia(
@@ -911,6 +938,9 @@ export class EditorAutomation {
 	private async applyEditPlanNow(
 		plan: AutomationEditPlan,
 	): Promise<AutomationMutationResult> {
+		if (plan.contractVersion === 2) {
+			return this.applyStrictEditPlanNow(plan);
+		}
 		this.reconcileExternalChanges();
 		const identityBlock = await this.blockedProductionRequest(plan);
 		if (identityBlock) return identityBlock;
@@ -958,7 +988,7 @@ export class EditorAutomation {
 		try {
 			validateTrackCreationPlan(plan.operations);
 			commands = plan.operations.map((operation) =>
-				this.validateAndBuildCommand(operation),
+				this.buildNativeEditOperationCommand(operation),
 			);
 		} catch (error) {
 			return {
@@ -984,6 +1014,76 @@ export class EditorAutomation {
 		};
 		this.appliedOperations.set(plan.operationId, { fingerprint, result });
 		return result;
+	}
+
+	private async applyStrictEditPlanNow(
+		plan: Extract<AutomationEditPlan, { contractVersion: 2 }>,
+	): Promise<AutomationMutationResult> {
+		const fingerprint = stableSerialize(plan);
+		const prior = this.appliedOperations.get(plan.operationId);
+		if (prior) {
+			return prior.fingerprint === fingerprint
+				? { ...prior.result, status: "replayed" }
+				: {
+						status: "rejected",
+						operationId: plan.operationId,
+						reason: "operationId was already used for a different V2 plan",
+					};
+		}
+		const shapeError = validatePlanShape(plan);
+		if (shapeError) {
+			return {
+				status: "rejected",
+				operationId: plan.operationId,
+				reason: shapeError,
+			};
+		}
+		const beforeSnapshot = this.buildSnapshotForScene(plan.sceneId);
+		try {
+			await executeStrictNativeEditPlan({
+				editor: this.editor,
+				plan,
+				sessionRevision: this.revision,
+				knownStateFingerprint: this.stateFingerprint,
+				buildCommand: (operation) =>
+					this.buildNativeEditOperationCommand(
+						toAutomationResolvedOperation(operation),
+					),
+			});
+		} catch (error) {
+			return {
+				status: "rejected",
+				operationId: plan.operationId,
+				reason:
+					error instanceof Error ? error.message : "strict V2 edit plan failed",
+			};
+		}
+		this.recordCommittedState();
+		await this.refreshContentIdentity();
+		const snapshot = this.buildSnapshotForScene(plan.sceneId);
+		const result: AutomationAppliedResult = {
+			status: "applied",
+			operationId: plan.operationId,
+			revision: this.revision,
+			snapshot,
+			affectedObjects: diffAutomationSnapshots(beforeSnapshot, snapshot),
+		};
+		this.appliedOperations.set(plan.operationId, {
+			fingerprint,
+			result,
+		});
+		return result;
+	}
+
+	private async preflightEditPlanNow(
+		request: AutomationEditPlanPreflightRequest,
+	): Promise<AutomationEditPlanPreflightResult> {
+		return evaluateNativeEditPlanPreflight({
+			editor: this.editor,
+			request,
+			sessionRevision: this.revision,
+			knownStateFingerprint: this.stateFingerprint,
+		});
 	}
 
 	private async undoNow({
@@ -1936,7 +2036,7 @@ export class EditorAutomation {
 		return result;
 	}
 
-	private validateAndBuildCommand(operation: AutomationEditOperation): Command {
+	buildNativeEditOperationCommand(operation: AutomationEditOperation): Command {
 		if (
 			operation.kind === "insert_graphic" ||
 			operation.kind === "insert_sticker" ||
@@ -1951,6 +2051,7 @@ export class EditorAutomation {
 			return buildMatteControlCommand({
 				operation,
 				projectId: this.getProjectId(),
+				projectScenes: this.editor.scenes.getScenes(),
 				tracks: this.editor.scenes.getActiveScene().tracks,
 			});
 		}
@@ -1961,6 +2062,7 @@ export class EditorAutomation {
 			return buildAudioReplacementControlCommand({
 				operation,
 				projectId: this.getProjectId(),
+				projectScenes: this.editor.scenes.getScenes(),
 				tracks: this.editor.scenes.getActiveScene().tracks,
 			});
 		}
@@ -1977,6 +2079,12 @@ export class EditorAutomation {
 			if (!operation.content.trim())
 				throw new Error("text content is required");
 			return new InsertElementCommand({
+				elementId: operation.elementId,
+				newTrackId: resolveElementAutoTrackId({
+					elementId: operation.elementId,
+					autoTrackId: operation.autoTrackId,
+					resolvedAllocations: operation.resolvedAllocations,
+				}),
 				element: buildTextElement({
 					raw: {
 						...DEFAULTS.text.element,
@@ -2082,22 +2190,23 @@ export class EditorAutomation {
 			}
 			const project = this.editor.project.getActive();
 			if (!project) throw new Error("No active project");
-			const addTrack = new AddTrackCommand({ type: "text", index: 0 });
+			const addTrack = new AddTrackCommand({
+				type: "text",
+				index: 0,
+				trackId: operation.trackId,
+			});
 			const trackId = addTrack.getTrackId();
 			const insertCommands = operation.captions.map((caption, index) => {
 				if (!caption.text.trim()) throw new Error("caption text is required");
 				assertMediaTime(caption.startTime, "caption startTime", true);
 				assertMediaTime(caption.duration, "caption duration", false);
 				return new InsertElementCommand({
+					elementId: caption.elementId,
 					placement: { mode: "explicit", trackId },
-					element: buildSubtitleTextElement({
+					element: buildCaptionElementForNativeApply({
+						caption,
 						index,
-						caption: {
-							text: caption.text,
-							startTime: mediaTimeToSeconds({ time: caption.startTime }),
-							duration: mediaTimeToSeconds({ time: caption.duration }),
-							style: operation.style,
-						},
+						style: operation.style,
 						canvasSize: project.settings.canvasSize,
 					}),
 				});
@@ -2129,6 +2238,8 @@ export class EditorAutomation {
 							refs: operation.elements,
 							scope: operation.relationshipScope,
 						}).map(({ trackId, elementId }) => ({ trackId, elementId })),
+						duplicateIds: operation.duplicateIds,
+						resolvedAllocations: operation.resolvedAllocations,
 					}),
 			);
 		}
@@ -2226,6 +2337,10 @@ export class EditorAutomation {
 					],
 					splitTime: operation.splitTime,
 					retainSide: operation.retainSide,
+					rightElementIds: operation.rightElementId
+						? [operation.rightElementId]
+						: undefined,
+					resolvedAllocations: operation.resolvedAllocations,
 				}),
 			});
 		}
@@ -2282,19 +2397,28 @@ export class EditorAutomation {
 			return buildAuthoredMaskCommand({ element, operation });
 		}
 		if (operation.kind === "set_audio") {
+			const resolvedIds = new ResolvedObjectIds(operation.resolvedAllocations);
+			const patch = buildAudioControlPatch({
+				element,
+				control: {
+					volumeDb: operation.volumeDb,
+					muted: operation.muted,
+					fade: operation.fade,
+				},
+				resolveKeyframeId: (time) =>
+					resolvedIds.take({
+						role: "keyframe",
+						sourceId: `volume:${time}`,
+						fallback: generateUUID,
+					}),
+			});
+			resolvedIds.assertExhausted();
 			return new UpdateElementsCommand({
 				updates: [
 					{
 						trackId: operation.trackId,
 						elementId: operation.elementId,
-						patch: buildAudioControlPatch({
-							element,
-							control: {
-								volumeDb: operation.volumeDb,
-								muted: operation.muted,
-								fade: operation.fade,
-							},
-						}),
+						patch,
 					},
 				],
 			});
@@ -2309,15 +2433,36 @@ export class EditorAutomation {
 								.getAssets()
 								.find((asset) => asset.id === element.mediaId) ?? null)
 						: null,
+				resolvedIds:
+					operation.audioTrackId && operation.audioElementId && operation.linkId
+						? {
+								audioTrackId: operation.audioTrackId,
+								audioElementId: operation.audioElementId,
+								linkId: operation.linkId,
+								resolvedAllocations: operation.resolvedAllocations,
+							}
+						: undefined,
 			});
 		}
 		if (operation.kind === "duck_audio") {
+			const resolvedIds = new ResolvedObjectIds(operation.resolvedAllocations);
+			const patch = buildAudioDuckingPatch({
+				element,
+				control: operation,
+				resolveKeyframeId: (time) =>
+					resolvedIds.take({
+						role: "keyframe",
+						sourceId: `ducking:${time}`,
+						fallback: generateUUID,
+					}),
+			});
+			resolvedIds.assertExhausted();
 			return new UpdateElementsCommand({
 				updates: [
 					{
 						trackId: operation.trackId,
 						elementId: operation.elementId,
-						patch: buildAudioDuckingPatch({ element, control: operation }),
+						patch,
 					},
 				],
 			});
@@ -2354,6 +2499,9 @@ export class EditorAutomation {
 					{
 						trackId: operation.trackId,
 						elementId: operation.elementId,
+						durationClampBoundaryIds: buildDurationClampBoundaryIds({
+							resolvedAllocations: operation.resolvedAllocations,
+						}),
 						patch: {
 							retime: buildConstantRetime({
 								rate: operation.rate,
@@ -2398,6 +2546,9 @@ export class EditorAutomation {
 					{
 						trackId: operation.trackId,
 						elementId: operation.elementId,
+						durationClampBoundaryIds: buildDurationClampBoundaryIds({
+							resolvedAllocations: operation.resolvedAllocations,
+						}),
 						patch: buildTrimPatch({
 							element,
 							startTime: operation.startTime,
@@ -2437,15 +2588,56 @@ export class EditorAutomation {
 		const scene = this.editor.scenes.getActiveScene();
 		const project = this.editor.project.getActive();
 		if (!project) throw new Error("No active project");
-		const tracks = this.getTracks();
+		return this.buildSnapshotFromSource({
+			project: { ...project, scenes: this.editor.scenes.getScenes() },
+			scene,
+			mediaAssets: this.editor.media.getAssets(),
+			revision: this.revision,
+			contentIdentity: this.requireContentIdentity(),
+		});
+	}
+
+	private buildSnapshotForScene(sceneId: string): AutomationProjectSnapshot {
+		const project = this.editor.project.getActive();
+		if (!project) throw new Error("No active project");
+		const scenes = this.editor.scenes.getScenes();
+		const scene = scenes.find((candidate) => candidate.id === sceneId);
+		if (!scene) throw new Error(`scene not found: ${sceneId}`);
+		return this.buildSnapshotFromSource({
+			project: { ...project, scenes },
+			scene,
+			mediaAssets: this.editor.media.getAssets(),
+			revision: this.revision,
+			contentIdentity: this.requireContentIdentity(),
+		});
+	}
+
+	private buildSnapshotFromSource({
+		project,
+		scene,
+		mediaAssets,
+		revision,
+		contentIdentity,
+	}: {
+		project: TProject;
+		scene: TProject["scenes"][number];
+		mediaAssets: MediaAsset[];
+		revision: number;
+		contentIdentity: ProjectContentHashResult;
+	}): AutomationProjectSnapshot {
+		const tracks = [
+			scene.tracks.main,
+			...scene.tracks.overlay,
+			...scene.tracks.audio,
+		];
 		return {
 			projectId: project.metadata.id,
 			projectName: project.metadata.name,
 			projectVersion: project.version,
 			sceneId: scene.id,
 			sceneName: scene.name,
-			revision: this.revision,
-			contentIdentity: this.requireContentIdentity(),
+			revision,
+			contentIdentity,
 			settings: {
 				fps: project.settings.fps,
 				canvasSize: project.settings.canvasSize,
@@ -2475,7 +2667,7 @@ export class EditorAutomation {
 					valid: state.isAdjacent,
 				})),
 			),
-			mediaAssets: this.editor.media.getAssets().map((asset) => ({
+			mediaAssets: mediaAssets.map((asset) => ({
 				assetId: asset.id,
 				name: asset.name,
 				type: asset.type,
@@ -2495,18 +2687,23 @@ export class EditorAutomation {
 			})),
 			elements: tracks.flatMap((track) =>
 				track.elements.map((element) =>
-					this.buildElementSnapshot(track.id, element),
+					this.buildElementSnapshot({ trackId: track.id, element, mediaAssets }),
 				),
 			),
 		};
 	}
 
-	private buildElementSnapshot(
-		trackId: string,
-		element: TimelineElement,
-	): AutomationElementSnapshot {
+	private buildElementSnapshot({
+		trackId,
+		element,
+		mediaAssets = this.editor.media.getAssets(),
+	}: {
+		trackId: string;
+		element: TimelineElement;
+		mediaAssets?: MediaAsset[];
+	}): AutomationElementSnapshot {
 		const keyframes = getElementKeyframes({ animations: element.animations });
-		const assets = this.editor.media.getAssets();
+		const assets = mediaAssets;
 		const reframe = buildReframeSnapshot({ element });
 		const params =
 			element.type === "graphic" || element.type === "effect"
@@ -2633,7 +2830,7 @@ export class EditorAutomation {
 			),
 			elements: orderedTracks.flatMap((track) =>
 				track.elements.map((element) =>
-					this.buildElementSnapshot(track.id, element),
+					this.buildElementSnapshot({ trackId: track.id, element }),
 				),
 			),
 		};

@@ -128,29 +128,33 @@ export function normalizeScalarChannel({
 	const nextKeys = sortedKeys.map((key, index) => {
 		const previousKey = sortedKeys[index - 1];
 		const nextKey = sortedKeys[index + 1];
+		const { leftHandle: _leftHandle, rightHandle: _rightHandle, ...keyFields } =
+			key;
+		const leftHandle = previousKey
+			? normalizeLeftHandle({
+					handle: key.leftHandle,
+					leftKey: previousKey,
+					rightKey: key,
+				})
+			: undefined;
+		const rightHandle = nextKey
+			? normalizeRightHandle({
+					handle: key.rightHandle,
+					leftKey: key,
+					rightKey: nextKey,
+				})
+			: undefined;
 		return {
-			...key,
-			leftHandle:
-				previousKey != null
-					? normalizeLeftHandle({
-							handle: key.leftHandle,
-							leftKey: previousKey,
-							rightKey: key,
-						})
-					: undefined,
-			rightHandle:
-				nextKey != null
-					? normalizeRightHandle({
-							handle: key.rightHandle,
-							leftKey: key,
-							rightKey: nextKey,
-						})
-					: undefined,
+			...keyFields,
+			...(leftHandle ? { leftHandle } : {}),
+			...(rightHandle ? { rightHandle } : {}),
 		};
 	});
+	const { extrapolation, ...channelFields } = channel;
 
 	return {
-		...channel,
+		...channelFields,
+		...(extrapolation ? { extrapolation } : {}),
 		keys: nextKeys,
 	};
 }

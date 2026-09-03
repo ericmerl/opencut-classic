@@ -25,6 +25,16 @@ export class BatchCommand extends Command {
 		return latestSelectionResult;
 	}
 
+	async preparePersistence(): Promise<void> {
+		for (const command of this.commands) await command.preparePersistence();
+	}
+
+	async rollbackPersistence(): Promise<void> {
+		for (const command of [...this.commands].reverse()) {
+			await command.rollbackPersistence();
+		}
+	}
+
 	undo(): void {
 		for (const command of [...this.commands].reverse()) {
 			command.undo();

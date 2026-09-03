@@ -18,6 +18,9 @@ import { SubjectTrackingService } from "./track-subject";
 import { OperationLedger } from "./operation-ledger";
 import { PreviewEvidenceStore } from "./preview-evidence-store";
 import { PreviewFrameService } from "./preview-frame-service";
+import { EditPlanPreflightStore } from "./edit-plan-preflight-store";
+import { EditPlanPreflightService } from "./edit-plan-preflight-service";
+import { EDIT_PLAN_PREFLIGHT_SCHEMA } from "./edit-plan-preflight-contract";
 import { parseJsonValue, type JsonValue } from "./operation-ledger-schema";
 import {
 	McpLedgerBoundary,
@@ -76,8 +79,11 @@ import {
 	saveProjectInputSchema,
 	getSaveReceiptInputSchema,
 	getPreviewFrameInputSchema,
+	getEditPlanPreflightInputSchema,
+	listEditPlanPreflightsInputSchema,
 	listPreviewFramesInputSchema,
 	renderPreviewFrameInputSchema,
+	preflightEditPlanInputSchema,
 	queueExportInputSchema,
 	queueExportBatchInputSchema,
 	recordExportInspectionInputSchema,
@@ -115,6 +121,15 @@ const previewEvidence = new PreviewEvidenceStore(
 await previewEvidence.readiness();
 const bridge = new EditorBridge({ token, port, previewEvidence });
 const previewFrames = new PreviewFrameService(bridge, previewEvidence);
+const editPlanPreflightStore = new EditPlanPreflightStore(
+	process.env.OPENCUT_EDIT_PLAN_PREFLIGHT_DIR ??
+		join(exportReceipts.directory, "edit-plan-preflights"),
+);
+await editPlanPreflightStore.readiness();
+const editPlanPreflights = new EditPlanPreflightService(
+	bridge,
+	editPlanPreflightStore,
+);
 const normalizeAudio = new NormalizeAudioOperation(bridge);
 const audioCleanup = new AudioCleanupService(
 	bridge,
@@ -330,6 +345,51 @@ function createServer(): McpServer {
 			toolResult({
 				operation: await operationLedger.get(operationId),
 				versions: await operationLedger.versions(operationId),
+			}),
+	);
+
+	server.registerTool(
+		"opencut_preflight_edit_plan",
+		{
+			description:
+				"Validate and deterministically expand a complete edit plan against a verified saved project without changing editor, playback, history, or persistence state.",
+			inputSchema: preflightEditPlanInputSchema,
+		},
+		async (input) => toolResult(await editPlanPreflights.preflight(input)),
+	);
+
+	server.registerTool(
+		"opencut_get_edit_plan_preflight",
+		{
+			description:
+				"Read and integrity-verify one immutable edit-plan preflight receipt.",
+			inputSchema: getEditPlanPreflightInputSchema,
+		},
+		async ({ receiptId }) => {
+			const receipt = await editPlanPreflightStore.get(receiptId);
+			return toolResult(
+				receipt
+					? { schemaVersion: EDIT_PLAN_PREFLIGHT_SCHEMA, status: "found", receipt }
+					: {
+							schemaVersion: EDIT_PLAN_PREFLIGHT_SCHEMA,
+							status: "not-found",
+							receiptId,
+						},
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_edit_plan_preflights",
+		{
+			description:
+				"List immutable edit-plan preflight receipts with stable cursor pagination.",
+			inputSchema: listEditPlanPreflightsInputSchema,
+		},
+		async (input) =>
+			toolResult({
+				schemaVersion: EDIT_PLAN_PREFLIGHT_SCHEMA,
+				...(await editPlanPreflightStore.list(input)),
 			}),
 	);
 
@@ -566,8 +626,48 @@ function createServer(): McpServer {
 				"Atomically update project settings; create or configure tracks; insert native graphics, stickers, adjustment layers, text, or timed captions; author or remove visual masks; create, break apart, or inspect persistent compound clips; create or clear persistent element groups and links; crop or reframe clips; separate and automatically link video source audio; enable or detach a cleaned source; apply dialogue ducking; set audio gain, mute, fades, or uniform mix gain; manage clip effects, keyframes, and transitions; duplicate, delete, or move relationship sets; or retime, parameterize, split, and trim elements with optional ripple behavior. Read the project first and use its current revision.",
 			inputSchema: withProjectMutationSafety(editPlanInputSchema),
 		},
-		async (plan) =>
-			toolResult(
+		async (plan) => {
+			const { preflight, ...browserPlan } = plan;
+			let browserRequest: Record<string, unknown> = browserPlan;
+			if (preflight) {
+				if (
+					plan.bridgeProtocolVersion !== 2 ||
+					!plan.expectedConnectionIdentity ||
+					!plan.expectedProjectContentHash
+				) {
+					throw new Error(
+						"a verified preflight requires bridge protocol v2, connection affinity, and a project content hash",
+					);
+				}
+				const verified = await editPlanPreflights.verifiedApplication({
+						projectId: plan.projectId,
+						expectedRevision: plan.expectedRevision,
+						expectedProjectContentHash: plan.expectedProjectContentHash,
+						expectedConnectionIdentity: plan.expectedConnectionIdentity,
+						description: plan.description,
+						operations: plan.operations,
+						preflight,
+					});
+				const source = verified.evaluation.source;
+				browserRequest = {
+					...browserPlan,
+					contractVersion: 2,
+					bridgeProtocolVersion: 2,
+					expectedConnectionIdentity: plan.expectedConnectionIdentity,
+					sceneId: source.sceneId,
+					expectedProjectContentHash: source.canonicalProjectHash,
+					expectedWriteVersion: source.durableWriteVersion,
+					saveReceiptOperationId: source.saveOperationId,
+					expectedSaveReceiptId: source.saveReceiptId,
+					operations: verified.evaluation.resolvedOperations,
+					preflight: {
+						preflightId: verified.receipt.preflightId,
+						receiptId: verified.receipt.receiptId,
+						evaluation: verified.evaluation,
+					},
+				};
+			}
+			return toolResult(
 				await ledgerBoundary.execute(
 					"opencut_apply_edit_plan",
 					plan,
@@ -576,10 +676,11 @@ function createServer(): McpServer {
 							context,
 							bridge,
 							"apply_edit_plan",
-							plan,
+							browserRequest,
 						),
 				),
-			),
+			);
+		},
 	);
 
 	server.registerTool(
@@ -1121,6 +1222,7 @@ function shutdown(): void {
 	bridge.stop();
 	operationLedger.close();
 	previewEvidence.close();
+	editPlanPreflightStore.close();
 	void handle.close();
 }
 

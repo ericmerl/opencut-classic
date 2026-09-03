@@ -21,6 +21,7 @@ import { findTrackInSceneTracks } from "@/timeline/track-element-update";
 import { generateUUID } from "@/utils/id";
 import { mediaTime, type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 import type { AutomationEditOperation } from "./types";
+import { ResolvedObjectIds } from "./resolved-object-ids";
 
 type CreateCompoundOperation = Extract<
 	AutomationEditOperation,
@@ -139,12 +140,22 @@ function createCompound({
 }): { tracks: SceneTracks; selection: ElementRef[] } {
 	validateCompoundOperation({ tracks, operation });
 	const entries = requireDistinctEntries({ tracks, refs: operation.elements });
+	const resolvedIds = new ResolvedObjectIds(operation.resolvedAllocations);
 	const span = elementSpan(entries);
 	const selectedKeys = new Set(entries.map(entryKey));
+	const selectsMain = entries.some((entry) => entry.trackId === tracks.main.id);
 	const nestedTracks = buildNestedTracks({
 		tracks,
 		selectedKeys,
 		timeOrigin: span.startTime,
+		emptyMainTrackId: selectsMain
+			? undefined
+			: takeDeclaredId({
+					resolvedIds,
+					role: "compound-empty-main-track",
+					sourceId: "",
+					declared: operation.emptyMainTrackId,
+				}),
 	});
 	const compound: CompoundElement = {
 		id: operation.compoundId,
@@ -184,8 +195,17 @@ function createCompound({
 		tracks: withoutSelected,
 		placementResult,
 		elements: [compound],
+		newTrackId: operation.targetTrackId
+			? undefined
+			: takeDeclaredId({
+					resolvedIds,
+					role: "compound-auto-track",
+					sourceId: "",
+					declared: operation.autoTrackId,
+				}),
 	});
 	if (!applied) throw new Error("compound clip placement failed");
+	resolvedIds.assertExhausted();
 	return {
 		tracks: applied.updatedTracks,
 		selection: [
@@ -210,6 +230,29 @@ function breakApartCompound({
 		throw new Error("compound clip not found");
 	}
 	const compound = entry.element;
+	const nestedElements: TimelineElement[] = [];
+	for (const track of orderedTracks(compound.tracks)) {
+		nestedElements.push(...(track.elements as TimelineElement[]));
+	}
+	if (
+		operation.restoredElementIds &&
+		operation.restoredElementIds.length !== nestedElements.length
+	) {
+		throw new Error("restored element IDs must cover compound members");
+	}
+	const resolvedIds = new ResolvedObjectIds(operation.resolvedAllocations);
+	const restoredIds = new Map(
+		nestedElements.map((element, index) => [
+			element.id,
+			takeDeclaredIdRequired({
+				resolvedIds,
+				role: "break-apart-element",
+				sourceId: element.id,
+				declared: operation.restoredElementIds?.[index],
+				legacyFallback: () => element.id,
+			}),
+		]),
+	);
 	let restored = mapTracks({
 		tracks,
 		update: (track) => ({
@@ -225,6 +268,7 @@ function breakApartCompound({
 			timeOffset: mediaTime({
 				ticks: compound.startTime - compound.trimStart,
 			}),
+			remapElementIds: restoredIds,
 		});
 		const elements: TimelineElement[] = [...translatedTrack.elements];
 		const existing = findTrackInSceneTracks({
@@ -254,6 +298,7 @@ function breakApartCompound({
 			})),
 		);
 	}
+	resolvedIds.assertExhausted();
 	return { tracks: restored, selection };
 }
 
@@ -261,10 +306,12 @@ function buildNestedTracks({
 	tracks,
 	selectedKeys,
 	timeOrigin,
+	emptyMainTrackId,
 }: {
 	tracks: SceneTracks;
 	selectedKeys: Set<string>;
 	timeOrigin: MediaTime;
+	emptyMainTrackId?: string;
 }): SceneTracks {
 	const selectTrack = <TTrack extends TimelineTrack>(track: TTrack): TTrack =>
 		({
@@ -283,7 +330,10 @@ function buildNestedTracks({
 		main:
 			selectedMain.elements.length > 0
 				? selectedMain
-				: buildEmptyTrack({ id: generateUUID(), type: "video" }),
+				: buildEmptyTrack({
+						id: emptyMainTrackId ?? generateUUID(),
+						type: "video",
+					}),
 		overlay: tracks.overlay
 			.map(selectTrack)
 			.filter((track) => track.elements.length > 0),
@@ -310,57 +360,102 @@ function restoreMissingTrack({
 	return { ...tracks, overlay: [...tracks.overlay, overlayTrack] };
 }
 
-function translateTrack({
+function translateTrack<TTrack extends TimelineTrack>({
 	track,
 	timeOffset,
+	remapElementIds,
 }: {
-	track: TimelineTrack;
+	track: TTrack;
 	timeOffset: MediaTime;
-}): TimelineTrack {
+	remapElementIds: ReadonlyMap<string, string>;
+}): TTrack {
 	const translateStart = (startTime: MediaTime) =>
 		mediaTime({ ticks: timeOffset + startTime });
+	const translateElement = (element: TimelineElement): TimelineElement => ({
+		...element,
+		id: remapElementIds.get(element.id) ?? element.id,
+		startTime: translateStart(element.startTime),
+		...(element.transitionIn
+			? {
+					transitionIn: {
+						...element.transitionIn,
+						fromElementId:
+							remapElementIds.get(element.transitionIn.fromElementId) ??
+							element.transitionIn.fromElementId,
+					},
+				}
+			: {}),
+	});
 	switch (track.type) {
 		case "video":
 			return {
 				...track,
-				elements: track.elements.map((element) => ({
-					...element,
-					startTime: translateStart(element.startTime),
-				})),
-			};
+				elements: track.elements.map((element) => translateElement(element)),
+			} as TTrack;
 		case "text":
 			return {
 				...track,
-				elements: track.elements.map((element) => ({
-					...element,
-					startTime: translateStart(element.startTime),
-				})),
-			};
+				elements: track.elements.map((element) => translateElement(element)),
+			} as TTrack;
 		case "audio":
 			return {
 				...track,
-				elements: track.elements.map((element) => ({
-					...element,
-					startTime: translateStart(element.startTime),
-				})),
-			};
+				elements: track.elements.map((element) => translateElement(element)),
+			} as TTrack;
 		case "graphic":
 			return {
 				...track,
-				elements: track.elements.map((element) => ({
-					...element,
-					startTime: translateStart(element.startTime),
-				})),
-			};
+				elements: track.elements.map((element) => translateElement(element)),
+			} as TTrack;
 		case "effect":
 			return {
 				...track,
-				elements: track.elements.map((element) => ({
-					...element,
-					startTime: translateStart(element.startTime),
-				})),
-			};
+				elements: track.elements.map((element) => translateElement(element)),
+			} as TTrack;
 	}
+}
+
+function takeDeclaredId({
+	resolvedIds,
+	role,
+	sourceId,
+	declared,
+	legacyFallback = generateUUID,
+}: {
+	resolvedIds: ResolvedObjectIds;
+	role: "compound-auto-track" | "compound-empty-main-track" | "break-apart-element";
+	sourceId: string;
+	declared: string | undefined;
+	legacyFallback?: () => string;
+}): string | undefined {
+	if (!resolvedIds.strict && declared === undefined) return undefined;
+	const resolved = resolvedIds.take({
+		role,
+		sourceId,
+		fallback: () => declared ?? legacyFallback(),
+	});
+	if (declared !== undefined && declared !== resolved) {
+		throw new Error(`declared ${role} ID does not match native allocation`);
+	}
+	return resolved;
+}
+
+function takeDeclaredIdRequired(
+	options: Parameters<typeof takeDeclaredId>[0],
+): string {
+	const resolved = options.resolvedIds.take({
+		role: options.role,
+		sourceId: options.sourceId,
+		fallback: () =>
+			options.declared ?? options.legacyFallback?.() ?? generateUUID(),
+	});
+	if (options.declared !== undefined && options.declared !== resolved) {
+		throw new Error(`declared ${options.role} ID does not match native allocation`);
+	}
+	if (resolved === undefined) {
+		throw new Error(`missing declared ${options.role} ID`);
+	}
+	return resolved;
 }
 
 function appendTrackElements({

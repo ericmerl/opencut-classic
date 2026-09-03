@@ -48,7 +48,7 @@ integrationTest(
 			bridgePort,
 			profileDirectory,
 			receiptDirectory,
-			dropBrowserResponseOperationId: "public-receipt-recovery-audio",
+			dropBrowserResponseOperationId: "public-complex-preflight-loss",
 		});
 		const initialStatus = await first.callTool("opencut_connection_status", {});
 		expect(initialStatus.connected).toBe(false);
@@ -100,77 +100,255 @@ integrationTest(
 		).toBe(sourceHash);
 
 		const importedContentHash = requireProjectContentHash(importedSnapshot);
-		const editRequest = {
+		const sourceSaveRequest = {
 			...affinity(initialIdentity),
 			projectId,
-			operationId: "public-observable-grade",
+			sceneId: requireString(importedSnapshot.sceneId, "sceneId"),
+			operationId: "public-preflight-source-save",
 			expectedRevision: requireNumber(imported.revision, "revision"),
-			expectedProjectContentHash: importedContentHash,
-			description: "Apply the complete realistic color grade",
-			operations: [
-				{
-					kind: "set_reframe",
-					trackId: requireString(importedElement.trackId, "trackId"),
-					elementId: importedElementId,
-					mode: "cover",
-					focalPoint: { x: 0.62, y: 0.42 },
-				},
-				{
-					kind: "insert_captions",
-					captions: [
-						{
-							text: "EXACT FRAME EVIDENCE",
-							startTime: 0,
-							duration: 120_000,
-						},
-					],
-					style: {
-						fontSize: 7,
-						fontWeight: "bold",
-						fontStyle: "italic",
-						color: "#ffffff",
-						background: {
-							enabled: true,
-							color: "#000000",
-							cornerRadius: 4,
-							paddingX: 8,
-							paddingY: 4,
-						},
-					},
-				},
-				{
-					kind: "upsert_effect",
-					trackId: requireString(importedElement.trackId, "trackId"),
-					elementId: importedElementId,
-					effectId: "public-realistic-grade",
-					effectType: "color-grade",
-					params: {
-						temperature: -3,
-						tint: 2,
-						saturation: -6,
-						exposure: -3,
-						contrast: 12,
-						highlights: -35,
-						shadows: 18,
-						fade: 6,
-					},
-					enabled: true,
-				},
-			],
+			expectedContentHash: importedContentHash,
 		};
-		const edited = await first.callTool("opencut_apply_edit_plan", editRequest);
+		const sourceSaved = await first.callTool(
+			"opencut_save_project",
+			sourceSaveRequest,
+		);
+		expect(sourceSaved).toMatchObject({
+			status: "saved",
+			projectId,
+			contentHash: importedContentHash,
+			readbackContentHash: importedContentHash,
+			reloadVerified: true,
+		});
+		const gradeDescription = "Apply the complete realistic color grade";
+		const gradeOperations = [
+			{
+				kind: "set_reframe",
+				trackId: requireString(importedElement.trackId, "trackId"),
+				elementId: importedElementId,
+				mode: "cover",
+				focalPoint: { x: 0.62, y: 0.42 },
+			},
+			{
+				kind: "insert_captions",
+				captions: [
+					{
+						text: "EXACT FRAME EVIDENCE",
+						startTime: 0,
+						duration: 120_000,
+					},
+				],
+				style: {
+					fontSize: 7,
+					fontWeight: "bold",
+					fontStyle: "italic",
+					color: "#ffffff",
+					background: {
+						enabled: true,
+						color: "#000000",
+						cornerRadius: 4,
+						paddingX: 8,
+						paddingY: 4,
+					},
+				},
+			},
+			{
+				kind: "upsert_effect",
+				trackId: requireString(importedElement.trackId, "trackId"),
+				elementId: importedElementId,
+				effectId: "public-realistic-grade",
+				effectType: "color-grade",
+				params: {
+					temperature: -3,
+					tint: 2,
+					saturation: -6,
+					exposure: -3,
+					contrast: 12,
+					highlights: -35,
+					shadows: 18,
+					fade: 6,
+				},
+				enabled: true,
+			},
+		];
+		const preflightRequest = {
+			contractVersion: 2,
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: initialIdentity,
+			preflightId: "public-complex-preflight-loss",
+			projectId,
+			sceneId: sourceSaveRequest.sceneId,
+			expectedRevision: sourceSaveRequest.expectedRevision,
+			expectedProjectContentHash: importedContentHash,
+			expectedWriteVersion: requireNumber(sourceSaved.writeVersion, "writeVersion"),
+			saveReceiptOperationId: sourceSaveRequest.operationId,
+			expectedSaveReceiptId: requireString(sourceSaved.receiptId, "receiptId"),
+			description: gradeDescription,
+			operations: gradeOperations,
+			policy: {
+				warningPolicy: "allow",
+				providerExecution: "forbidden",
+				costPolicy: "require-exact",
+			},
+		};
+		const preflightProbe = await first.callTool(
+			"opencut_preflight_edit_plan",
+			{ ...preflightRequest, preflightId: "public-complex-preflight-probe" },
+			5 * 60_000,
+		);
+		expect(preflightProbe).toMatchObject({
+			disposition: "evaluated",
+			result: { status: "validated" },
+		});
+		const interruptedPreflightCall = first
+			.callTool("opencut_preflight_edit_plan", preflightRequest, 5 * 60_000)
+			.then((value) => ({ status: "unexpected-response" as const, value }))
+			.catch((error: unknown) => ({ status: "interrupted" as const, error }));
+		const preflightDisconnect = await waitForEditorDisconnection(first);
+		expect(preflightDisconnect.connected).toBe(false);
+		await first.callTool("opencut_stop_editor_worker", {});
+		await first.close();
+		expect((await interruptedPreflightCall).status).toBe("interrupted");
+
+		const recovery = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+			dropBrowserResponseOperationId: "public-receipt-recovery-audio",
+		});
+		await recovery.callTool("opencut_start_editor_worker", { projectId });
+		const recoveryStatus = await recovery.callTool(
+			"opencut_connection_status",
+			{},
+		);
+		const recoveryIdentity = requireRecord(
+			recoveryStatus.connectionIdentity,
+			"connectionIdentity",
+		);
+		const recoverySource = await recovery.callTool(
+			"opencut_get_project",
+			affinity(recoveryIdentity),
+		);
+		expect(requireProjectContentHash(recoverySource)).toBe(importedContentHash);
+		const historyBeforePreflight = await recovery.callTool(
+			"opencut_list_operation_history",
+			{ projectId, limit: 100 },
+		);
+		const recoveredPreflight = await recovery.callTool(
+			"opencut_preflight_edit_plan",
+			preflightRequest,
+			5 * 60_000,
+		);
+		expect(recoveredPreflight).toMatchObject({
+			disposition: "replayed",
+			result: { status: "validated", preflightId: preflightRequest.preflightId },
+		});
+		const recoveredPreflightResult = requireRecord(
+			recoveredPreflight.result,
+			"recovered preflight result",
+		);
+		const recoveredNoMutation = requireRecord(
+			recoveredPreflightResult.noMutationProof,
+			"recovered no-mutation proof",
+		);
+		expect(recoveredNoMutation.unchanged).toBe(true);
+		expect(recoveredNoMutation.before).toEqual(recoveredNoMutation.after);
+		const recoveredReceipt = await recovery.callTool(
+			"opencut_get_edit_plan_preflight",
+			{ receiptId: recoveredPreflight.receiptId, verifyIntegrity: true },
+		);
+		expect(recoveredReceipt).toMatchObject({
+			status: "found",
+			receipt: {
+				preflightId: preflightRequest.preflightId,
+				terminalResult: { status: "validated" },
+			},
+		});
+		await expect(
+			recovery.callTool("opencut_preflight_edit_plan", {
+				...preflightRequest,
+				description: `${gradeDescription} changed`,
+			}),
+		).rejects.toThrow();
+
+		const currentPreflightRequest = {
+			...preflightRequest,
+			expectedConnectionIdentity: recoveryIdentity,
+			preflightId: "public-complex-preflight-apply",
+			expectedRevision: requireNumber(recoverySource.revision, "revision"),
+		};
+		const currentPreflight = await recovery.callTool(
+			"opencut_preflight_edit_plan",
+			currentPreflightRequest,
+			5 * 60_000,
+		);
+		expect(currentPreflight).toMatchObject({
+			disposition: "evaluated",
+			result: {
+				status: "validated",
+				preflightId: currentPreflightRequest.preflightId,
+				noMutationProof: { unchanged: true },
+			},
+		});
+		const historyAfterPreflight = await recovery.callTool(
+			"opencut_list_operation_history",
+			{ projectId, limit: 100 },
+		);
+		expect(historyAfterPreflight.entries).toEqual(historyBeforePreflight.entries);
+		const unchangedAfterPreflight = await recovery.callTool(
+			"opencut_get_project",
+			affinity(recoveryIdentity),
+		);
+		expect(requireProjectContentHash(unchangedAfterPreflight)).toBe(
+			importedContentHash,
+		);
+		expect(unchangedAfterPreflight.revision).toBe(recoverySource.revision);
+		const currentTerminal = requireRecord(
+			currentPreflight.result,
+			"current preflight terminal",
+		);
+		const currentEvaluation = requireRecord(
+			currentTerminal.evaluation,
+			"current preflight evaluation",
+		);
+		const editRequest = {
+			...affinity(recoveryIdentity),
+			projectId,
+			operationId: "public-observable-grade",
+			expectedRevision: requireNumber(recoverySource.revision, "revision"),
+			expectedProjectContentHash: importedContentHash,
+			description: gradeDescription,
+			operations: gradeOperations,
+			preflight: {
+				receiptId: currentPreflight.receiptId,
+				planFingerprint: currentEvaluation.planFingerprint,
+				preflightFingerprint: currentEvaluation.preflightFingerprint,
+				planDiffHash: currentEvaluation.planDiffHash,
+			},
+		};
+		const edited = await recovery.callTool(
+			"opencut_apply_edit_plan",
+			editRequest,
+		);
 		expect(edited.status).toBe("applied");
 		const editedSnapshot = requireRecord(edited.snapshot, "snapshot");
 		const contentHash = requireProjectContentHash(editedSnapshot);
+		expect(contentHash).toBe(
+			requireString(
+				currentEvaluation.predictedProjectHash,
+				"predicted project hash",
+			),
+		);
 		const saveRequest = {
-			...affinity(initialIdentity),
+			...affinity(recoveryIdentity),
 			projectId,
 			sceneId: requireString(editedSnapshot.sceneId, "sceneId"),
 			operationId: "public-save-barrier",
 			expectedRevision: requireNumber(edited.revision, "revision"),
 			expectedContentHash: contentHash,
 		};
-		const saved = await first.callTool("opencut_save_project", saveRequest);
+		const saved = await recovery.callTool("opencut_save_project", saveRequest);
 		expect(saved).toMatchObject({
 			status: "saved",
 			projectId,
@@ -180,8 +358,8 @@ integrationTest(
 		});
 		const saveReceiptId = requireString(saved.receiptId, "receiptId");
 		const writeVersion = requireNumber(saved.writeVersion, "writeVersion");
-		const saveReceipt = await first.callTool("opencut_get_save_receipt", {
-			...affinity(initialIdentity),
+		const saveReceipt = await recovery.callTool("opencut_get_save_receipt", {
+			...affinity(recoveryIdentity),
 			operationId: saveRequest.operationId,
 		});
 		expect(saveReceipt).toMatchObject({
@@ -191,7 +369,7 @@ integrationTest(
 		});
 
 		const audioRequest = {
-			...affinity(initialIdentity),
+			...affinity(recoveryIdentity),
 			projectId,
 			operationId: "public-receipt-recovery-audio",
 			expectedRevision: requireNumber(edited.revision, "revision"),
@@ -206,7 +384,7 @@ integrationTest(
 				},
 			],
 		};
-		const interruptedAudio = await first.callTool(
+		const interruptedAudio = await recovery.callTool(
 			"opencut_apply_edit_plan",
 			audioRequest,
 		);
@@ -214,13 +392,13 @@ integrationTest(
 			status: "recoverable",
 			disposition: "unknown",
 		});
-		const disconnectedAfterReceipt = await first.callTool(
+		const disconnectedAfterReceipt = await recovery.callTool(
 			"opencut_connection_status",
 			{},
 		);
 		expect(disconnectedAfterReceipt.connected).toBe(false);
-		await first.callTool("opencut_stop_editor_worker", {});
-		await first.close();
+		await recovery.callTool("opencut_stop_editor_worker", {});
+		await recovery.close();
 		const second = await startMcp({
 			baseUrl,
 			browserPath,
@@ -637,7 +815,7 @@ integrationTest(
 		});
 		await third.callTool("opencut_stop_editor_worker", {});
 	},
-	5 * 60_000,
+	10 * 60_000,
 );
 
 function affinity(identity: Record<string, unknown>) {
@@ -656,6 +834,19 @@ async function startMcp(options: {
 	processes.push(harness);
 	await harness.start();
 	return harness;
+}
+
+async function waitForEditorDisconnection(
+	harness: McpStdioHarness,
+	timeoutMs = 30_000,
+): Promise<Record<string, unknown>> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const status = await harness.callTool("opencut_connection_status", {});
+		if (status.connected === false) return status;
+		await delay(50);
+	}
+	throw new Error("timed out waiting for the faulted editor to disconnect");
 }
 
 class McpStdioHarness {
