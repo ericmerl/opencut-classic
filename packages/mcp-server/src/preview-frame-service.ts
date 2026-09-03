@@ -21,6 +21,8 @@ export interface RenderPreviewFrameInput {
 	expectedWriteVersion: number;
 	saveReceiptOperationId: string;
 	expectedSaveReceiptId: string;
+	capabilitySnapshotHash?: string;
+	wasmSha256?: string;
 	time:
 		| { kind: "frame-index"; frameIndex: number }
 		| {
@@ -36,7 +38,7 @@ export class PreviewFrameService {
 	constructor(
 		private bridge: EditorBridge,
 		private store: PreviewEvidenceStore,
-		private capabilitySnapshotHash?: () => Promise<string>,
+		private capabilitySnapshot?: () => Promise<unknown>,
 	) {}
 
 	async render(
@@ -45,7 +47,10 @@ export class PreviewFrameService {
 	): Promise<Record<string, unknown>> {
 		const prior = await this.store.getByOperation(input.operationId);
 		if (prior) return response(prior, "replayed");
-		const capabilitySnapshotHash = await this.capabilitySnapshotHash?.();
+		const capabilitySnapshot = await this.capabilitySnapshot?.();
+		const capabilitySnapshotHash =
+			readCapabilitySnapshotHash(capabilitySnapshot);
+		const wasmSha256 = readCapabilityWasmSha256(capabilitySnapshot);
 		const ticket = this.store.createTicket(
 			input.operationId,
 			input.canvasSize.width,
@@ -55,11 +60,16 @@ export class PreviewFrameService {
 			context,
 			this.bridge,
 			"render_preview_frame",
-			{ ...input, url: ticket.url },
+			{
+				...input,
+				url: ticket.url,
+				...(capabilitySnapshotHash ? { capabilitySnapshotHash } : {}),
+				...(wasmSha256 ? { wasmSha256 } : {}),
+			},
 			"exact-frame-render",
 			5 * 60_000,
 		);
-		return this.finalize(input, browserResult, capabilitySnapshotHash);
+		return this.finalize(input, browserResult, capabilitySnapshot);
 	}
 
 	async recover(
@@ -70,7 +80,7 @@ export class PreviewFrameService {
 		if (prior) return response(prior, "replayed");
 		const recovered = await context.recoverBrowserStep("exact-frame-render");
 		return recovered
-			? this.finalize(input, recovered, await this.capabilitySnapshotHash?.())
+			? this.finalize(input, recovered, await this.capabilitySnapshot?.())
 			: null;
 	}
 
@@ -97,7 +107,7 @@ export class PreviewFrameService {
 	private async finalize(
 		input: RenderPreviewFrameInput,
 		value: unknown,
-		capabilitySnapshotHash?: string,
+		capabilitySnapshot?: unknown,
 	): Promise<Record<string, unknown>> {
 		if (!isRecord(value))
 			throw new Error("editor returned an invalid exact-frame result");
@@ -129,8 +139,12 @@ export class PreviewFrameService {
 				format: input.format,
 			}),
 		);
+		const browserEnvironment = isRecord(result.renderer.environment)
+			? result.renderer.environment
+			: null;
 		const capabilityHash =
-			capabilitySnapshotHash ??
+			readStringField(browserEnvironment, "capabilitySnapshotHash") ??
+			readCapabilitySnapshotHash(capabilitySnapshot) ??
 			sha256(
 				stableSerialize({
 					contractVersion: 2,
@@ -142,6 +156,12 @@ export class PreviewFrameService {
 				}),
 			);
 		const receiptId = `preview:${input.operationId}`;
+		const wasmSha256 =
+			readStringField(browserEnvironment, "wasmSha256") ??
+			readCapabilityWasmSha256(capabilitySnapshot);
+		const renderEnvironment = browserEnvironment
+			? { ...browserEnvironment, wasmSha256 }
+			: null;
 		const receipt: PreviewFrameReceipt = {
 			schemaVersion: 2,
 			receiptId,
@@ -187,6 +207,14 @@ export class PreviewFrameService {
 				wasmPackageVersion: "0.2.10",
 				renderSpecFingerprint,
 				capabilityHash,
+				...(renderEnvironment
+					? {
+							environment: {
+								...renderEnvironment,
+								fingerprint: sha256(stableSerialize(renderEnvironment)),
+							} as NonNullable<PreviewFrameReceipt["renderer"]["environment"]>,
+						}
+					: {}),
 				executionIdentity: result.renderer
 					.executionIdentity as PreviewFrameReceipt["renderer"]["executionIdentity"],
 			},
@@ -258,6 +286,26 @@ function requireRenderedResult(value: unknown, input: RenderPreviewFrameInput) {
 		editorState: Record<string, unknown>;
 		sourceVerification: Record<string, unknown>;
 	};
+}
+
+function readCapabilitySnapshotHash(value: unknown): string | null {
+	if (typeof value === "string") return value;
+	return isRecord(value) && typeof value.snapshotHash === "string"
+		? value.snapshotHash
+		: null;
+}
+
+function readStringField(
+	value: Record<string, unknown> | null,
+	key: string,
+): string | null {
+	return typeof value?.[key] === "string" ? value[key] : null;
+}
+
+function readCapabilityWasmSha256(value: unknown): string | null {
+	if (!isRecord(value) || !isRecord(value.renderer)) return null;
+	const wasm = value.renderer.wasm;
+	return isRecord(wasm) && typeof wasm.sha256 === "string" ? wasm.sha256 : null;
 }
 
 function response(

@@ -89,7 +89,6 @@ describe("CapabilitySnapshotService", () => {
 			}),
 			environment: {
 				OPENCUT_BUILD_COMMIT: "b".repeat(40),
-				OPENCUT_PINNED_COMPOSITOR_BACKEND: "opencut-wasm-webgl",
 				OPENCUT_FFMPEG_PATH: "missing-ffmpeg-for-test",
 				OPENCUT_FFPROBE_PATH: "missing-ffprobe-for-test",
 				OPENCUT_AUDIO_CLEANER_COMMAND: process.execPath,
@@ -102,9 +101,12 @@ describe("CapabilitySnapshotService", () => {
 			editor: { status: "ready", connected: true },
 			renderer: {
 				status: "ready",
-				selectedBackend: "opencut-wasm-webgl",
-				pinnedBackend: "opencut-wasm-webgl",
+				selectedBackend: "webgpu",
+				pinnedBackend: "webgpu",
 				isPinned: true,
+				rendererClass: "software",
+				adapter: { description: "SwiftShader", isFallbackAdapter: true },
+				surfaceFormat: "bgra8unorm",
 				reportedWasmPackageVersion: "0.2.10",
 				wasmMatchesEditor: true,
 				browser: "test-browser",
@@ -119,9 +121,56 @@ describe("CapabilitySnapshotService", () => {
 			},
 		});
 	});
+
+	test("reports compositor initialization failure as renderer unavailable", async () => {
+		const bridge = fakeBridge(true, {
+			status: "unavailable",
+			reason: "No WebGPU adapter is available",
+			compositorBackend: "unknown",
+			wasmPackageVersion: "0.2.10",
+			renderer: {
+				status: "unavailable",
+				reason: "No WebGPU adapter is available",
+				adapter: null,
+				surfaceFormat: "unknown",
+			},
+		});
+		const snapshot = await new CapabilitySnapshotService({
+			bridge,
+			worker: fakeWorker(directory),
+			stateDirectory: directory,
+			queueState: emptyQueueState,
+			environment: {
+				OPENCUT_BUILD_COMMIT: "f".repeat(40),
+				OPENCUT_FFMPEG_PATH: "missing-ffmpeg-for-test",
+				OPENCUT_FFPROBE_PATH: "missing-ffprobe-for-test",
+			},
+		}).capture();
+
+		expect(snapshot.renderer).toMatchObject({
+			status: "unavailable",
+			reason: "No WebGPU adapter is available",
+			selectedBackend: "unknown",
+			isPinned: false,
+		});
+	});
 });
 
-function fakeBridge(connected: boolean) {
+async function emptyQueueState() {
+	return {
+		jobs: {
+			total: 0,
+			queued: 0,
+			running: 0,
+			completed: 0,
+			failed: 0,
+			cancelled: 0,
+		},
+		batches: 0,
+	};
+}
+
+function fakeBridge(connected: boolean, runtime: unknown = connectedRuntime()) {
 	return {
 		getStatus: () => ({
 			connected,
@@ -139,20 +188,32 @@ function fakeBridge(connected: boolean) {
 					}
 				: null,
 		}),
-		request: async () => ({
+		request: async () => runtime,
+	};
+}
+
+function connectedRuntime() {
+	return {
+		status: "ready",
+		compositorBackend: "webgpu",
+		wasmPackageVersion: "0.2.10",
+		browser: "test-browser",
+		renderer: {
 			status: "ready",
-			compositorBackend: "opencut-wasm-webgl",
-			wasmPackageVersion: "0.2.10",
-			browser: "test-browser",
-			fonts: {
-				status: "ready",
-				presets: [{ id: "default-caption", status: "ready" }],
-			},
-			timelineTranscription: {
-				status: "ready",
-				model: { status: "unknown", id: null, version: null },
-			},
-		}),
+			reason: null,
+			rendererClass: "software",
+			adapterMatchesClass: true,
+			adapter: { description: "SwiftShader", isFallbackAdapter: true },
+			surfaceFormat: "bgra8unorm",
+		},
+		fonts: {
+			status: "ready",
+			presets: [{ id: "default-caption", status: "ready" }],
+		},
+		timelineTranscription: {
+			status: "ready",
+			model: { status: "unknown", id: null, version: null },
+		},
 	};
 }
 
@@ -167,6 +228,8 @@ function fakeWorker(directory: string) {
 			browserPath: null,
 			projectId: null,
 			lastError: null,
+			rendererClass: "software" as const,
+			pinnedCompositorBackend: "webgpu" as const,
 		}),
 	};
 }

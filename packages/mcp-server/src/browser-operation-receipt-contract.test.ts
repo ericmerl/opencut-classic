@@ -36,4 +36,19 @@ describe("browser operation receipt canonical fingerprints", () => {
 			browserRequestFingerprint({ value: "invalid-\ud800" }),
 		).toThrow("invalid Unicode");
 	});
+
+	test("excludes render-environment evidence transported to the browser", () => {
+		const baseline = browserRequestFingerprint({
+			operationId: "preview-1",
+			projectId: "project-1",
+		});
+		expect(
+			browserRequestFingerprint({
+				operationId: "preview-1",
+				projectId: "project-1",
+				capabilitySnapshotHash: "a".repeat(64),
+				wasmSha256: "b".repeat(64),
+			}),
+		).toBe(baseline);
+	});
 });

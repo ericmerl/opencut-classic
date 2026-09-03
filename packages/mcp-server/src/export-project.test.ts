@@ -64,6 +64,7 @@ describe("ExportProjectService", () => {
 						bytesWritten: 123,
 						sha256: "a".repeat(64),
 						contentIdentity: hashedContentIdentity("b", 2),
+						renderEnvironment: renderEnvironment(),
 					};
 				}
 				throw new Error(`unexpected method: ${method}`);
@@ -100,7 +101,10 @@ describe("ExportProjectService", () => {
 			bridge,
 			receipts,
 			validator,
-			async () => "c".repeat(64),
+			async () => ({
+				snapshotHash: "c".repeat(64),
+				renderer: { wasm: { sha256: "e".repeat(64) } },
+			}),
 		).export(input(directory));
 		const replay = await new ExportProjectService(
 			bridge,
@@ -112,6 +116,12 @@ describe("ExportProjectService", () => {
 		expect(first).toMatchObject({
 			status: "exported",
 			capabilitySnapshotHash: "c".repeat(64),
+			renderer: {
+				environment: {
+					wasmSha256: "e".repeat(64),
+					fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+				},
+			},
 			validation: { status: "validated", fullDecode: true },
 			inspection: { status: "pending", outputSha256: "a".repeat(64) },
 		});
@@ -124,6 +134,8 @@ describe("ExportProjectService", () => {
 		expect(verifyCount).toBe(2);
 		expect(exportRequest).toMatchObject({
 			canvasSize: { width: 1080, height: 1080 },
+			capabilitySnapshotHash: "c".repeat(64),
+			wasmSha256: "e".repeat(64),
 		});
 		expect(validationRequest).toMatchObject({
 			expectedWidth: 1080,
@@ -398,5 +410,28 @@ function verifiedSave(seed = "b") {
 		receiptId: "save-receipt-1",
 		contentHash: seed.repeat(64),
 		reloadVerified: true,
+	};
+}
+
+function renderEnvironment() {
+	return {
+		status: "ready",
+		reason: null,
+		compositor: "opencut-wasm-webgl",
+		backend: "webgpu",
+		pinnedBackend: "webgpu",
+		backendMatchesPin: true,
+		rendererClass: "software",
+		adapterMatchesClass: true,
+		adapter: {
+			vendor: "Google",
+			architecture: "swiftshader",
+			device: "SwiftShader Device",
+			description: "SwiftShader",
+			isFallbackAdapter: true,
+		},
+		surfaceFormat: "bgra8unorm",
+		browser: "test-browser",
+		wasmPackageVersion: "0.2.10",
 	};
 }

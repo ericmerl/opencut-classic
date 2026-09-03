@@ -26,6 +26,7 @@ import type {
 	OperationReceiptAfterState,
 	OperationReceiptBinding,
 } from "@/services/storage/types";
+import type { RenderEnvironmentIdentity } from "@/services/renderer/render-environment";
 
 export interface AutomationElementSnapshot {
 	trackId: string;
@@ -1071,6 +1072,8 @@ export interface AutomationExportRequest {
 	canvasSize?: TCanvasSize;
 	expectedProjectContentHash?: string;
 	bridgeProtocolVersion?: 1 | 2;
+	capabilitySnapshotHash?: string;
+	wasmSha256?: string;
 }
 
 export interface AutomationExportCompletedResult {
@@ -1085,6 +1088,10 @@ export interface AutomationExportCompletedResult {
 	contentIdentity: ProjectContentHashResult;
 	saveReceiptId: string;
 	savedContentHash: string;
+	renderEnvironment: RenderEnvironmentIdentity & {
+		capabilitySnapshotHash?: string;
+		wasmSha256?: string;
+	};
 }
 
 export type AutomationExportResult =
@@ -1124,6 +1131,8 @@ export interface AutomationRenderPreviewFrameRequest {
 	expectedWriteVersion: number;
 	saveReceiptOperationId: string;
 	expectedSaveReceiptId: string;
+	capabilitySnapshotHash?: string;
+	wasmSha256?: string;
 	time: AutomationPreviewTimeSelector;
 	canvasSize: TCanvasSize;
 	format: "png";
@@ -1194,6 +1203,10 @@ export interface AutomationRenderPreviewFrameCompletedResult {
 		compositor: "opencut-wasm-webgl";
 		browser: string;
 		encoder: "browser-canvas-png";
+		environment: RenderEnvironmentIdentity & {
+			capabilitySnapshotHash?: string;
+			wasmSha256?: string;
+		};
 		executionIdentity: AutomationRenderPreviewFrameRequest["expectedConnectionIdentity"];
 	};
 	editorState: {

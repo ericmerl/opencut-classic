@@ -106,6 +106,8 @@ interface CapabilityWorker {
 		browserPath: string | null;
 		projectId: string | null;
 		lastError: string | null;
+		rendererClass: "software" | "hardware";
+		pinnedCompositorBackend: "webgpu";
 	};
 }
 
@@ -175,6 +177,7 @@ export class CapabilitySnapshotService {
 			runtime: editorRuntime,
 		};
 		const selectedBackend = readStringField(editorRuntime, "compositorBackend");
+		const rendererRuntime = readRecordField(editorRuntime, "renderer");
 		const reportedWasmPackageVersion = readStringField(
 			editorRuntime,
 			"wasmPackageVersion",
@@ -183,8 +186,8 @@ export class CapabilitySnapshotService {
 			reportedWasmPackageVersion === null
 				? null
 				: reportedWasmPackageVersion === wasm.packageVersion;
-		const pinnedBackend =
-			this.environment.OPENCUT_PINNED_COMPOSITOR_BACKEND ?? null;
+		const pinnedBackend = workerStatus.pinnedCompositorBackend;
+		const runtimeRendererStatus = readStringField(rendererRuntime, "status");
 		const content = {
 			schemaVersion: CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
 			capturedAt,
@@ -222,17 +225,28 @@ export class CapabilitySnapshotService {
 			editor,
 			renderer: {
 				status:
-					selectedBackend === null
-						? "unknown"
-						: wasm.status === "ready" && wasmMatchesEditor !== false
-							? "ready"
-							: "degraded",
+					runtimeRendererStatus === "unavailable"
+						? "unavailable"
+						: selectedBackend === null
+							? "unknown"
+							: runtimeRendererStatus === "ready" &&
+								  wasm.status === "ready" &&
+								  wasmMatchesEditor !== false
+								? "ready"
+								: "degraded",
+				reason: readStringField(rendererRuntime, "reason"),
 				selectedBackend,
 				pinnedBackend,
-				isPinned:
-					selectedBackend !== null &&
-					pinnedBackend !== null &&
-					selectedBackend === pinnedBackend,
+				isPinned: selectedBackend === pinnedBackend,
+				rendererClass:
+					readStringField(rendererRuntime, "rendererClass") ??
+					(workerStatus.running ? workerStatus.rendererClass : "unknown"),
+				adapterMatchesClass: readBooleanField(
+					rendererRuntime,
+					"adapterMatchesClass",
+				),
+				adapter: readRecordField(rendererRuntime, "adapter"),
+				surfaceFormat: readStringField(rendererRuntime, "surfaceFormat"),
 				reportedWasmPackageVersion,
 				wasmMatchesEditor,
 				browser: readStringField(editorRuntime, "browser"),
@@ -606,6 +620,13 @@ function readRecordField(
 	key: string,
 ): Record<string, unknown> | null {
 	return isRecord(value?.[key]) ? value[key] : null;
+}
+
+function readBooleanField(
+	value: Record<string, unknown> | null,
+	key: string,
+): boolean | null {
+	return typeof value?.[key] === "boolean" ? value[key] : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

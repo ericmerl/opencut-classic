@@ -13,14 +13,24 @@ export function initializeGpuRenderer(): Promise<void> {
 		initPromise = initializeGpu()
 			.then(() => {
 				gpuAvailable = true;
+				gpuInitializationState().error = null;
 			})
 			.catch((error: unknown) => {
 				gpuAvailable = false;
 				const message = error instanceof Error ? error.message : String(error);
+				gpuInitializationState().error = message;
 				console.warn(`GPU renderer unavailable: ${message}`);
 			});
 	}
 	return initPromise;
+}
+
+function gpuInitializationState(): { error: string | null } {
+	const scope = globalThis as typeof globalThis & {
+		__opencutGpuInitialization?: { error: string | null };
+	};
+	scope.__opencutGpuInitialization ??= { error: null };
+	return scope.__opencutGpuInitialization;
 }
 
 export function isGpuAvailable(): boolean {

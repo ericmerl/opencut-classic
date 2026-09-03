@@ -28,6 +28,8 @@ describe("preview frame response-loss recovery", () => {
 			.png()
 			.toBuffer();
 		let invocations = 0;
+		let snapshotHash = "c".repeat(64);
+		let wasmSha256 = "d".repeat(64);
 		const durableBrowserResult: {
 			current: ReturnType<typeof browserResult> | null;
 		} = { current: null };
@@ -53,8 +55,13 @@ describe("preview frame response-loss recovery", () => {
 				throw new Error("simulated socket response loss");
 			},
 		};
-		const service = new PreviewFrameService(bridge as never, store, async () =>
-			"c".repeat(64),
+		const service = new PreviewFrameService(
+			bridge as never,
+			store,
+			async () => ({
+				snapshotHash,
+				renderer: { wasm: { sha256: wasmSha256 } },
+			}),
 		);
 		const input = previewInput();
 		await expect(service.render(input, context(null))).rejects.toThrow(
@@ -64,6 +71,8 @@ describe("preview frame response-loss recovery", () => {
 		const committedBrowserResult = durableBrowserResult.current;
 		if (!committedBrowserResult)
 			throw new Error("browser terminal receipt was not captured");
+		snapshotHash = "e".repeat(64);
+		wasmSha256 = "f".repeat(64);
 		const mismatchedSaveOperation = {
 			...committedBrowserResult,
 			saveReceipt: {
@@ -82,7 +91,13 @@ describe("preview frame response-loss recovery", () => {
 		expect(recovered).toMatchObject({
 			status: "rendered",
 			operationId: input.operationId,
-			renderer: { capabilityHash: "c".repeat(64) },
+			renderer: {
+				capabilityHash: "c".repeat(64),
+				environment: {
+					wasmSha256: "d".repeat(64),
+					fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+				},
+			},
 		});
 		store.close();
 
@@ -219,6 +234,13 @@ function browserResult(
 			compositor: "opencut-wasm-webgl",
 			browser: "test",
 			encoder: "browser-canvas-png",
+			environment: {
+				...renderEnvironment(),
+				...(input.capabilitySnapshotHash
+					? { capabilitySnapshotHash: input.capabilitySnapshotHash }
+					: {}),
+				...(input.wasmSha256 ? { wasmSha256: input.wasmSha256 } : {}),
+			},
 			executionIdentity: input.expectedConnectionIdentity,
 		},
 		fontReadiness: {
@@ -241,6 +263,29 @@ function browserResult(
 			contentHashBefore: input.expectedProjectContentHash,
 			contentHashAfter: input.expectedProjectContentHash,
 		},
+	};
+}
+
+function renderEnvironment() {
+	return {
+		status: "ready" as const,
+		reason: null,
+		compositor: "opencut-wasm-webgl" as const,
+		backend: "webgpu" as const,
+		pinnedBackend: "webgpu" as const,
+		backendMatchesPin: true,
+		rendererClass: "software" as const,
+		adapterMatchesClass: true,
+		adapter: {
+			vendor: "Google",
+			architecture: "swiftshader",
+			device: "SwiftShader Device",
+			description: "SwiftShader",
+			isFallbackAdapter: true,
+		},
+		surfaceFormat: "bgra8unorm" as const,
+		browser: "test",
+		wasmPackageVersion: "0.2.10",
 	};
 }
 

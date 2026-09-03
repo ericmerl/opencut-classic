@@ -1,8 +1,3 @@
-import {
-	OPENCUT_WASM_PACKAGE_VERSION,
-	SELECTED_COMPOSITOR_BACKEND,
-} from "@/services/renderer/runtime-identity";
-
 const CAPTION_FONT_PRESETS = [
 	{
 		id: "default-caption",
@@ -15,12 +10,24 @@ const CAPTION_FONT_PRESETS = [
 ] as const;
 
 export async function readRuntimeCapabilities() {
-	const fonts = await readFontReadiness();
+	const { readRenderEnvironment } =
+		await import("@/services/renderer/render-environment");
+	const [fonts, renderer] = await Promise.all([
+		readFontReadiness(),
+		readRenderEnvironment(),
+	]);
 	return {
-		status: fonts.status === "ready" ? "ready" : "degraded",
-		compositorBackend: SELECTED_COMPOSITOR_BACKEND,
-		wasmPackageVersion: OPENCUT_WASM_PACKAGE_VERSION,
+		status:
+			fonts.status === "ready" && renderer.status === "ready"
+				? "ready"
+				: renderer.status === "unavailable"
+					? "unavailable"
+					: "degraded",
+		reason: renderer.reason,
+		compositorBackend: renderer.backend,
+		wasmPackageVersion: renderer.wasmPackageVersion,
 		browser: navigator.userAgent,
+		renderer,
 		fonts,
 		timelineTranscription: {
 			status: "ready",

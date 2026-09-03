@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ExportReceiptStore } from "./export-receipts";
 import type {
 	ExportMediaValidation,
@@ -50,7 +51,7 @@ export class ExportProjectService {
 		private bridge: ExportProjectBridge,
 		private receipts: ExportReceiptStore,
 		private validator: ExportValidator,
-		private capabilitySnapshotHash?: () => Promise<string>,
+		private capabilitySnapshot?: () => Promise<unknown>,
 	) {}
 
 	async export(input: ExportProjectInput): Promise<Record<string, unknown>> {
@@ -86,8 +87,11 @@ export class ExportProjectService {
 				receiptPath: this.receipts.receiptPath(input.operationId),
 			};
 		}
+		const renderCapabilitySnapshot = await this.capabilitySnapshot?.();
 		const capabilitySnapshotHash =
-			input.capabilitySnapshotHash ?? (await this.capabilitySnapshotHash?.());
+			input.capabilitySnapshotHash ??
+			readCapabilitySnapshotHash(renderCapabilitySnapshot);
+		const renderWasmSha256 = readCapabilityWasmSha256(renderCapabilitySnapshot);
 
 		const snapshot = readProjectSnapshot(
 			await this.bridge.request(
@@ -214,6 +218,8 @@ export class ExportProjectService {
 					outputPath: ticket.outputPath,
 					url: ticket.url,
 					expectedProjectContentHash: pinnedContentHash,
+					...(capabilitySnapshotHash ? { capabilitySnapshotHash } : {}),
+					...(renderWasmSha256 ? { wasmSha256: renderWasmSha256 } : {}),
 				},
 				30 * 60_000,
 				expectedIdentity,
@@ -265,6 +271,18 @@ export class ExportProjectService {
 			};
 		}
 
+		const browserRenderEnvironment = readRecordField(
+			editorResult,
+			"renderEnvironment",
+		);
+		const renderEnvironment = browserRenderEnvironment
+			? {
+					...browserRenderEnvironment,
+					wasmSha256:
+						readStringField(browserRenderEnvironment, "wasmSha256") ??
+						renderWasmSha256,
+				}
+			: null;
 		const result: Record<string, unknown> = {
 			...editorResult,
 			projectId: snapshot.projectId,
@@ -285,6 +303,14 @@ export class ExportProjectService {
 				provider: "opencut-web-renderer",
 				pipeline: "editor-native-export",
 				protocolVersion: input.bridgeProtocolVersion ?? 1,
+				...(renderEnvironment
+					? {
+							environment: {
+								...renderEnvironment,
+								fingerprint: sha256(stableSerialize(renderEnvironment)),
+							},
+						}
+					: {}),
 			},
 		};
 		const inspection = {
@@ -304,6 +330,34 @@ export class ExportProjectService {
 		});
 		return { ...result, inspection };
 	}
+}
+
+function readCapabilitySnapshotHash(value: unknown): string | undefined {
+	return isRecord(value) && typeof value.snapshotHash === "string"
+		? value.snapshotHash
+		: typeof value === "string"
+			? value
+			: undefined;
+}
+
+function readCapabilityWasmSha256(value: unknown): string | null {
+	if (!isRecord(value) || !isRecord(value.renderer)) return null;
+	const wasm = value.renderer.wasm;
+	return isRecord(wasm) && typeof wasm.sha256 === "string" ? wasm.sha256 : null;
+}
+
+function readRecordField(
+	value: Record<string, unknown>,
+	key: string,
+): Record<string, unknown> | null {
+	return isRecord(value[key]) ? value[key] : null;
+}
+
+function readStringField(
+	value: Record<string, unknown>,
+	key: string,
+): string | null {
+	return typeof value[key] === "string" ? value[key] : null;
 }
 
 function expectedV2Identity(
@@ -451,6 +505,10 @@ function frameRateValue(fps: {
 		throw new Error("expected export frame rate is invalid");
 	}
 	return fps.numerator / fps.denominator;
+}
+
+function sha256(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2043,7 +2043,12 @@ export class EditorAutomation {
 				reason: "project content hash changed before export",
 			};
 		}
-		const { url: _transferUrl, ...stableRequest } = request;
+		const {
+			url: _transferUrl,
+			capabilitySnapshotHash: _capabilitySnapshotHash,
+			wasmSha256: _wasmSha256,
+			...stableRequest
+		} = request;
 		const fingerprint = stableSerialize(stableRequest);
 		const prior = this.exportedOperations.get(request.operationId);
 		if (prior) {
@@ -2092,6 +2097,16 @@ export class EditorAutomation {
 			};
 		}
 
+		const { readRenderEnvironment } =
+			await import("@/services/renderer/render-environment");
+		const renderEnvironment = await readRenderEnvironment();
+		if (renderEnvironment.status !== "ready") {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: `renderer unavailable: ${renderEnvironment.reason ?? renderEnvironment.status}`,
+			};
+		}
 		const exported = await this.editor.renderer.exportProject({
 			options: {
 				format: request.format,
@@ -2152,6 +2167,13 @@ export class EditorAutomation {
 			contentIdentity: this.requireContentIdentity(),
 			saveReceiptId: saveResult.receiptId,
 			savedContentHash: saveResult.contentHash,
+			renderEnvironment: {
+				...renderEnvironment,
+				...(request.capabilitySnapshotHash
+					? { capabilitySnapshotHash: request.capabilitySnapshotHash }
+					: {}),
+				...(request.wasmSha256 ? { wasmSha256: request.wasmSha256 } : {}),
+			},
 		};
 		this.exportedOperations.set(request.operationId, { fingerprint, result });
 		return result;
@@ -3007,6 +3029,8 @@ function stripTransientRequest(value: unknown): unknown {
 						"downloadUrl",
 						"expectedConnectionIdentity",
 						"operationReceiptBinding",
+						"capabilitySnapshotHash",
+						"wasmSha256",
 					]).has(key),
 			)
 			.map(([key, child]) => [key, stripTransientRequest(child)]),

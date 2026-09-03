@@ -69,6 +69,35 @@ const rendererSchema = z
 		wasmPackageVersion: z.string().min(1),
 		renderSpecFingerprint: digestSchema,
 		capabilityHash: digestSchema,
+		environment: z
+			.object({
+				status: z.enum(["ready", "degraded", "unavailable"]),
+				reason: z.string().nullable(),
+				compositor: z.literal("opencut-wasm-webgl"),
+				backend: z.enum(["webgpu", "webgl2", "unknown"]),
+				pinnedBackend: z.literal("webgpu"),
+				backendMatchesPin: z.boolean(),
+				rendererClass: z.enum(["software", "hardware", "unknown"]),
+				adapterMatchesClass: z.boolean().nullable(),
+				adapter: z
+					.object({
+						vendor: z.string(),
+						architecture: z.string(),
+						device: z.string(),
+						description: z.string(),
+						isFallbackAdapter: z.boolean().nullable(),
+					})
+					.strict()
+					.nullable(),
+				surfaceFormat: z.enum(["bgra8unorm", "rgba8unorm", "unknown"]),
+				browser: z.string().min(1),
+				wasmPackageVersion: z.string().min(1),
+				capabilitySnapshotHash: digestSchema.optional(),
+				wasmSha256: digestSchema.nullable(),
+				fingerprint: digestSchema,
+			})
+			.strict()
+			.optional(),
 		executionIdentity: connectionSchema,
 	})
 	.strict();

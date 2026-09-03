@@ -12,6 +12,8 @@ const TRANSIENT_REQUEST_KEYS = new Set([
 	"downloadUrl",
 	"expectedConnectionIdentity",
 	"operationReceiptBinding",
+	"capabilitySnapshotHash",
+	"wasmSha256",
 ]);
 
 export const BROWSER_RECEIPT_CHECKPOINT_PREFIX = "browser-receipt-contract:";

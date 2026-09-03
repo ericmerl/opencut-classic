@@ -65,16 +65,30 @@ describe("ManagedEditorWorker", () => {
 
 		expect(launchedCommand).toBe(browserPath);
 		expect(launchedArgs).toContain("--headless=new");
+		expect(launchedArgs).toContain("--use-webgpu-adapter=swiftshader");
+		expect(launchedArgs).toContain("--use-angle=swiftshader");
+		expect(launchedArgs).toContain("--enable-unsafe-swiftshader");
 		const launchedUrl = new URL(launchedArgs.at(-1)!);
 		expect(launchedUrl.pathname).toBe("/editor/project-1");
 		expect(launchedUrl.searchParams.get("automationBootstrap")).toBe(
 			"one-time-ticket",
 		);
 		expect(launchedUrl.searchParams.get("automationBridgePort")).toBe("32191");
+		expect(launchedUrl.searchParams.get("automationRendererClass")).toBe(
+			"software",
+		);
+		expect(launchedUrl.searchParams.get("automationCompositorBackend")).toBe(
+			"webgpu",
+		);
 		expect(
 			launchedUrl.searchParams.get("automationTestDropResponseOperationId"),
 		).toBe("drop-after-receipt");
-		expect(status).toMatchObject({ running: true, connected: true });
+		expect(status).toMatchObject({
+			running: true,
+			connected: true,
+			rendererClass: "software",
+			pinnedCompositorBackend: "webgpu",
+		});
 
 		await worker.stop();
 		expect(killed).toBe(true);

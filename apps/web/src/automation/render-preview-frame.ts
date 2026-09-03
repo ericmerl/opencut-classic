@@ -92,6 +92,14 @@ export async function renderAutomationPreviewFrame({
 
 		const stateBefore = editorState(editor);
 		const fonts = await waitForFonts(persistedScene.tracks);
+		const { readRenderEnvironment } =
+			await import("@/services/renderer/render-environment");
+		const renderEnvironment = await readRenderEnvironment();
+		if (renderEnvironment.status !== "ready") {
+			throw new Error(
+				`renderer unavailable: ${renderEnvironment.reason ?? renderEnvironment.status}`,
+			);
+		}
 		const objectUrls: string[] = [];
 		const mediaAssets: MediaAsset[] = durable.mediaAssets.map((asset) => {
 			const url = URL.createObjectURL(asset.file);
@@ -188,6 +196,13 @@ export async function renderAutomationPreviewFrame({
 				compositor: "opencut-wasm-webgl",
 				browser: navigator.userAgent,
 				encoder: "browser-canvas-png",
+				environment: {
+					...renderEnvironment,
+					...(request.capabilitySnapshotHash
+						? { capabilitySnapshotHash: request.capabilitySnapshotHash }
+						: {}),
+					...(request.wasmSha256 ? { wasmSha256: request.wasmSha256 } : {}),
+				},
 				executionIdentity: request.expectedConnectionIdentity,
 			},
 			editorState: {

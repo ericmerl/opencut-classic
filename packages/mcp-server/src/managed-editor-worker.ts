@@ -18,6 +18,8 @@ export interface ManagedEditorWorkerStatus {
 	browserPath: string | null;
 	projectId: string | null;
 	lastError: string | null;
+	rendererClass: "software" | "hardware";
+	pinnedCompositorBackend: "webgpu";
 }
 
 export class ManagedEditorWorker {
@@ -36,6 +38,7 @@ export class ManagedEditorWorker {
 			connectionTimeoutMs?: number;
 			spawnProcess?: typeof spawn;
 			browserArguments?: string[];
+			rendererClass?: "software" | "hardware";
 			testDropResponseOperationId?: string;
 		},
 	) {}
@@ -53,6 +56,9 @@ export class ManagedEditorWorker {
 			connectionTimeoutMs: readTimeout(
 				globalThis.process.env.OPENCUT_HEADLESS_CONNECTION_TIMEOUT_MS,
 			),
+			rendererClass: readRendererClass(
+				globalThis.process.env.OPENCUT_RENDERER_CLASS,
+			),
 			testDropResponseOperationId:
 				globalThis.process.env.OPENCUT_TEST_DROP_BROWSER_RESPONSE_OPERATION_ID,
 		});
@@ -68,6 +74,8 @@ export class ManagedEditorWorker {
 			browserPath: this.resolvedBrowserPath,
 			projectId: this.projectId,
 			lastError: this.lastError,
+			rendererClass: this.options.rendererClass ?? "software",
+			pinnedCompositorBackend: "webgpu",
 		};
 	}
 
@@ -113,6 +121,11 @@ export class ManagedEditorWorker {
 				String(this.bridge.getStatus().port),
 			);
 			editorUrl.searchParams.set("automationBootstrap", ticket.id);
+			editorUrl.searchParams.set(
+				"automationRendererClass",
+				this.options.rendererClass ?? "software",
+			);
+			editorUrl.searchParams.set("automationCompositorBackend", "webgpu");
 			if (this.options.testDropResponseOperationId) {
 				editorUrl.searchParams.set(
 					"automationTestDropResponseOperationId",
@@ -132,6 +145,7 @@ export class ManagedEditorWorker {
 					"--disable-sync",
 					"--autoplay-policy=no-user-gesture-required",
 					"--window-size=1280,720",
+					...rendererBrowserArguments(this.options.rendererClass ?? "software"),
 					...(this.options.browserArguments ?? []),
 					editorUrl.toString(),
 				],
@@ -162,6 +176,25 @@ export class ManagedEditorWorker {
 			throw error;
 		}
 	}
+}
+
+function rendererBrowserArguments(
+	rendererClass: "software" | "hardware",
+): string[] {
+	if (rendererClass === "hardware") return [];
+	return [
+		"--enable-unsafe-webgpu",
+		"--use-webgpu-adapter=swiftshader",
+		"--use-gl=angle",
+		"--use-angle=swiftshader",
+		"--enable-unsafe-swiftshader",
+	];
+}
+
+function readRendererClass(value: string | undefined): "software" | "hardware" {
+	if (value === undefined || value === "software") return "software";
+	if (value === "hardware") return "hardware";
+	throw new Error("OPENCUT_RENDERER_CLASS must be software or hardware");
 }
 
 async function findBrowser(configured?: string): Promise<string> {

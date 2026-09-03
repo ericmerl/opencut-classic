@@ -128,7 +128,7 @@ await previewEvidence.readiness();
 const bridge = new EditorBridge({ token, port, previewEvidence });
 let capabilitySnapshots: CapabilitySnapshotService;
 const previewFrames = new PreviewFrameService(bridge, previewEvidence, () =>
-	capabilitySnapshots.snapshotHash(),
+	capabilitySnapshots.capture(),
 );
 const normalizeAudio = new NormalizeAudioOperation(bridge);
 const audioCleanup = new AudioCleanupService(
@@ -141,7 +141,7 @@ const projectExports = new ExportProjectService(
 	bridge,
 	exportReceipts,
 	exportValidator,
-	() => capabilitySnapshots.snapshotHash(),
+	() => capabilitySnapshots.capture(),
 );
 const editorWorker = ManagedEditorWorker.fromEnvironment(
 	bridge,
