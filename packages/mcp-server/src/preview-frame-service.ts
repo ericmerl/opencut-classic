@@ -3,6 +3,7 @@ import type { BridgeConnectionIdentity, EditorBridge } from "./editor-bridge";
 import type { McpOperationExecutionContext } from "./mcp-ledger-boundary";
 import { requestLedgeredBrowserStep } from "./mcp-ledger-boundary";
 import { stableSerialize } from "./matte-generation-data";
+import { readPersistedProjectContentProjectionVersion } from "./project-content-version";
 import type {
 	PreviewEvidenceStore,
 	PreviewFrameReceipt,
@@ -269,7 +270,10 @@ function response(
 			hash: {
 				algorithm: "SHA-256",
 				projection: "opencut-project-content",
-				projectionVersion: 1,
+				projectionVersion:
+					readPersistedProjectContentProjectionVersion(
+						receipt.saveReceipt.contentHashProjectionVersion,
+					) ?? 1,
 				digest: receipt.contentHash,
 			},
 		},

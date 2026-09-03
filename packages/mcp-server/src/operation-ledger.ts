@@ -57,6 +57,7 @@ export interface OperationFingerprintInput {
 	connectionAffinity?: OperationConnectionAffinity | null;
 	revisionBefore?: number | null;
 	contentHashBefore?: string | null;
+	contentHashProjectionVersionBefore?: 1 | 2;
 }
 
 export interface OperationClaimInput extends OperationFingerprintInput {
@@ -82,6 +83,7 @@ export interface OperationTerminalInput {
 	sceneId?: string | null;
 	revisionAfter?: number | null;
 	contentHashAfter?: string | null;
+	contentHashProjectionVersionAfter?: 1 | 2;
 	saveReceipt?: OperationSaveReceipt | null;
 	providerProvenance?: OperationProviderProvenance[];
 	affectedObjects?: OperationAffectedObject[];
@@ -103,6 +105,7 @@ export interface OperationReconcileInput {
 	disposition?: "not-applied" | "unknown";
 	revisionAfter?: number | null;
 	contentHashAfter?: string | null;
+	contentHashProjectionVersionAfter?: 1 | 2;
 	saveReceipt?: OperationSaveReceipt | null;
 	providerProvenance?: OperationProviderProvenance[];
 	affectedObjects?: OperationAffectedObject[];
@@ -238,6 +241,12 @@ export class OperationLedger {
 				revisionAfter: null,
 				contentHashBefore: input.contentHashBefore ?? null,
 				contentHashAfter: null,
+				...(input.contentHashProjectionVersionBefore === undefined
+					? {}
+					: {
+							contentHashProjectionVersionBefore:
+								input.contentHashProjectionVersionBefore,
+						}),
 				saveReceipt: null,
 				providerProvenance: redactProviders(input.providerProvenance ?? []),
 				artifacts: redactArtifacts(input.artifacts ?? []),
@@ -333,6 +342,12 @@ export class OperationLedger {
 							revisionAfter: input.revisionAfter ?? current.revisionAfter,
 							contentHashAfter:
 								input.contentHashAfter ?? current.contentHashAfter,
+							...(input.contentHashProjectionVersionAfter === undefined
+								? {}
+								: {
+										contentHashProjectionVersionAfter:
+											input.contentHashProjectionVersionAfter,
+									}),
 							saveReceipt:
 								input.saveReceipt === undefined
 									? current.saveReceipt
@@ -602,6 +617,12 @@ function terminalDraft(
 		sceneId: metadata.sceneId ?? current.sceneId,
 		revisionAfter: metadata.revisionAfter ?? current.revisionAfter,
 		contentHashAfter: metadata.contentHashAfter ?? current.contentHashAfter,
+		...(metadata.contentHashProjectionVersionAfter === undefined
+			? {}
+			: {
+					contentHashProjectionVersionAfter:
+						metadata.contentHashProjectionVersionAfter,
+				}),
 		saveReceipt:
 			metadata.saveReceipt === undefined
 				? current.saveReceipt
@@ -636,6 +657,7 @@ function terminalSemantics(
 		| "sceneId"
 		| "revisionAfter"
 		| "contentHashAfter"
+		| "contentHashProjectionVersionAfter"
 		| "saveReceipt"
 		| "providerProvenance"
 		| "artifacts"
@@ -653,6 +675,12 @@ function terminalSemantics(
 		sceneId: record.sceneId,
 		revisionAfter: record.revisionAfter,
 		contentHashAfter: record.contentHashAfter,
+		...(record.contentHashProjectionVersionAfter === undefined
+			? {}
+			: {
+					contentHashProjectionVersionAfter:
+						record.contentHashProjectionVersionAfter,
+				}),
 		saveReceipt: record.saveReceipt,
 		providerProvenance: record.providerProvenance,
 		artifacts: record.artifacts,

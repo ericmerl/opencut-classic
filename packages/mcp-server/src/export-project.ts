@@ -383,7 +383,8 @@ function readContentIdentity(
 		!isRecord(value.hash) ||
 		value.hash.algorithm !== "SHA-256" ||
 		value.hash.projection !== "opencut-project-content" ||
-		value.hash.projectionVersion !== 1 ||
+		(value.hash.projectionVersion !== 1 &&
+			value.hash.projectionVersion !== 2) ||
 		typeof value.hash.digest !== "string" ||
 		!/^[a-f0-9]{64}$/.test(value.hash.digest)
 	) {

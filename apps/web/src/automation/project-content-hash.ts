@@ -6,9 +6,13 @@ import type {
 	TimelineElement,
 	TimelineTrack,
 } from "@/timeline/types";
+import {
+	canonicalSerialize as serializeCanonicalJson,
+	findCanonicalJsonDomainBlockers,
+} from "@opencut/canonical-json";
 
 export const PROJECT_CONTENT_PROJECTION = "opencut-project-content" as const;
-export const PROJECT_CONTENT_PROJECTION_VERSION = 1 as const;
+export const PROJECT_CONTENT_PROJECTION_VERSION = 2 as const;
 export const PROJECT_CONTENT_HASH_ALGORITHM = "SHA-256" as const;
 export const PROJECT_CONTENT_NEGATIVE_ZERO_POLICY =
 	"normalize-to-zero" as const;
@@ -50,8 +54,14 @@ export interface ProjectContentMediaAsset {
 export interface ProjectContentHash {
 	algorithm: typeof PROJECT_CONTENT_HASH_ALGORITHM;
 	projection: typeof PROJECT_CONTENT_PROJECTION;
-	projectionVersion: typeof PROJECT_CONTENT_PROJECTION_VERSION;
+	projectionVersion: ProjectContentProjectionVersion;
 	digest: string;
+}
+
+export type ProjectContentProjectionVersion = 1 | 2;
+
+export interface ProjectContentProjectionOptions {
+	projectionVersion?: ProjectContentProjectionVersion;
 }
 
 export interface ProjectContentInput {
@@ -75,22 +85,39 @@ export type ProjectContentHashBlocker =
 			code: "unverified-url-media";
 			sourceUrl: string;
 			missingFields: ["mediaAssets.providerIdentity"];
+	  }
+	| {
+			code: "unsafe-integer";
+			path: string;
+			value: string;
+	  }
+	| {
+			code: "invalid-unicode";
+			path: string;
 	  };
 
 export type ProjectContentHashResult =
 	| { status: "hashed"; hash: ProjectContentHash }
 	| { status: "blocked"; blockers: ProjectContentHashBlocker[] };
 
-export function buildCanonicalProjectState({
-	project,
-	mediaAssets,
-}: ProjectContentInput): Record<string, unknown> {
+export function buildCanonicalProjectState(
+	{ project, mediaAssets }: ProjectContentInput,
+	options: ProjectContentProjectionOptions = {},
+): Record<string, unknown> {
+	const projectionVersion =
+		options.projectionVersion ?? PROJECT_CONTENT_PROJECTION_VERSION;
+	if (projectionVersion !== 1 && projectionVersion !== 2) {
+		throw new Error(
+			`Unsupported project content projection version: ${String(projectionVersion)}`,
+		);
+	}
 	assertUniqueMediaIds(mediaAssets);
 	assertCanonicalMediaHashes(mediaAssets);
 	return {
 		projection: PROJECT_CONTENT_PROJECTION,
-		projectionVersion: PROJECT_CONTENT_PROJECTION_VERSION,
+		projectionVersion,
 		project: {
+			...(projectionVersion === 2 ? { id: project.metadata.id } : {}),
 			name: project.metadata.name,
 			activeSceneId: project.currentSceneId,
 			mainSceneId: project.scenes.find((scene) => scene.isMain)?.id ?? null,
@@ -116,33 +143,76 @@ export function buildCanonicalProjectState({
 	};
 }
 
-export function serializeProjectContent(input: ProjectContentInput): string {
-	return canonicalSerialize(buildCanonicalProjectState(input));
+export function serializeProjectContent(
+	input: ProjectContentInput,
+	options: ProjectContentProjectionOptions = {},
+): string {
+	return canonicalSerialize(buildCanonicalProjectState(input, options));
 }
 
 export async function hashProjectContent(
 	input: ProjectContentInput,
+	options: ProjectContentProjectionOptions = {},
 ): Promise<ProjectContentHashResult> {
 	assertCanonicalMediaHashes(input.mediaAssets);
-	const blockers = findContentIdentityBlockers(input);
+	const projection = buildCanonicalProjectState(input, options);
+	const blockers = [
+		...findContentIdentityBlockers(input),
+		...findCanonicalDomainBlockers(projection),
+	];
 	if (blockers.length > 0) return { status: "blocked", blockers };
 	const subtle = globalThis.crypto?.subtle;
 	if (!subtle) throw new Error("Web Crypto SHA-256 is unavailable");
-	const bytes = new TextEncoder().encode(serializeProjectContent(input));
+	const bytes = new TextEncoder().encode(canonicalSerialize(projection));
 	const digest = await subtle.digest(PROJECT_CONTENT_HASH_ALGORITHM, bytes);
+	const projectionVersion =
+		options.projectionVersion ?? PROJECT_CONTENT_PROJECTION_VERSION;
 	return {
 		status: "hashed",
 		hash: {
 			algorithm: PROJECT_CONTENT_HASH_ALGORITHM,
 			projection: PROJECT_CONTENT_PROJECTION,
-			projectionVersion: PROJECT_CONTENT_PROJECTION_VERSION,
+			projectionVersion,
 			digest: bytesToHex(new Uint8Array(digest)),
 		},
 	};
 }
 
 export function canonicalSerialize(value: unknown): string {
-	return serializeValue({ value, ancestors: new Set<object>() });
+	const blocker = findCanonicalDomainBlockers(value)[0];
+	if (blocker) throw new ProjectContentCanonicalizationError(blocker);
+	try {
+		return serializeCanonicalJson(value);
+	} catch (error) {
+		if (error instanceof Error && error.message.startsWith("Canonical JSON ")) {
+			throw new Error(
+				error.message.replace("Canonical JSON ", "Project content "),
+			);
+		}
+		throw error;
+	}
+}
+
+export class ProjectContentCanonicalizationError extends Error {
+	constructor(
+		readonly blocker: Extract<ProjectContentHashBlocker, { path: string }>,
+	) {
+		super(
+			blocker.code === "unsafe-integer"
+				? `Project content contains an unsafe integer at ${blocker.path}`
+				: `Project content contains invalid Unicode at ${blocker.path}`,
+		);
+		this.name = "ProjectContentCanonicalizationError";
+	}
+}
+
+type CanonicalDomainBlocker = Extract<
+	ProjectContentHashBlocker,
+	{ path: string }
+>;
+
+function findCanonicalDomainBlockers(value: unknown): CanonicalDomainBlocker[] {
+	return findCanonicalJsonDomainBlockers(value);
 }
 
 function projectTracks(tracks: SceneTracks): Array<Record<string, unknown>> {
@@ -527,56 +597,6 @@ function toCanonicalValue(value: unknown): unknown {
 	);
 }
 
-function serializeValue({
-	value,
-	ancestors,
-}: {
-	value: unknown;
-	ancestors: Set<object>;
-}): string {
-	if (value === null) return "null";
-	if (typeof value === "string" || typeof value === "boolean") {
-		return JSON.stringify(value);
-	}
-	if (typeof value === "number") {
-		if (!Number.isFinite(value)) {
-			throw new Error("Project content contains a non-finite number");
-		}
-		return Object.is(value, -0) ? "0" : JSON.stringify(value);
-	}
-	if (Array.isArray(value)) {
-		assertDenseDefinedArray(value);
-		assertNotCircular({ value, ancestors });
-		const result = `[${value
-			.map((entry) => serializeValue({ value: entry, ancestors }))
-			.join(",")}]`;
-		ancestors.delete(value);
-		return result;
-	}
-	if (!isPlainObject(value)) {
-		throw new Error("Project content contains a non-serializable value");
-	}
-	assertNotCircular({ value, ancestors });
-	const keys = Object.keys(value).sort((left, right) =>
-		compareOrdinal({ left, right }),
-	);
-	for (const key of keys) {
-		if (value[key] === undefined) {
-			throw new Error(
-				`Project content contains undefined at object key ${key}`,
-			);
-		}
-	}
-	const result = `{${keys
-		.map(
-			(key) =>
-				`${JSON.stringify(key)}:${serializeValue({ value: value[key], ancestors })}`,
-		)
-		.join(",")}}`;
-	ancestors.delete(value);
-	return result;
-}
-
 function assertDenseDefinedArray(value: unknown[]): void {
 	for (let index = 0; index < value.length; index += 1) {
 		if (!Object.hasOwn(value, index)) {
@@ -590,19 +610,6 @@ function assertDenseDefinedArray(value: unknown[]): void {
 			);
 		}
 	}
-}
-
-function assertNotCircular({
-	value,
-	ancestors,
-}: {
-	value: object;
-	ancestors: Set<object>;
-}): void {
-	if (ancestors.has(value)) {
-		throw new Error("Project content contains a circular reference");
-	}
-	ancestors.add(value);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

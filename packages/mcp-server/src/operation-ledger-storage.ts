@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import {
 	OPERATION_LEDGER_SCHEMA_VERSION,
 	OperationLedgerUnsupportedVersionError,
+	parseCurrentOperationLedgerRecord,
 	parseOperationLedgerRecord,
 	type OperationLedgerRecord,
 } from "./operation-ledger-schema";
@@ -187,7 +188,7 @@ export class OperationLedgerStorage {
 					"INSERT INTO event_sequences DEFAULT VALUES RETURNING event_sequence",
 				)
 				.get() as { event_sequence: number | bigint };
-			const record = parseOperationLedgerRecord({
+			const record = parseCurrentOperationLedgerRecord({
 				...draft,
 				eventSequence: Number(sequence.event_sequence),
 				previousChecksum: previous ? checksumRecord(previous) : null,
@@ -438,7 +439,7 @@ function insertDraft(
 			"INSERT INTO event_sequences DEFAULT VALUES RETURNING event_sequence",
 		)
 		.get() as { event_sequence: number | bigint };
-	const record = parseOperationLedgerRecord({
+	const record = parseCurrentOperationLedgerRecord({
 		...draft,
 		eventSequence: Number(sequence.event_sequence),
 		previousChecksum: previous ? checksumRecord(previous) : null,
@@ -489,6 +490,7 @@ function validateTransition(
 		"inputFingerprint",
 		"revisionBefore",
 		"contentHashBefore",
+		"contentHashProjectionVersionBefore",
 		"createdAt",
 	] as const;
 	if (

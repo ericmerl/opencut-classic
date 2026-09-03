@@ -196,6 +196,7 @@ function normalizationBridge(interruptAfterApply: boolean) {
 						sessionRevisionAfter: 8,
 						durableWriteVersion: 1,
 						contentHashAfter: AFTER_HASH,
+						contentHashProjectionVersion: 2,
 					},
 					result: mutation,
 				};
@@ -238,7 +239,11 @@ function analyzed(
 		revision,
 		contentIdentity: {
 			status: "hashed",
-			hash: { algorithm: "SHA-256", digest: contentHash },
+			hash: {
+				algorithm: "SHA-256",
+				projectionVersion: 2,
+				digest: contentHash,
+			},
 		},
 		analysis: {
 			integratedLufs,
@@ -258,7 +263,11 @@ function snapshot(contentHash: string, revision: number) {
 		revision,
 		contentIdentity: {
 			status: "hashed",
-			hash: { algorithm: "SHA-256", digest: contentHash },
+			hash: {
+				algorithm: "SHA-256",
+				projectionVersion: 2,
+				digest: contentHash,
+			},
 		},
 	};
 }
@@ -272,6 +281,7 @@ function saveReceipt() {
 		sceneId: "scene-1",
 		revision: 8,
 		contentHash: AFTER_HASH,
+		contentHashProjectionVersion: 2,
 		persistedAt: "2026-09-02T00:00:00.000Z",
 		completedAt: "2026-09-02T00:00:01.000Z",
 		storageSchemaVersion: 1,

@@ -25,6 +25,7 @@ export interface OperationBeforeState {
 	sceneId?: string | null;
 	revision?: number | null;
 	contentHash?: string | null;
+	contentHashProjectionVersion?: 1 | 2;
 }
 
 export interface VerifiedOperationEvidence {
@@ -32,6 +33,7 @@ export interface VerifiedOperationEvidence {
 	sceneId?: string | null;
 	revisionAfter?: number | null;
 	contentHashAfter?: string | null;
+	contentHashProjectionVersionAfter?: 1 | 2;
 	saveReceipt?: OperationSaveReceipt | null;
 	providerProvenance?: OperationProviderProvenance[];
 	artifacts?: OperationArtifact[];
@@ -130,6 +132,8 @@ export async function executeLedgeredOperation<TInput, TResult>(
 		sceneId: spec.before?.sceneId ?? null,
 		revisionBefore: spec.before?.revision ?? null,
 		contentHashBefore: spec.before?.contentHash ?? null,
+		contentHashProjectionVersionBefore:
+			spec.before?.contentHashProjectionVersion,
 		// Request targets are preliminary intent, not verified effects. Terminal
 		// affected objects are supplied only by authoritative outcome evidence.
 		affectedObjects: [],

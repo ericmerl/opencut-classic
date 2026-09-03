@@ -165,6 +165,7 @@ import type {
 	AutomationProjectActivatedResult,
 	AutomationProjectListResult,
 	AutomationProjectSnapshot,
+	AutomationReadProjectRequest,
 	AutomationTransferSourceRequest,
 	AutomationTransferSourceResult,
 	AutomationTranscriptionAppliedResult,
@@ -179,11 +180,16 @@ import {
 	serializeEditorProjectContent,
 } from "./project-content-identity";
 import {
+	canonicalSerialize,
 	hashProjectContent,
 	type ProjectContentHashResult,
+	type ProjectContentProjectionVersion,
 } from "./project-content-hash";
 import { storageService } from "@/services/storage/service";
-import { buildSaveReceiptId } from "@/services/storage/save-receipt-identity";
+import {
+	buildSaveReceiptId,
+	readProjectSaveReceiptProjectionVersion,
+} from "@/services/storage/save-receipt-identity";
 import {
 	parsePersistedSaveProjectResult,
 	type PersistedAutomationSaveResult,
@@ -247,10 +253,28 @@ export class EditorAutomation {
 
 	constructor(private editor: EditorCore) {}
 
-	async readProject(): Promise<AutomationProjectSnapshot> {
+	async readProject(
+		request: AutomationReadProjectRequest = {},
+	): Promise<AutomationProjectSnapshot> {
 		this.reconcileExternalChanges();
 		await this.refreshContentIdentity();
-		return this.buildSnapshot();
+		const snapshot = this.buildSnapshot();
+		const currentProjectionVersion =
+			snapshot.contentIdentity.status === "hashed"
+				? snapshot.contentIdentity.hash.projectionVersion
+				: undefined;
+		if (
+			request.projectContentProjectionVersion === undefined ||
+			request.projectContentProjectionVersion === currentProjectionVersion
+		) {
+			return snapshot;
+		}
+		return {
+			...snapshot,
+			contentIdentity: await hashEditorProjectContent(this.editor, {
+				projectionVersion: request.projectContentProjectionVersion,
+			}),
+		};
 	}
 
 	queryTimeline(
@@ -448,6 +472,7 @@ export class EditorAutomation {
 					project: readback.project,
 					mediaAssets: readback.mediaAssets,
 				}),
+				{ projectionVersion: state.contentHashProjectionVersion },
 			);
 			const readbackHash =
 				identity.status === "hashed" ? identity.hash.digest : null;
@@ -472,6 +497,7 @@ export class EditorAutomation {
 				sceneId: state.sceneId,
 				revision: state.revisionAfter,
 				contentHash: state.contentHashAfter,
+				contentHashProjectionVersion: state.contentHashProjectionVersion,
 				persistedAt: readback.persistence.snapshotAt,
 				completedAt: readback.persistence.completedAt,
 				storageSchemaVersion: readback.persistence.storageSchemaVersion,
@@ -535,6 +561,7 @@ export class EditorAutomation {
 				project: readback.project,
 				mediaAssets: readback.mediaAssets,
 			}),
+			{ projectionVersion: resultState.contentHashProjectionVersion },
 		);
 		if (
 			persistedIdentity.status !== "hashed" ||
@@ -780,6 +807,7 @@ export class EditorAutomation {
 			operationId: request.operationId,
 			fingerprint,
 			contentHash,
+			contentHashProjectionVersion: identity.hash.projectionVersion,
 			sceneId,
 			revision: this.revision,
 		};
@@ -854,6 +882,7 @@ export class EditorAutomation {
 			sceneId,
 			revision: this.revision,
 			contentHash,
+			contentHashProjectionVersion: identity.hash.projectionVersion,
 			persistedAt: readback.persistence.snapshotAt,
 			completedAt: readback.persistence.completedAt,
 			storageSchemaVersion: readback.persistence.storageSchemaVersion,
@@ -896,11 +925,25 @@ export class EditorAutomation {
 				reason: "operationId was already used for a different save",
 			};
 		}
+		const contentHashProjectionVersion = identity
+			? readProjectSaveReceiptProjectionVersion(identity)
+			: null;
+		if (!contentHashProjectionVersion) {
+			return {
+				status: "verification-failed",
+				operationId: request.operationId,
+				projectId: request.projectId,
+				reason: "embedded save receipt projection version is invalid",
+				expectedContentHash: identity!.contentHash,
+				readbackContentHash: null,
+			};
+		}
 		const readbackIdentity = await hashProjectContent(
 			buildEditorProjectContentInput({
 				project: readback.project,
 				mediaAssets: readback.mediaAssets,
 			}),
+			{ projectionVersion: contentHashProjectionVersion },
 		);
 		const readbackHash =
 			readbackIdentity.status === "hashed"
@@ -912,7 +955,6 @@ export class EditorAutomation {
 			contentHash: identity.contentHash,
 		});
 		if (
-			identity.version !== 1 ||
 			identity.receiptId !== expectedReceiptId ||
 			readbackHash !== identity.contentHash ||
 			readback.project.currentSceneId !== identity.sceneId
@@ -934,6 +976,7 @@ export class EditorAutomation {
 			sceneId: identity.sceneId,
 			revision: identity.revision,
 			contentHash: identity.contentHash,
+			contentHashProjectionVersion,
 			persistedAt: readback.persistence.snapshotAt,
 			completedAt: readback.persistence.completedAt,
 			storageSchemaVersion: readback.persistence.storageSchemaVersion,
@@ -2947,14 +2990,7 @@ function assertMediaTime(
 }
 
 function stableSerialize(value: unknown): string {
-	if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
-	if (value && typeof value === "object") {
-		const entries = Object.entries(value).sort(([left], [right]) =>
-			left.localeCompare(right),
-		);
-		return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`).join(",")}}`;
-	}
-	return JSON.stringify(value);
+	return canonicalSerialize(value);
 }
 
 function stripTransientRequest(value: unknown): unknown {
@@ -3017,7 +3053,13 @@ function parseOperationReceiptBinding(value: unknown) {
 	return value as unknown as import("@/services/storage/types").OperationReceiptBinding;
 }
 
-function operationReceiptAfterState(value: unknown) {
+function operationReceiptAfterState(value: unknown): {
+	projectId: string;
+	sceneId: string;
+	revisionAfter: number;
+	contentHashAfter: string;
+	contentHashProjectionVersion: ProjectContentProjectionVersion;
+} | null {
 	if (!isRecord(value)) return null;
 	const snapshot = isRecord(value.snapshot) ? value.snapshot : null;
 	const projectId =
@@ -3042,12 +3084,30 @@ function operationReceiptAfterState(value: unknown) {
 				: snapshot
 					? projectContentHash(snapshot)
 					: null;
+	const contentHashProjectionVersion =
+		typeof value.contentHashProjectionVersion === "number"
+			? value.contentHashProjectionVersion
+			: isRecord(value.contentIdentity)
+				? projectContentProjectionVersion({
+						contentIdentity: value.contentIdentity,
+					})
+				: snapshot
+					? projectContentProjectionVersion(snapshot)
+					: null;
 	return projectId &&
 		sceneId &&
 		revisionAfter !== null &&
 		contentHashAfter &&
+		(contentHashProjectionVersion === 1 ||
+			contentHashProjectionVersion === 2) &&
 		/^[a-f0-9]{64}$/.test(contentHashAfter)
-		? { projectId, sceneId, revisionAfter, contentHashAfter }
+		? {
+				projectId,
+				sceneId,
+				revisionAfter,
+				contentHashAfter,
+				contentHashProjectionVersion,
+			}
 		: null;
 }
 
@@ -3058,6 +3118,19 @@ function projectContentHash(snapshot: Record<string, unknown>): string | null {
 	const hash = identity && isRecord(identity.hash) ? identity.hash : null;
 	return identity?.status === "hashed" && typeof hash?.digest === "string"
 		? hash.digest
+		: null;
+}
+
+function projectContentProjectionVersion(
+	snapshot: Record<string, unknown>,
+): ProjectContentProjectionVersion | null {
+	const identity = isRecord(snapshot.contentIdentity)
+		? snapshot.contentIdentity
+		: null;
+	const hash = identity && isRecord(identity.hash) ? identity.hash : null;
+	return identity?.status === "hashed" &&
+		(hash?.projectionVersion === 1 || hash?.projectionVersion === 2)
+		? hash.projectionVersion
 		: null;
 }
 
@@ -3083,6 +3156,8 @@ function saveReceiptMatchesAfterState(
 		receipt.revision === state.sessionRevisionAfter &&
 		receipt.writeVersion === state.durableWriteVersion &&
 		receipt.contentHash === state.contentHashAfter &&
+		receipt.contentHashProjectionVersion ===
+			state.contentHashProjectionVersion &&
 		receipt.readbackContentHash === state.contentHashAfter &&
 		receipt.reloadVerified === true
 	);

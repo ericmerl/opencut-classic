@@ -89,6 +89,7 @@ describe("SaveManager flush barrier", () => {
 			operationId: "save-project-a",
 			fingerprint: "fingerprint-a",
 			contentHash: "a".repeat(64),
+			contentHashProjectionVersion: 2,
 			sceneId: "scene-a",
 			revision: 4,
 		};

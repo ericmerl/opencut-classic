@@ -51,7 +51,7 @@ beforeEach(() => {
 		expectedWriteVersion,
 		binding,
 	}) => ({
-		version: 1,
+		version: 2,
 		...binding,
 		receiptId: `save:${projectId}:${expectedWriteVersion}:${binding.contentHash}`,
 	});
@@ -68,6 +68,28 @@ afterEach(() => {
 });
 
 describe("EditorAutomation save barrier", () => {
+	test("serves explicit legacy v1 hashes for persisted receipt recovery", async () => {
+		const project = buildProject("Projection migration");
+		const automation = new EditorAutomation(
+			createEditor({ project, scene: project.scenes[0]!, onFlush: () => {} }),
+		);
+		const current = await automation.readProject();
+		const legacy = await automation.readProject({
+			projectContentProjectionVersion: 1,
+		});
+		if (
+			current.contentIdentity.status !== "hashed" ||
+			legacy.contentIdentity.status !== "hashed"
+		) {
+			throw new Error("hash blocked");
+		}
+		expect(current.contentIdentity.hash.projectionVersion).toBe(2);
+		expect(legacy.contentIdentity.hash.projectionVersion).toBe(1);
+		expect(current.contentIdentity.hash.digest).not.toBe(
+			legacy.contentIdentity.hash.digest,
+		);
+	});
+
 	test("flushes, freshly verifies, and replays without mutating editor state", async () => {
 		const project = buildProject("Saved");
 		const scene = project.scenes[0]!;
@@ -182,7 +204,7 @@ describe("EditorAutomation save barrier", () => {
 				writeVersion += 1;
 				saveReceiptIdentity = saveReceiptBinding
 					? {
-							version: 1,
+							version: 2,
 							...saveReceiptBinding,
 							receiptId: `save:project-1:${writeVersion}:${saveReceiptBinding.contentHash}`,
 						}
@@ -318,6 +340,7 @@ describe("EditorAutomation save barrier", () => {
 				sessionRevisionAfter: 19,
 				durableWriteVersion: 7,
 				contentHashAfter: committedContentHash,
+				contentHashProjectionVersion: 2,
 			},
 			result: { status: "applied", revision: 19, snapshot },
 			recordedAt: "2026-09-02T12:00:00.000Z",
@@ -384,6 +407,7 @@ describe("EditorAutomation save barrier", () => {
 				sessionRevisionAfter: 19,
 				durableWriteVersion: 7,
 				contentHashAfter: committedContentHash,
+				contentHashProjectionVersion: 2,
 			},
 			result: { status: "applied", revision: 19, snapshot },
 			recordedAt: "2026-09-02T12:00:00.000Z",
@@ -447,6 +471,7 @@ describe("EditorAutomation save barrier", () => {
 				sessionRevisionAfter: 19,
 				durableWriteVersion: 7,
 				contentHashAfter: committedContentHash,
+				contentHashProjectionVersion: 2,
 			},
 			result: { status: "applied", revision: 19, snapshot },
 			recordedAt: "2026-09-02T12:00:00.000Z",
@@ -564,6 +589,7 @@ describe("EditorAutomation save barrier", () => {
 			sceneId: requestedScene.id,
 			expectedRevision: snapshot.revision,
 			expectedProjectContentHash: snapshot.contentIdentity.hash.digest,
+			fingerprintProbe: { "\ue000": 2, "\u{10000}": 1 },
 		};
 		const binding = {
 			version: 1 as const,
@@ -612,7 +638,7 @@ function stableSerializeForTest(value: unknown): string {
 		return `[${value.map(stableSerializeForTest).join(",")}]`;
 	if (value && typeof value === "object") {
 		const entries = Object.entries(value).sort(([left], [right]) =>
-			left.localeCompare(right),
+			left < right ? -1 : left > right ? 1 : 0,
 		);
 		return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableSerializeForTest(entry)}`).join(",")}}`;
 	}

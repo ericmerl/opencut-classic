@@ -304,7 +304,8 @@ function bindJobToObservedProject(
 		identity.status !== "hashed" ||
 		!isRecord(identity.hash) ||
 		identity.hash.projection !== "opencut-project-content" ||
-		identity.hash.projectionVersion !== 1 ||
+		(identity.hash.projectionVersion !== 1 &&
+			identity.hash.projectionVersion !== 2) ||
 		identity.hash.algorithm !== "SHA-256" ||
 		identity.hash.digest !== expectedHash
 	) {

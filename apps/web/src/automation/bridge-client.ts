@@ -10,6 +10,7 @@ import type {
 	AutomationImportRequest,
 	AutomationImportSubtitlesRequest,
 	AutomationRenderPreviewFrameRequest,
+	AutomationReadProjectRequest,
 	AutomationExportSubtitlesRequest,
 	AutomationOpenProjectRequest,
 	AutomationSaveProjectRequest,
@@ -27,7 +28,7 @@ type BridgeRequest =
 			kind: "request";
 			id: string;
 			method: "read_project";
-			params: object;
+			params: AutomationReadProjectRequest;
 			target?: AutomationConnectionIdentity;
 	  }
 	| {
@@ -465,7 +466,7 @@ export class AutomationBridgeClient {
 	private dispatch(message: BridgeRequest): unknown | Promise<unknown> {
 		switch (message.method) {
 			case "read_project":
-				return this.automation.readProject();
+				return this.automation.readProject(message.params);
 			case "query_timeline":
 				return this.automation.queryTimeline(message.params);
 			case "list_effects":

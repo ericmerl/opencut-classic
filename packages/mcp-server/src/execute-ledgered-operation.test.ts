@@ -302,6 +302,8 @@ async function claimFromSpec(
 		sceneId: spec.before?.sceneId ?? null,
 		revisionBefore: spec.before?.revision ?? null,
 		contentHashBefore: spec.before?.contentHash ?? null,
+		contentHashProjectionVersionBefore:
+			spec.before?.contentHashProjectionVersion,
 		affectedObjects: spec.affectedObjects,
 		relationships: spec.relationships,
 	});
@@ -333,6 +335,7 @@ function operationSpec(
 			sceneId: "scene-1",
 			revision: 7,
 			contentHash: BEFORE_HASH,
+			contentHashProjectionVersion: 2,
 		},
 		requiresSaveVerification: true,
 		affectedObjects: [
@@ -355,6 +358,7 @@ function projectAppliedOutcome(operationId: string) {
 		evidence: {
 			revisionAfter: 8,
 			contentHashAfter: AFTER_HASH,
+			contentHashProjectionVersionAfter: 2 as const,
 			saveReceipt: {
 				receiptId: `save:project-1:1:${AFTER_HASH}`,
 				operationId: `${operationId}:save-barrier`,
@@ -362,6 +366,7 @@ function projectAppliedOutcome(operationId: string) {
 				sceneId: "scene-1",
 				revision: 8,
 				contentHash: AFTER_HASH,
+				contentHashProjectionVersion: 2 as const,
 				persistedAt: "2026-09-02T12:00:00.000Z",
 				completedAt: "2026-09-02T12:00:01.000Z",
 				storageSchemaVersion: 1,

@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-type-assertion */
 
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import type { TProject } from "@/project/types";
 import type { MediaTime } from "@/wasm";
 import {
@@ -36,6 +37,79 @@ type FixtureVideo = {
 };
 
 describe("canonical project content", () => {
+	test("matches the Rust-authored v2 canonical bytes and digest", async () => {
+		const fixtureBytes = await goldenFixture("rust-authored-project-v2.json");
+		expect(canonicalSerialize(JSON.parse(fixtureBytes))).toBe(fixtureBytes);
+		expect(sha256(fixtureBytes)).toBe(
+			"2648107f8035791b951903b65c1899847dcd8aeaae5f5141737426922348106b",
+		);
+	});
+
+	test("version 2 includes project identity while the legacy projection remains readable", async () => {
+		const original = fixture();
+		const duplicate = fixture();
+		duplicate.project.metadata.id = "project-b";
+
+		expect(PROJECT_CONTENT_PROJECTION_VERSION).toBe(2);
+		expect(JSON.parse(serializeProjectContent(original))).toMatchObject({
+			projectionVersion: 2,
+			project: { id: "project-a" },
+		});
+		expect(await digest(duplicate)).not.toBe(await digest(original));
+
+		const legacyOriginal = await hashProjectContent(original, {
+			projectionVersion: 1,
+		});
+		const legacyDuplicate = await hashProjectContent(duplicate, {
+			projectionVersion: 1,
+		});
+		expect(legacyOriginal).toMatchObject({
+			status: "hashed",
+			hash: { projectionVersion: 1 },
+		});
+		expect(legacyDuplicate).toEqual(legacyOriginal);
+		expect(
+			JSON.parse(serializeProjectContent(original, { projectionVersion: 1 })),
+		).not.toHaveProperty("project.id");
+	});
+
+	test("rejects an unsupported projection version at the runtime boundary", () => {
+		expect(() =>
+			serializeProjectContent(fixture(), {
+				projectionVersion: 3 as 2,
+			}),
+		).toThrow("Unsupported project content projection version: 3");
+	});
+
+	test("returns typed blockers for unsafe integers and invalid Unicode", async () => {
+		const unsafe = fixture();
+		Object.assign(unsafe.project.settings, {
+			unsafeFrameCount: Number.MAX_SAFE_INTEGER + 1,
+		});
+		expect(await hashProjectContent(unsafe)).toEqual({
+			status: "blocked",
+			blockers: [
+				{
+					code: "unsafe-integer",
+					path: "$.project.settings.unsafeFrameCount",
+					value: "9007199254740992",
+				},
+			],
+		});
+
+		const invalidUnicode = fixture();
+		invalidUnicode.project.metadata.name = "invalid-\ud800";
+		expect(await hashProjectContent(invalidUnicode)).toEqual({
+			status: "blocked",
+			blockers: [
+				{
+					code: "invalid-unicode",
+					path: "$.project.name",
+				},
+			],
+		});
+	});
+
 	test("is independent of object key insertion and media enumeration order", async () => {
 		expect(canonicalSerialize({ z: 1, a: { y: 2, x: 3 } })).toBe(
 			canonicalSerialize({ a: { x: 3, y: 2 }, z: 1 }),
@@ -92,6 +166,12 @@ describe("canonical project content", () => {
 			"Á",
 			"ä",
 		]);
+	});
+
+	test("orders non-BMP keys by UTF-16 code units", () => {
+		expect(canonicalSerialize({ "\ue000": 2, "\u{10000}": 1 })).toBe(
+			'{"𐀀":1,"":2}',
+		);
 	});
 
 	test("rejects ambiguous arrays, undefined, and non-JSON numbers", () => {
@@ -331,7 +411,6 @@ describe("canonical project content", () => {
 
 	test("excludes timestamps, UI state, thumbnails, and runtime objects", async () => {
 		const changed = fixture();
-		changed.project.metadata.id = "another-project";
 		changed.project.metadata.createdAt = new Date("2040-01-01T00:00:00Z");
 		changed.project.metadata.updatedAt = new Date("2040-01-02T00:00:00Z");
 		changed.project.metadata.thumbnail = "changed";
@@ -680,6 +759,22 @@ function requireDigest(
 		throw new Error("expected the fixture to have complete content identity");
 	}
 	return result.hash.digest;
+}
+
+async function goldenFixture(name: string): Promise<string> {
+	return (
+		await Bun.file(
+			join(
+				import.meta.dir,
+				"../../../../rust/crates/canonical-json/tests/fixtures",
+				name,
+			),
+		).text()
+	).replace(/\r?\n$/, "");
+}
+
+function sha256(value: string): string {
+	return new Bun.CryptoHasher("sha256").update(value).digest("hex");
 }
 
 async function digest(input: ProjectContentInput): Promise<string> {

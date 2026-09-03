@@ -55,7 +55,8 @@ export class OperationReceiptStore {
 			});
 			if (
 				stableSerialize(prior.binding) === stableSerialize(receipt.binding) &&
-				stableSerialize(prior.afterState) === stableSerialize(receipt.afterState) &&
+				stableSerialize(prior.afterState) ===
+					stableSerialize(receipt.afterState) &&
 				stableSerialize(prior.result) === stableSerialize(receipt.result)
 			) {
 				return;
@@ -102,7 +103,7 @@ export function parseOperationReceiptEnvelope({
 	if (stableSerialize(value.binding) !== stableSerialize(binding)) {
 		throw malformed(operationId, "contract mismatch");
 	}
-	if (!isAfterState(value.afterState)) {
+	if (!isAfterState(value.afterState, true)) {
 		throw malformed(operationId, "invalid immutable after-state");
 	}
 	if (typeof value.recordedAt !== "string" || value.recordedAt.length === 0) {
@@ -112,7 +113,15 @@ export function parseOperationReceiptEnvelope({
 		throw malformed(operationId, "invalid recordedAt");
 	}
 	assertJsonValue(value.result, "result");
-	return value as unknown as PersistedOperationReceipt;
+	const afterState = value.afterState as Record<string, unknown>;
+	return {
+		...value,
+		afterState: {
+			...afterState,
+			contentHashProjectionVersion:
+				afterState.contentHashProjectionVersion ?? 1,
+		},
+	} as unknown as PersistedOperationReceipt;
 }
 
 function validateReceiptInput(receipt: OperationReceiptInput): void {
@@ -120,7 +129,7 @@ function validateReceiptInput(receipt: OperationReceiptInput): void {
 		!receipt.operationId ||
 		!isReceiptBinding(receipt.binding) ||
 		receipt.binding.outerOperationId !== receipt.operationId ||
-		!isAfterState(receipt.afterState)
+		!isAfterState(receipt.afterState, false)
 	) {
 		throw new Error("operation receipt identity fields are required");
 	}
@@ -144,14 +153,21 @@ function validateBinding(binding: OperationReceiptBinding): void {
 function isReceiptBinding(value: unknown): value is OperationReceiptBinding {
 	if (!isRecord(value) || value.version !== 1) return false;
 	return (
-		["outerOperationId", "outerToolName", "outerRequestFingerprint", "stepId", "browserMethod", "browserRequestFingerprint"].every(
+		[
+			"outerOperationId",
+			"outerToolName",
+			"outerRequestFingerprint",
+			"stepId",
+			"browserMethod",
+			"browserRequestFingerprint",
+		].every(
 			(field) => typeof value[field] === "string" && value[field].length > 0,
 		) &&
 		(value.role === "direct-terminal" || value.role === "composite-step")
 	);
 }
 
-function isAfterState(value: unknown): boolean {
+function isAfterState(value: unknown, allowLegacyMissing: boolean): boolean {
 	return (
 		isRecord(value) &&
 		typeof value.projectId === "string" &&
@@ -167,20 +183,23 @@ function isAfterState(value: unknown): boolean {
 		Number.isSafeInteger(value.durableWriteVersion) &&
 		value.durableWriteVersion > 0 &&
 		typeof value.contentHashAfter === "string" &&
-		/^[a-f0-9]{64}$/.test(value.contentHashAfter)
+		/^[a-f0-9]{64}$/.test(value.contentHashAfter) &&
+		(allowLegacyMissing
+			? value.contentHashProjectionVersion === undefined ||
+				value.contentHashProjectionVersion === 1 ||
+				value.contentHashProjectionVersion === 2
+			: value.contentHashProjectionVersion === 2)
 	);
 }
 
 function assertJsonValue(value: unknown, path: string): void {
-	if (
-		value === null ||
-		typeof value === "string" ||
-		typeof value === "boolean"
-	)
+	if (value === null || typeof value === "string" || typeof value === "boolean")
 		return;
 	if (typeof value === "number" && Number.isFinite(value)) return;
 	if (Array.isArray(value)) {
-		value.forEach((child, index) => assertJsonValue(child, `${path}[${index}]`));
+		value.forEach((child, index) =>
+			assertJsonValue(child, `${path}[${index}]`),
+		);
 		return;
 	}
 	if (isRecord(value)) {

@@ -67,6 +67,121 @@ describe("OperationLedger SQLite durability", () => {
 		restarted.close();
 	});
 
+	test("writes explicit v2 hash metadata and preserves checksum-valid legacy v1 records", async () => {
+		const ledger = new OperationLedger(directory);
+		const currentClaim = await ledger.claim(operation("current-v2"));
+		const current = await ledger.complete(
+			"current-v2",
+			currentClaim.record.inputFingerprint,
+			{ status: "applied" },
+			evidence(currentClaim.record),
+		);
+		expect(current.record).toMatchObject({
+			contentHashProjectionVersionBefore: 2,
+			contentHashProjectionVersionAfter: 2,
+			saveReceipt: { contentHashProjectionVersion: 2 },
+		});
+
+		const legacySeedOperation = operation("legacy-v1");
+		const legacyClaim = await ledger.claim(legacySeedOperation);
+		await ledger.complete(
+			"legacy-v1",
+			legacyClaim.record.inputFingerprint,
+			{ status: "applied" },
+			evidence(legacyClaim.record),
+		);
+		const legacyOperation = operation("legacy-v1");
+		delete legacyOperation.contentHashProjectionVersionBefore;
+		const legacyFingerprint = ledger.fingerprint(legacyOperation);
+		const seededVersions = await ledger.versions("legacy-v1");
+		ledger.close();
+		const database = new Database(join(directory, "operation-ledger.sqlite"));
+		database.exec("DROP TRIGGER operation_versions_no_update");
+		let previousChecksum: string | null = null;
+		for (const seeded of seededVersions) {
+			const version = structuredClone(seeded);
+			delete version.contentHashProjectionVersionBefore;
+			delete version.contentHashProjectionVersionAfter;
+			if (version.saveReceipt) {
+				delete version.saveReceipt.contentHashProjectionVersion;
+			}
+			version.inputFingerprint = legacyFingerprint;
+			version.previousChecksum = previousChecksum;
+			const checksum = checksumRecord(version);
+			database
+				.query(
+					"UPDATE operation_versions SET previous_checksum = ?, record_checksum = ?, record_json = ? WHERE operation_id = ? AND ledger_version = ?",
+				)
+				.run(
+					previousChecksum,
+					checksum,
+					JSON.stringify(version),
+					version.operationId,
+					version.ledgerVersion,
+				);
+			previousChecksum = checksum;
+		}
+		database.exec(`
+			CREATE TRIGGER operation_versions_no_update BEFORE UPDATE ON operation_versions
+			BEGIN SELECT RAISE(ABORT, 'operation history is append-only'); END;
+		`);
+		database.close();
+
+		const restarted = new OperationLedger(directory);
+		const legacyVersions = await restarted.versions("legacy-v1");
+		expect(legacyVersions).toHaveLength(2);
+		for (const version of legacyVersions) {
+			expect(Object.hasOwn(version, "contentHashProjectionVersionBefore")).toBe(
+				false,
+			);
+			expect(Object.hasOwn(version, "contentHashProjectionVersionAfter")).toBe(
+				false,
+			);
+		}
+		expect(
+			Object.hasOwn(
+				legacyVersions[1]!.saveReceipt!,
+				"contentHashProjectionVersion",
+			),
+		).toBe(false);
+		expect(await restarted.claim(legacyOperation)).toMatchObject({
+			state: "replayed",
+		});
+		restarted.close();
+	});
+
+	test("rejects disagreement between ledger and receipt hash projection versions", async () => {
+		const ledger = new OperationLedger(directory);
+		const claim = await ledger.claim(operation("projection-mismatch"));
+		const terminal = evidence(claim.record);
+		const mismatch = {
+			...terminal,
+			saveReceipt: {
+				...terminal.saveReceipt,
+				contentHashProjectionVersion: 1 as const,
+			},
+		};
+		await expect(
+			ledger.complete(
+				"projection-mismatch",
+				claim.record.inputFingerprint,
+				{ status: "applied" },
+				mismatch,
+			),
+		).rejects.toThrow("save receipt must link to the terminal operation state");
+		ledger.close();
+	});
+
+	test("rejects missing projection provenance on current writes", async () => {
+		const ledger = new OperationLedger(directory);
+		const incomplete = operation("missing-current-projection");
+		delete incomplete.contentHashProjectionVersionBefore;
+		await expect(ledger.claim(incomplete)).rejects.toThrow(
+			"current operation ledger writes require explicit content hash projection versions",
+		);
+		ledger.close();
+	});
+
 	test("includes every semantic context field in bytewise canonical fingerprints", async () => {
 		const ledger = new OperationLedger(directory);
 		const first = operation("canonical");
@@ -98,6 +213,9 @@ describe("OperationLedger SQLite durability", () => {
 			},
 			(value) => {
 				value.contentHashBefore = "c".repeat(64);
+			},
+			(value) => {
+				value.contentHashProjectionVersionBefore = 1;
 			},
 			(value) => {
 				value.canonicalInput = { changed: true };
@@ -238,6 +356,7 @@ describe("OperationLedger SQLite durability", () => {
 			phase: "verifying",
 			revisionAfter: 8,
 			contentHashAfter: "b".repeat(64),
+			contentHashProjectionVersionAfter: 2,
 		});
 		const latest = (await ledger.get("edit-1"))!.record;
 		await ledger.complete(
@@ -597,6 +716,7 @@ function operation(operationId = "edit-1"): OperationClaimInput {
 		sceneId: "scene-1",
 		revisionBefore: 7,
 		contentHashBefore: "a".repeat(64),
+		contentHashProjectionVersionBefore: 2,
 	};
 }
 
@@ -607,6 +727,7 @@ function evidence(record: OperationLedgerRecord) {
 		fencingToken: record.lease!.fencingToken,
 		revisionAfter: 8,
 		contentHashAfter: contentHash,
+		contentHashProjectionVersionAfter: 2 as const,
 		saveReceipt: {
 			receiptId: `save:${record.projectId}:1:${contentHash}`,
 			operationId: record.operationId,
@@ -614,6 +735,7 @@ function evidence(record: OperationLedgerRecord) {
 			sceneId: record.sceneId!,
 			revision: 8,
 			contentHash,
+			contentHashProjectionVersion: 2 as const,
 			persistedAt: "2026-09-02T12:01:00.000Z",
 			completedAt: "2026-09-02T12:01:01.000Z",
 			storageSchemaVersion: 1,

@@ -40,7 +40,10 @@ import { roundMediaTime } from "@/wasm";
 import { resolvePersistedMediaIdentity } from "@/media/content-identity";
 import { parseSaveReceiptEnvelope } from "./save-receipt-storage";
 import { OperationReceiptStore } from "./operation-receipt-storage";
-import { buildProjectSaveReceiptIdentity } from "./save-receipt-identity";
+import {
+	buildProjectSaveReceiptIdentity,
+	readProjectSaveReceiptProjectionVersion,
+} from "./save-receipt-identity";
 
 function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 	if (!Array.isArray(raw)) return [];
@@ -294,7 +297,9 @@ class StorageService {
 				if (
 					prior?.operationId === binding.operationId &&
 					(prior.fingerprint !== binding.fingerprint ||
-						prior.contentHash !== binding.contentHash)
+						prior.contentHash !== binding.contentHash ||
+						readProjectSaveReceiptProjectionVersion(prior) !==
+							binding.contentHashProjectionVersion)
 				) {
 					return null;
 				}
@@ -308,6 +313,8 @@ class StorageService {
 					prior.operationId === identity.operationId &&
 					prior.fingerprint === identity.fingerprint &&
 					prior.contentHash === identity.contentHash &&
+					readProjectSaveReceiptProjectionVersion(prior) ===
+						identity.contentHashProjectionVersion &&
 					prior.receiptId === identity.receiptId
 				) {
 					return prior;

@@ -1,4 +1,5 @@
 import * as z from "zod/v4";
+import { readPersistedProjectContentProjectionVersion } from "./project-content-version";
 
 export const OPERATION_LEDGER_SCHEMA_VERSION = 1 as const;
 
@@ -158,6 +159,9 @@ export const operationSaveReceiptSchema = z
 		sceneId: identifierSchema,
 		revision: z.number().int().nonnegative(),
 		contentHash: sha256Schema,
+		contentHashProjectionVersion: z
+			.union([z.literal(1), z.literal(2)])
+			.optional(),
 		persistedAt: timestampSchema,
 		completedAt: timestampSchema,
 		storageSchemaVersion: z.number().int().positive(),
@@ -231,6 +235,12 @@ export const operationLedgerRecordSchema = z
 		revisionAfter: z.number().int().nonnegative().nullable(),
 		contentHashBefore: sha256Schema.nullable(),
 		contentHashAfter: sha256Schema.nullable(),
+		contentHashProjectionVersionBefore: z
+			.union([z.literal(1), z.literal(2)])
+			.optional(),
+		contentHashProjectionVersionAfter: z
+			.union([z.literal(1), z.literal(2)])
+			.optional(),
 		saveReceipt: operationSaveReceiptSchema.nullable(),
 		providerProvenance: z.array(operationProviderProvenanceSchema).max(100),
 		artifacts: z.array(operationArtifactSchema).max(1_000),
@@ -342,7 +352,13 @@ export const operationLedgerRecordSchema = z
 				(record.saveReceipt.projectId !== record.projectId ||
 					record.saveReceipt.sceneId !== record.sceneId ||
 					record.saveReceipt.revision !== record.revisionAfter ||
-					record.saveReceipt.contentHash !== record.contentHashAfter)
+					record.saveReceipt.contentHash !== record.contentHashAfter ||
+					readPersistedProjectContentProjectionVersion(
+						record.saveReceipt.contentHashProjectionVersion,
+					) !==
+						readPersistedProjectContentProjectionVersion(
+							record.contentHashProjectionVersionAfter,
+						))
 			) {
 				context.addIssue({
 					code: "custom",
@@ -402,6 +418,25 @@ export function parseOperationLedgerRecord(
 		);
 	}
 	return operationLedgerRecordSchema.parse(value);
+}
+
+export function parseCurrentOperationLedgerRecord(
+	value: unknown,
+): OperationLedgerRecord {
+	const record = parseOperationLedgerRecord(value);
+	if (
+		(record.contentHashBefore !== null &&
+			record.contentHashProjectionVersionBefore === undefined) ||
+		(record.contentHashAfter !== null &&
+			record.contentHashProjectionVersionAfter === undefined) ||
+		(record.saveReceipt !== null &&
+			record.saveReceipt.contentHashProjectionVersion === undefined)
+	) {
+		throw new Error(
+			"current operation ledger writes require explicit content hash projection versions",
+		);
+	}
+	return record;
 }
 
 export function parseJsonValue(value: unknown): JsonValue {

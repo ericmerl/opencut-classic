@@ -140,6 +140,7 @@ describe("MCP ledger handler recovery", () => {
 							sessionRevisionAfter: 8,
 							durableWriteVersion: 1,
 							contentHashAfter: "b".repeat(64),
+							contentHashProjectionVersion: 2,
 						},
 						result: mutation,
 					};
@@ -234,6 +235,7 @@ describe("MCP ledger handler recovery", () => {
 							sessionRevisionAfter: 8,
 							durableWriteVersion: 1,
 							contentHashAfter: "b".repeat(64),
+							contentHashProjectionVersion: 2,
 						},
 						result: mutation,
 					};
@@ -451,7 +453,11 @@ function projectSnapshot(digest: string) {
 		revision: 8,
 		contentIdentity: {
 			status: "hashed",
-			hash: { algorithm: "SHA-256", digest: digest.repeat(64) },
+			hash: {
+				algorithm: "SHA-256",
+				projectionVersion: 2,
+				digest: digest.repeat(64),
+			},
 		},
 	};
 }
@@ -465,6 +471,7 @@ function saveReceipt(operationId: string, digest: string) {
 		sceneId: "scene-1",
 		revision: 8,
 		contentHash: digest.repeat(64),
+		contentHashProjectionVersion: 2,
 		persistedAt: "2026-09-02T00:00:00.000Z",
 		completedAt: "2026-09-02T00:00:01.000Z",
 		storageSchemaVersion: 1,
@@ -487,7 +494,7 @@ function buildBridge(): EditorBridge {
 					revision: 4,
 					contentIdentity: {
 						status: "hashed",
-						hash: { digest: "b".repeat(64) },
+						hash: { projectionVersion: 2, digest: "b".repeat(64) },
 					},
 				};
 			}

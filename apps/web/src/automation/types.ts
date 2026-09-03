@@ -18,7 +18,10 @@ import type {
 	AnimationInterpolation,
 	ElementKeyframe,
 } from "@/animation/types";
-import type { ProjectContentHashResult } from "./project-content-hash";
+import type {
+	ProjectContentHashResult,
+	ProjectContentProjectionVersion,
+} from "./project-content-hash";
 import type {
 	OperationReceiptAfterState,
 	OperationReceiptBinding,
@@ -265,6 +268,10 @@ export interface AutomationProjectSnapshot {
 	elements: AutomationElementSnapshot[];
 }
 
+export interface AutomationReadProjectRequest {
+	projectContentProjectionVersion?: ProjectContentProjectionVersion;
+}
+
 export interface AutomationContentIdentityBlockedResult {
 	status: "content-identity-blocked";
 	projectId: string;
@@ -383,6 +390,7 @@ export interface AutomationSaveReceipt {
 	sceneId: string;
 	revision: number;
 	contentHash: string;
+	contentHashProjectionVersion: ProjectContentProjectionVersion;
 	persistedAt: string;
 	completedAt: string;
 	storageSchemaVersion: number;

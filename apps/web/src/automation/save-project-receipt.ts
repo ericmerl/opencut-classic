@@ -20,12 +20,16 @@ const RESULT_KEYS = [
 	"storageSchemaVersion",
 	"writeVersion",
 ] as const;
+const VERSIONED_RESULT_KEYS = [
+	...RESULT_KEYS,
+	"contentHashProjectionVersion",
+] as const;
 
 export function parsePersistedSaveProjectResult(
 	value: unknown,
 ): PersistedAutomationSaveResult {
 	if (!isRecord(value)) throw new Error("save result is not an object");
-	assertExactKeys(value);
+	const legacy = assertExactKeys(value);
 	if (value.status !== "saved")
 		throw new Error("save result status is invalid");
 	for (const field of [
@@ -66,18 +70,35 @@ export function parsePersistedSaveProjectResult(
 	if (value.reloadVerified !== true) {
 		throw new Error("save result reload verification is invalid");
 	}
-	return value as unknown as PersistedAutomationSaveResult;
+	const contentHashProjectionVersion = legacy
+		? 1
+		: value.contentHashProjectionVersion;
+	if (
+		contentHashProjectionVersion !== 1 &&
+		contentHashProjectionVersion !== 2
+	) {
+		throw new Error("save result content hash projection version is invalid");
+	}
+	return {
+		...value,
+		contentHashProjectionVersion,
+	} as unknown as PersistedAutomationSaveResult;
 }
 
-function assertExactKeys(value: Record<string, unknown>): void {
+function assertExactKeys(value: Record<string, unknown>): boolean {
 	const actual = Object.keys(value).sort();
-	const expected = [...RESULT_KEYS].sort();
-	if (
-		actual.length !== expected.length ||
-		actual.some((key, index) => key !== expected[index])
-	) {
-		throw new Error("save result contains missing or unknown fields");
-	}
+	const legacy = [...RESULT_KEYS].sort();
+	const versioned = [...VERSIONED_RESULT_KEYS].sort();
+	if (sameKeys(actual, legacy)) return true;
+	if (sameKeys(actual, versioned)) return false;
+	throw new Error("save result contains missing or unknown fields");
+}
+
+function sameKeys(actual: string[], expected: string[]): boolean {
+	return (
+		actual.length === expected.length &&
+		actual.every((key, index) => key === expected[index])
+	);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

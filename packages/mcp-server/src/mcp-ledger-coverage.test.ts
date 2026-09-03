@@ -218,6 +218,7 @@ function verifiedSave(operationId: string) {
 		sceneId: "scene-1",
 		revision: 1,
 		contentHash: "a".repeat(64),
+		contentHashProjectionVersion: 2,
 		persistedAt: "2026-09-02T00:00:00.000Z",
 		completedAt: "2026-09-02T00:00:01.000Z",
 		storageSchemaVersion: 1,
@@ -316,7 +317,11 @@ function projectSnapshot() {
 		revision: 1,
 		contentIdentity: {
 			status: "hashed",
-			hash: { algorithm: "SHA-256", digest: "a".repeat(64) },
+			hash: {
+				algorithm: "SHA-256",
+				projectionVersion: 2,
+				digest: "a".repeat(64),
+			},
 		},
 	};
 }
@@ -387,6 +392,7 @@ function browserReceiptBridge(
 						sessionRevisionAfter: 1,
 						durableWriteVersion: 1,
 						contentHashAfter: "a".repeat(64),
+						contentHashProjectionVersion: 2,
 					},
 					result,
 				};

@@ -37,6 +37,7 @@ const input: OperationClaimInput = {
 	sceneId: "scene-1",
 	revisionBefore: 7,
 	contentHashBefore: "a".repeat(64),
+	contentHashProjectionVersionBefore: 2,
 };
 
 const ledger = new OperationLedger(directory, {
@@ -63,6 +64,7 @@ switch (action) {
 				fencingToken: fencingToken ?? "missing",
 				revisionAfter: 8,
 				contentHashAfter: "b".repeat(64),
+				contentHashProjectionVersionAfter: 2,
 			},
 		);
 		break;
@@ -74,6 +76,7 @@ switch (action) {
 			phase: "verifying",
 			revisionAfter: 8,
 			contentHashAfter: "b".repeat(64),
+			contentHashProjectionVersionAfter: 2,
 		});
 		break;
 	case "claim":

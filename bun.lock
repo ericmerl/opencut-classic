@@ -30,6 +30,7 @@
       "name": "@opencut/web",
       "version": "0.1.0",
       "dependencies": {
+		"@opencut/canonical-json": "workspace:*",
         "@hello-pangea/dnd": "^18.0.1",
         "@hugeicons/core-free-icons": "^3.3.0",
         "@hugeicons/react": "^1.1.6",
@@ -112,10 +113,15 @@
         "wrangler": "^4.77.0",
       },
     },
+    "packages/canonical-json": {
+      "name": "@opencut/canonical-json",
+      "version": "0.1.0",
+    },
     "packages/mcp-server": {
       "name": "@opencut/mcp-server",
       "version": "0.1.0",
       "dependencies": {
+		"@opencut/canonical-json": "workspace:*",
         "@modelcontextprotocol/server": "2.0.0",
         "sharp": "^0.34.5",
         "zod": "4.5.4",
@@ -565,6 +571,8 @@
     "@nodelib/fs.stat": ["@nodelib/fs.stat@2.0.5", "", {}, "sha512-RkhPPp2zrqDAQA/2jNhnztcPAlv64XdhIp7a7454A5ovI7Bukxgt7MX7udwAu3zg1DcpPU0rz3VV1SeaqvY4+A=="],
 
     "@nodelib/fs.walk": ["@nodelib/fs.walk@1.2.8", "", { "dependencies": { "@nodelib/fs.scandir": "2.1.5", "fastq": "^1.6.0" } }, "sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg=="],
+
+    "@opencut/canonical-json": ["@opencut/canonical-json@workspace:packages/canonical-json"],
 
     "@opencut/mcp-server": ["@opencut/mcp-server@workspace:packages/mcp-server"],
 

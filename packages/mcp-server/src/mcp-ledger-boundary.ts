@@ -23,6 +23,10 @@ import {
 	type OperationSaveReceipt,
 } from "./operation-ledger";
 import { protocolMutationRejection } from "./protocol-compatibility";
+import {
+	CURRENT_PROJECT_CONTENT_PROJECTION_VERSION,
+	readPersistedProjectContentProjectionVersion,
+} from "./project-content-version";
 
 type ToolInput = Record<string, unknown>;
 
@@ -103,6 +107,8 @@ export class McpLedgerBoundary {
 											: existing.record.sceneId)),
 						revision: existing.record.revisionBefore,
 						contentHash: existing.record.contentHashBefore,
+						contentHashProjectionVersion:
+							existing.record.contentHashProjectionVersionBefore,
 					}
 				: await this.resolveBeforeState(input, requiresVerifiedBrowserHash);
 		const result = await executeLedgeredOperation({
@@ -268,6 +274,9 @@ export class McpLedgerBoundary {
 			: (stringField(input, "expectedProjectContentHash") ??
 				stringField(input, "expectedContentHash"));
 		let sceneId = stringField(input, "sceneId");
+		let contentHashProjectionVersion: 1 | 2 | null = contentHash
+			? CURRENT_PROJECT_CONTENT_PROJECTION_VERSION
+			: null;
 		if (!contentHash || requiresVerifiedBrowserHash) {
 			const snapshot = await this.bridge.request("read_project", {
 				...protocolContext(input),
@@ -275,6 +284,8 @@ export class McpLedgerBoundary {
 			});
 			if (isRecord(snapshot)) {
 				contentHash ??= contentHashOf(snapshot);
+				contentHashProjectionVersion ??=
+					contentHashProjectionVersionOf(snapshot);
 				sceneId ??= stringField(snapshot, "sceneId");
 			}
 		}
@@ -286,6 +297,7 @@ export class McpLedgerBoundary {
 					? input.expectedRevision
 					: null,
 			contentHash,
+			contentHashProjectionVersion: contentHashProjectionVersion ?? undefined,
 		};
 	}
 
@@ -358,7 +370,16 @@ export class McpLedgerBoundary {
 		const revision =
 			result && typeof result.revision === "number" ? result.revision : null;
 		const hash = snapshot ? contentHashOf(snapshot) : null;
-		if (!projectId || !sceneId || revision === null || !hash) {
+		const hashProjectionVersion = snapshot
+			? contentHashProjectionVersionOf(snapshot)
+			: null;
+		if (
+			!projectId ||
+			!sceneId ||
+			revision === null ||
+			!hash ||
+			!hashProjectionVersion
+		) {
 			return {
 				disposition: "unknown",
 				reason: "mutation response lacks revision, scene, or content hash",
@@ -378,17 +399,23 @@ export class McpLedgerBoundary {
 			5 * 60_000,
 		);
 		const receipt = parseSaveReceipt(saved);
-		if (!receipt) {
+		if (
+			!receipt ||
+			receipt.contentHashProjectionVersion !== hashProjectionVersion
+		) {
 			return { disposition: "unknown", reason: "verified save barrier failed" };
 		}
 		const readback = await this.bridge.request("read_project", {
 			...protocolContext(input),
 			projectId,
+			projectContentProjectionVersion: receipt.contentHashProjectionVersion,
 		});
 		if (
 			!isRecord(readback) ||
 			readback.revision !== receipt.revision ||
-			contentHashOf(readback) !== receipt.contentHash
+			contentHashOf(readback) !== receipt.contentHash ||
+			contentHashProjectionVersionOf(readback) !==
+				receipt.contentHashProjectionVersion
 		) {
 			return {
 				disposition: "unknown",
@@ -441,6 +468,10 @@ export class McpLedgerBoundary {
 				? afterState.durableWriteVersion
 				: null;
 		const contentHash = stringField(afterState, "contentHashAfter");
+		const contentHashProjectionVersion =
+			readPersistedProjectContentProjectionVersion(
+				afterState.contentHashProjectionVersion,
+			);
 		if (
 			!projectId ||
 			!sceneId ||
@@ -448,7 +479,8 @@ export class McpLedgerBoundary {
 			sessionRevision !== revision ||
 			durableWriteVersion === null ||
 			durableWriteVersion <= 0 ||
-			!contentHash
+			!contentHash ||
+			!contentHashProjectionVersion
 		) {
 			return {
 				disposition: "unknown",
@@ -461,7 +493,10 @@ export class McpLedgerBoundary {
 			resultState.projectId !== projectId ||
 			resultState.sceneId !== sceneId ||
 			resultState.revision !== revision ||
-			resultState.contentHash !== contentHash
+			resultState.contentHash !== contentHash ||
+			(resultState.contentHashProjectionVersion !== null &&
+				resultState.contentHashProjectionVersion !==
+					contentHashProjectionVersion)
 		) {
 			return {
 				disposition: "unknown",
@@ -490,9 +525,15 @@ export class McpLedgerBoundary {
 		const readback = await this.bridge.request("read_project", {
 			...protocolContext(input),
 			projectId,
+			projectContentProjectionVersion: contentHashProjectionVersion,
 		});
 		if (
-			!matchesLiveProjectState(readback, { projectId, sceneId, contentHash })
+			!matchesLiveProjectState(readback, {
+				projectId,
+				sceneId,
+				contentHash,
+				contentHashProjectionVersion,
+			})
 		) {
 			return {
 				disposition: "unknown",
@@ -509,6 +550,7 @@ export class McpLedgerBoundary {
 					sceneId,
 					revisionAfter: revision,
 					contentHashAfter: contentHash,
+					contentHashProjectionVersionAfter: contentHashProjectionVersion,
 				},
 			};
 		}
@@ -519,6 +561,7 @@ export class McpLedgerBoundary {
 				sceneId,
 				revision,
 				contentHash,
+				contentHashProjectionVersion,
 			})
 				? {
 						disposition: "applied-verified",
@@ -558,6 +601,7 @@ export class McpLedgerBoundary {
 				sceneId,
 				revision,
 				contentHash,
+				contentHashProjectionVersion,
 			})
 		) {
 			return {
@@ -845,6 +889,11 @@ function parseSaveReceipt(value: unknown): OperationSaveReceipt | null {
 		value.reloadVerified !== true
 	)
 		return null;
+	const contentHashProjectionVersion =
+		readPersistedProjectContentProjectionVersion(
+			value.contentHashProjectionVersion,
+		);
+	if (!contentHashProjectionVersion) return null;
 	return {
 		receiptId: value.receiptId as string,
 		operationId: value.operationId as string,
@@ -852,6 +901,7 @@ function parseSaveReceipt(value: unknown): OperationSaveReceipt | null {
 		sceneId: value.sceneId as string,
 		revision: value.revision,
 		contentHash: value.contentHash as string,
+		contentHashProjectionVersion,
 		persistedAt: value.persistedAt as string,
 		completedAt: value.completedAt as string,
 		storageSchemaVersion: value.storageSchemaVersion,
@@ -867,6 +917,7 @@ function receiptEvidence(receipt: OperationSaveReceipt) {
 		sceneId: receipt.sceneId,
 		revisionAfter: receipt.revision,
 		contentHashAfter: receipt.contentHash,
+		contentHashProjectionVersionAfter: receipt.contentHashProjectionVersion,
 		saveReceipt: receipt,
 	};
 }
@@ -967,11 +1018,25 @@ function contentHashOf(value: Record<string, unknown>): string | null {
 		: null;
 }
 
+function contentHashProjectionVersionOf(
+	value: Record<string, unknown>,
+): 1 | 2 | null {
+	const identity = isRecord(value.contentIdentity)
+		? value.contentIdentity
+		: null;
+	const hash = identity && isRecord(identity.hash) ? identity.hash : null;
+	return identity?.status === "hashed" &&
+		(hash?.projectionVersion === 1 || hash?.projectionVersion === 2)
+		? hash.projectionVersion
+		: null;
+}
+
 function immutableResultState(value: unknown): {
 	projectId: string;
 	sceneId: string;
 	revision: number;
 	contentHash: string;
+	contentHashProjectionVersion: 1 | 2 | null;
 } | null {
 	if (!isRecord(value)) return null;
 	const snapshot = isRecord(value.snapshot) ? value.snapshot : null;
@@ -985,8 +1050,21 @@ function immutableResultState(value: unknown): {
 	const contentHash =
 		stringField(value, "contentHash") ??
 		(snapshot ? contentHashOf(snapshot) : null);
+	const contentHashProjectionVersion =
+		value.contentHashProjectionVersion === 1 ||
+		value.contentHashProjectionVersion === 2
+			? value.contentHashProjectionVersion
+			: snapshot
+				? contentHashProjectionVersionOf(snapshot)
+				: null;
 	return projectId && sceneId && revision !== null && contentHash
-		? { projectId, sceneId, revision, contentHash }
+		? {
+				projectId,
+				sceneId,
+				revision,
+				contentHash,
+				contentHashProjectionVersion,
+			}
 		: null;
 }
 
@@ -996,13 +1074,16 @@ function matchesLiveProjectState(
 		projectId: string;
 		sceneId: string;
 		contentHash: string;
+		contentHashProjectionVersion: 1 | 2;
 	},
 ): boolean {
 	if (!isRecord(value)) return false;
 	return (
 		stringField(value, "projectId") === expected.projectId &&
 		stringField(value, "sceneId") === expected.sceneId &&
-		contentHashOf(value) === expected.contentHash
+		contentHashOf(value) === expected.contentHash &&
+		contentHashProjectionVersionOf(value) ===
+			expected.contentHashProjectionVersion
 	);
 }
 
@@ -1013,6 +1094,7 @@ function receiptMatchesState(
 		sceneId: string;
 		revision: number;
 		contentHash: string;
+		contentHashProjectionVersion: 1 | 2;
 	},
 ): boolean {
 	return (
@@ -1020,6 +1102,8 @@ function receiptMatchesState(
 		receipt.sceneId === expected.sceneId &&
 		receipt.revision === expected.revision &&
 		receipt.contentHash === expected.contentHash &&
+		receipt.contentHashProjectionVersion ===
+			expected.contentHashProjectionVersion &&
 		receipt.readbackContentHash === expected.contentHash &&
 		receipt.reloadVerified === true
 	);

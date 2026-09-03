@@ -1,5 +1,7 @@
 import {
 	PROJECT_SAVE_RECEIPT_IDENTITY_VERSION,
+	type CurrentProjectSaveReceiptIdentity,
+	type ProjectContentProjectionVersion,
 	type ProjectSaveReceiptBinding,
 	type ProjectSaveReceiptIdentity,
 } from "./types";
@@ -24,7 +26,7 @@ export function buildProjectSaveReceiptIdentity({
 	projectId: string;
 	writeVersion: number;
 	binding: ProjectSaveReceiptBinding;
-}): ProjectSaveReceiptIdentity {
+}): CurrentProjectSaveReceiptIdentity {
 	return {
 		version: PROJECT_SAVE_RECEIPT_IDENTITY_VERSION,
 		...binding,
@@ -34,4 +36,15 @@ export function buildProjectSaveReceiptIdentity({
 			contentHash: binding.contentHash,
 		}),
 	};
+}
+
+export function readProjectSaveReceiptProjectionVersion(
+	identity: ProjectSaveReceiptIdentity,
+): ProjectContentProjectionVersion | null {
+	if (identity.version === 1) return 1;
+	return identity.version === PROJECT_SAVE_RECEIPT_IDENTITY_VERSION &&
+		(identity.contentHashProjectionVersion === 1 ||
+			identity.contentHashProjectionVersion === 2)
+		? identity.contentHashProjectionVersion
+		: null;
 }

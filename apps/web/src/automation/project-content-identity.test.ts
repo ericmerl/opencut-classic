@@ -1,10 +1,45 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import type { TProject } from "@/project/types";
 import type { MediaAsset } from "@/media/types";
 import { buildEditorProjectContentInput } from "./project-content-identity";
-import { hashProjectContent } from "./project-content-hash";
+import {
+	hashProjectContent,
+	serializeProjectContent,
+} from "./project-content-hash";
 
 describe("editor project content identity mapping", () => {
+	test("matches Rust bytes and digest for a JS adapter-built v2 projection", async () => {
+		const project = buildProject();
+		project.metadata.id = "js-project";
+		project.metadata.name = "JS Adapter Golden";
+		project.scenes[0]!.id = "scene-js";
+		project.currentSceneId = "scene-js";
+		const asset = buildMediaAsset("a".repeat(64));
+		asset.id = "asset-js";
+		const input = buildEditorProjectContentInput({
+			project,
+			mediaAssets: [asset],
+		});
+		const fixture = (
+			await Bun.file(
+				join(
+					import.meta.dir,
+					"../../../../rust/crates/canonical-json/tests/fixtures/js-adapter-project-v2.json",
+				),
+			).text()
+		).replace(/\r?\n$/, "");
+		expect(serializeProjectContent(input)).toBe(fixture);
+		expect(await hashProjectContent(input)).toMatchObject({
+			status: "hashed",
+			hash: {
+				projectionVersion: 2,
+				digest:
+					"62a26c353c0751924733f40f476425a0bf9a3722c42975a32bebbd7a8d966554",
+			},
+		});
+	});
+
 	test("maps durable local byte identity into a production hash", async () => {
 		const input = buildEditorProjectContentInput({
 			project: buildProject(),

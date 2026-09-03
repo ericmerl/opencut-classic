@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
 	parseJsonValue,
-	parseOperationLedgerRecord,
+	parseCurrentOperationLedgerRecord,
 	type JsonValue,
 	type OperationActor,
 	type OperationAffectedObject,
@@ -24,6 +24,7 @@ export interface FingerprintFields {
 	connectionAffinity?: OperationConnectionAffinity | null;
 	revisionBefore?: number | null;
 	contentHashBefore?: string | null;
+	contentHashProjectionVersionBefore?: 1 | 2;
 }
 
 export function fingerprintOperation(input: FingerprintFields): string {
@@ -37,6 +38,12 @@ export function fingerprintOperation(input: FingerprintFields): string {
 			editorScope: input.connectionAffinity?.editorInstanceId ?? null,
 			revisionBefore: input.revisionBefore ?? null,
 			contentHashBefore: input.contentHashBefore ?? null,
+			...(input.contentHashProjectionVersionBefore === undefined
+				? {}
+				: {
+						contentHashProjectionVersionBefore:
+							input.contentHashProjectionVersionBefore,
+					}),
 			canonicalInput,
 		}),
 	);
@@ -45,7 +52,7 @@ export function fingerprintOperation(input: FingerprintFields): string {
 export function validateRecordDraft(
 	draft: Omit<OperationLedgerRecord, "eventSequence" | "previousChecksum">,
 ): void {
-	parseOperationLedgerRecord({
+	parseCurrentOperationLedgerRecord({
 		...draft,
 		eventSequence: 1,
 		previousChecksum: draft.ledgerVersion === 1 ? null : "0".repeat(64),
@@ -198,7 +205,9 @@ function redactPayload(value: unknown, key = ""): unknown {
 function isSecretKey(key: string): boolean {
 	const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
 	if (normalized === "editorsessionid") return false;
-	return /(?:authorization|proxyauthorization|cookie|setcookie|password|passwd|passphrase|secret|token|apikey|privatekey|credential|sessionid|clientsecret|signature|sig)/i.test(normalized);
+	return /(?:authorization|proxyauthorization|cookie|setcookie|password|passwd|passphrase|secret|token|apikey|privatekey|credential|sessionid|clientsecret|signature|sig)/i.test(
+		normalized,
+	);
 }
 
 function redactText(value: string): string {

@@ -8,6 +8,7 @@ import {
 	type ProjectContentHashResult,
 	type ProjectContentInput,
 	type ProjectContentMediaAsset,
+	type ProjectContentProjectionOptions,
 } from "./project-content-hash";
 
 export function buildEditorProjectContentInput({
@@ -58,8 +59,9 @@ export function serializeEditorProjectContent(editor: EditorCore): string {
 
 export function hashEditorProjectContent(
 	editor: EditorCore,
+	options: ProjectContentProjectionOptions = {},
 ): Promise<ProjectContentHashResult> {
-	return hashProjectContent(readEditorProjectContentInput(editor));
+	return hashProjectContent(readEditorProjectContentInput(editor), options);
 }
 
 function toProjectContentMediaAsset(

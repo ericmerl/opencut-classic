@@ -1,27 +1,44 @@
-/// <reference types="bun" />
-
 import { describe, expect, test } from "bun:test";
 import { parsePersistedSaveProjectResult } from "./save-project-receipt";
 
-const HASH = "a".repeat(64);
-
-describe("persisted save result schema", () => {
-	test("accepts the exact current saved result", () => {
-		expect(parsePersistedSaveProjectResult(buildResult())).toEqual(
-			buildResult(),
-		);
+describe("persisted save receipt projection migration", () => {
+	test("reads an exact legacy receipt as projection version 1", () => {
+		const legacy = receipt();
+		expect(parsePersistedSaveProjectResult(legacy)).toEqual({
+			...legacy,
+			contentHashProjectionVersion: 1,
+		});
 	});
 
-	test("rejects malformed, truncated, replay, and unknown-field results", () => {
+	test("reads and preserves an exact version 2 receipt", () => {
+		const current = {
+			...receipt(),
+			contentHashProjectionVersion: 2 as const,
+		};
+		expect(parsePersistedSaveProjectResult(current)).toEqual(current);
+	});
+
+	test("rejects unsupported versions and unknown fields", () => {
+		expect(() =>
+			parsePersistedSaveProjectResult({
+				...receipt(),
+				contentHashProjectionVersion: 3,
+			}),
+		).toThrow("projection version");
+		expect(() =>
+			parsePersistedSaveProjectResult({ ...receipt(), unexpected: true }),
+		).toThrow("missing or unknown fields");
+	});
+
+	test("rejects malformed, truncated, replay, and unverifiable receipts", () => {
 		const cases: unknown[] = [
-			{ ...buildResult(), status: "replayed" },
-			{ ...buildResult(), contentHash: "not-a-hash" },
-			{ ...buildResult(), readbackContentHash: "b".repeat(64) },
-			{ ...buildResult(), completedAt: "not-a-date" },
-			{ ...buildResult(), reloadVerified: false },
-			{ ...buildResult(), extra: true },
+			{ ...receipt(), status: "replayed" },
+			{ ...receipt(), contentHash: "not-a-hash" },
+			{ ...receipt(), readbackContentHash: "b".repeat(64) },
+			{ ...receipt(), completedAt: "not-a-date" },
+			{ ...receipt(), reloadVerified: false },
 			Object.fromEntries(
-				Object.entries(buildResult()).filter(([key]) => key !== "receiptId"),
+				Object.entries(receipt()).filter(([key]) => key !== "receiptId"),
 			),
 		];
 		for (const value of cases) {
@@ -30,20 +47,21 @@ describe("persisted save result schema", () => {
 	});
 });
 
-function buildResult() {
+function receipt() {
+	const contentHash = "a".repeat(64);
 	return {
 		status: "saved" as const,
-		receiptId: `save:project-1:1:${HASH}`,
+		receiptId: `save:project-1:7:${contentHash}`,
 		operationId: "save-1",
 		projectId: "project-1",
 		sceneId: "scene-1",
-		revision: 2,
-		contentHash: HASH,
-		persistedAt: "2026-09-02T12:00:00.000Z",
-		completedAt: "2026-09-02T12:00:00.100Z",
+		revision: 9,
+		contentHash,
+		persistedAt: "2026-09-03T12:00:00.000Z",
+		completedAt: "2026-09-03T12:00:01.000Z",
 		storageSchemaVersion: 1,
-		writeVersion: 1,
+		writeVersion: 7,
 		reloadVerified: true as const,
-		readbackContentHash: HASH,
+		readbackContentHash: contentHash,
 	};
 }

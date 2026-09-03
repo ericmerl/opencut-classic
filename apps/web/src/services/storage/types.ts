@@ -53,20 +53,35 @@ export type SerializedProject = Omit<TProject, "metadata" | "scenes"> & {
 };
 
 export const PROJECT_STORAGE_ENVELOPE_VERSION = 1 as const;
-export const PROJECT_SAVE_RECEIPT_IDENTITY_VERSION = 1 as const;
+export type ProjectContentProjectionVersion = 1 | 2;
+
+export const PROJECT_SAVE_RECEIPT_IDENTITY_VERSION = 2 as const;
 
 export interface ProjectSaveReceiptBinding {
 	operationId: string;
 	fingerprint: string;
 	contentHash: string;
+	contentHashProjectionVersion: ProjectContentProjectionVersion;
 	sceneId: string;
 	revision: number;
 }
 
-export interface ProjectSaveReceiptIdentity extends ProjectSaveReceiptBinding {
+export interface LegacyProjectSaveReceiptIdentity extends Omit<
+	ProjectSaveReceiptBinding,
+	"contentHashProjectionVersion"
+> {
+	version: 1;
+	receiptId: string;
+}
+
+export interface CurrentProjectSaveReceiptIdentity extends ProjectSaveReceiptBinding {
 	version: typeof PROJECT_SAVE_RECEIPT_IDENTITY_VERSION;
 	receiptId: string;
 }
+
+export type ProjectSaveReceiptIdentity =
+	| LegacyProjectSaveReceiptIdentity
+	| CurrentProjectSaveReceiptIdentity;
 
 export interface SerializedProjectEnvelope {
 	id: string;
@@ -140,6 +155,7 @@ export interface OperationReceiptAfterState {
 	revisionAfter: number;
 	durableWriteVersion: number;
 	contentHashAfter: string;
+	contentHashProjectionVersion: ProjectContentProjectionVersion;
 }
 
 export interface PersistedOperationReceipt {

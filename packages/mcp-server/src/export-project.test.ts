@@ -63,7 +63,7 @@ describe("ExportProjectService", () => {
 						outputPath: join(directory, "video.mp4"),
 						bytesWritten: 123,
 						sha256: "a".repeat(64),
-						contentIdentity: hashedContentIdentity("b"),
+						contentIdentity: hashedContentIdentity("b", 2),
 					};
 				}
 				throw new Error(`unexpected method: ${method}`);
@@ -373,13 +373,13 @@ function identity(editorInstanceId: string): BridgeConnectionIdentity {
 	};
 }
 
-function hashedContentIdentity(seed = "b") {
+function hashedContentIdentity(seed = "b", projectionVersion: 1 | 2 = 1) {
 	return {
 		status: "hashed" as const,
 		hash: {
 			algorithm: "SHA-256" as const,
 			projection: "opencut-project-content",
-			projectionVersion: 1,
+			projectionVersion,
 			digest: seed.repeat(64),
 		},
 	};

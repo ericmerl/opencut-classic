@@ -7,6 +7,7 @@
 		"check-types": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@opencut/canonical-json": "workspace:*",
 		"@modelcontextprotocol/server": "2.0.0",
 		"sharp": "^0.34.5",
 		"zod": "4.5.4"

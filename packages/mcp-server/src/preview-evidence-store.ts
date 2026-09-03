@@ -27,6 +27,9 @@ const saveReceiptSchema = z
 		sceneId: z.string().min(1),
 		revision: z.number().int().nonnegative(),
 		contentHash: digestSchema,
+		contentHashProjectionVersion: z
+			.union([z.literal(1), z.literal(2)])
+			.optional(),
 		persistedAt: z.iso.datetime({ offset: true }),
 		completedAt: z.iso.datetime({ offset: true }),
 		storageSchemaVersion: z.number().int().positive(),

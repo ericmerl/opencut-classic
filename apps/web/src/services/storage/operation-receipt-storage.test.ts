@@ -31,6 +31,28 @@ const {
 afterEach(() => databases.clear());
 
 describe("durable browser operation receipts", () => {
+	test("reads legacy projection metadata and persists explicit version 2", async () => {
+		const store = new OperationReceiptStore();
+		const current = buildReceipt();
+		current.afterState.contentHashProjectionVersion = 2;
+		await store.save(current);
+		expect((await store.load(current.binding))?.afterState).toMatchObject({
+			contentHashProjectionVersion: 2,
+		});
+
+		const legacy = buildReceipt("legacy-projection");
+		await store.save(legacy);
+		const key = receiptStorageKey(legacy.binding);
+		const values = databases.get("opencut-operation-receipts/receipts")!;
+		const stored = structuredClone(values.get(key)) as Record<string, unknown>;
+		const afterState = stored.afterState as Record<string, unknown>;
+		delete afterState.contentHashProjectionVersion;
+		values.set(key, stored);
+		expect((await store.load(legacy.binding))?.afterState).toMatchObject({
+			contentHashProjectionVersion: 1,
+		});
+	});
+
 	test("survives reconstruction and exactly replays an immutable receipt", async () => {
 		const first = new OperationReceiptStore();
 		const receipt = buildReceipt();
@@ -66,12 +88,12 @@ describe("durable browser operation receipts", () => {
 				},
 			}),
 		]);
-		expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(
-			1,
-		);
-		expect(results.filter((result) => result.status === "rejected")).toHaveLength(
-			1,
-		);
+		expect(
+			results.filter((result) => result.status === "fulfilled"),
+		).toHaveLength(1);
+		expect(
+			results.filter((result) => result.status === "rejected"),
+		).toHaveLength(1);
 		expect(await store.load(receipt.binding)).toMatchObject({
 			binding: receipt.binding,
 			afterState: receipt.afterState,
@@ -105,13 +127,13 @@ describe("durable browser operation receipts", () => {
 	});
 });
 
-function buildReceipt() {
+function buildReceipt(operationId = "operation-browser-1") {
 	const hash = "b".repeat(64);
 	return {
-		operationId: "operation-browser-1",
+		operationId,
 		binding: {
 			version: 1 as const,
-			outerOperationId: "operation-browser-1",
+			outerOperationId: operationId,
 			outerToolName: "opencut_apply_edit_plan",
 			outerRequestFingerprint: "a".repeat(64),
 			role: "direct-terminal" as const,
@@ -126,6 +148,7 @@ function buildReceipt() {
 			sessionRevisionAfter: 2,
 			durableWriteVersion: 7,
 			contentHashAfter: hash,
+			contentHashProjectionVersion: 2 as const,
 		},
 		result: { status: "applied", revision: 2 },
 		recordedAt: "2026-09-02T00:00:00.000Z",
