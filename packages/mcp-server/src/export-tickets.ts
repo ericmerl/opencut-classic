@@ -13,6 +13,12 @@ interface ExportTicket {
 	outputPath: string;
 	format: "mp4" | "webm";
 	expiresAt: number;
+	cancellationRequested: () => boolean;
+}
+
+export interface ExportTicketOptions {
+	/** Polled by the renderer through the ticket status endpoint. */
+	cancellationRequested?: () => boolean;
 }
 
 export class ExportTickets {
@@ -23,6 +29,7 @@ export class ExportTickets {
 	async create(
 		path: string,
 		format: "mp4" | "webm",
+		options: ExportTicketOptions = {},
 	): Promise<{ url: string; outputPath: string }> {
 		if (!isAbsolute(path)) throw new Error("Export path must be absolute");
 		const outputPath = resolve(path);
@@ -43,6 +50,7 @@ export class ExportTickets {
 			outputPath,
 			format,
 			expiresAt: Date.now() + 30 * 60_000,
+			cancellationRequested: options.cancellationRequested ?? (() => false),
 		});
 		return {
 			url: `http://127.0.0.1:${this.port}/export/${id}`,
@@ -53,6 +61,17 @@ export class ExportTickets {
 	has(id: string): boolean {
 		this.removeExpired();
 		return this.tickets.has(id);
+	}
+
+	/**
+	 * Cancellation status for the renderer. The ticket stays valid so the
+	 * browser can still report a cancelled render through the upload path.
+	 */
+	status(id: string): { status: "active"; cancellationRequested: boolean } {
+		this.removeExpired();
+		const ticket = this.tickets.get(id);
+		if (!ticket) throw new Error("Expired or invalid export ticket");
+		return { status: "active", cancellationRequested: ticket.cancellationRequested() };
 	}
 
 	async receive(

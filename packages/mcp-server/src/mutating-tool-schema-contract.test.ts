@@ -10,6 +10,7 @@ import {
 	cancelComparisonInputSchema,
 	cancelExportBatchInputSchema,
 	cancelExportJobInputSchema,
+	cancelJobInputSchema,
 	cancelPreviewRangeInputSchema,
 	cleanAudioInputSchema,
 	compareProjectStatesInputSchema,
@@ -27,6 +28,8 @@ import {
 	recordExportInspectionInputSchema,
 	renderPreviewFrameInputSchema,
 	renderPreviewRangeInputSchema,
+	resolveJobInputSchema,
+	retryJobInputSchema,
 	runExportJobsInputSchema,
 	saveProjectInputSchema,
 	startEditorWorkerInputSchema,
@@ -211,6 +214,21 @@ const cases: SchemaCase[] = [
 		input: { jobId: "job-1" },
 	},
 	{
+		name: "opencut_cancel_job",
+		schema: cancelJobInputSchema,
+		input: { jobId: "job-1" },
+	},
+	{
+		name: "opencut_retry_job",
+		schema: retryJobInputSchema,
+		input: { jobId: "job-1" },
+	},
+	{
+		name: "opencut_resolve_job",
+		schema: resolveJobInputSchema,
+		input: { jobId: "job-1", resolution: "mark-failed" },
+	},
+	{
 		name: "opencut_run_export_jobs",
 		schema: runExportJobsInputSchema,
 		input: { limit: 1 },
@@ -326,7 +344,7 @@ const cases: SchemaCase[] = [
 ];
 
 describe("all mutating public MCP schema versions", () => {
-	test("covers exactly the 30 registered mutation identities", () => {
+	test("covers exactly the 33 registered mutation identities", () => {
 		expect(cases.map(({ name }) => String(name)).sort()).toEqual(
 			Object.keys(MUTATING_TOOL_MANIFEST).map(String).sort(),
 		);

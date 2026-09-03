@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MUTATING_TOOL_MANIFEST } from "./mutating-tool-manifest";
 
 describe("mutating MCP tool manifest", () => {
-	test("defines the complete dependency-map set of 30 mutators", () => {
+	test("defines the complete dependency-map set of 33 mutators", () => {
 		expect(Object.keys(MUTATING_TOOL_MANIFEST).sort()).toEqual(
 			[
 				"opencut_apply_edit_plan",
@@ -11,6 +11,7 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_cancel_comparison",
 				"opencut_cancel_export_batch",
 				"opencut_cancel_export_job",
+				"opencut_cancel_job",
 				"opencut_cancel_preview_range",
 				"opencut_clean_audio",
 				"opencut_compare_project_states",
@@ -25,6 +26,8 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_queue_export",
 				"opencut_queue_export_batch",
 				"opencut_record_export_inspection",
+				"opencut_resolve_job",
+				"opencut_retry_job",
 				"opencut_render_preview_frame",
 				"opencut_render_preview_range",
 				"opencut_run_export_jobs",
@@ -37,7 +40,7 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_undo",
 			].sort(),
 		);
-		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(30);
+		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(33);
 	});
 
 	test("exempts only pre-affinity worker lifecycle controls from the v2 gate", () => {
@@ -56,6 +59,6 @@ describe("mutating MCP tool manifest", () => {
 			Object.values(MUTATING_TOOL_MANIFEST).filter(
 				(definition) => definition.protocolMutationPolicy === "v2-required",
 			),
-		).toHaveLength(28);
+		).toHaveLength(31);
 	});
 });

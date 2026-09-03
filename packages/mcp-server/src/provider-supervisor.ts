@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import type { JobStore } from "./job-store";
 import {
 	ProviderSupervisorReuseError,
 	ProviderSupervisorStore,
+	providerJobId,
 	providerSupervisorFingerprint,
 	type ProviderSupervisorKind,
 	type ProviderSupervisorRecord,
@@ -10,18 +12,25 @@ import {
 } from "./provider-supervisor-store";
 
 export interface DurableProviderSupervisorOptions {
+	/** Directory of the shared job store; every provider uses the same one. */
 	directory: string;
+	jobs?: JobStore;
 	workerEntry?: string;
 	runtimePath?: string;
 	workerEnvironment?: NodeJS.ProcessEnv;
 }
 
+/**
+ * Runs provider commands in detached worker processes that claim, heartbeat,
+ * and publish through the unified job store, so a dead MCP parent never loses
+ * a provider outcome and a dead worker never leaves a job stuck.
+ */
 export class DurableProviderSupervisor {
-	private readonly store: ProviderSupervisorStore;
+	readonly store: ProviderSupervisorStore;
 	private initialized = false;
 
 	constructor(private readonly options: DurableProviderSupervisorOptions) {
-		this.store = new ProviderSupervisorStore(options.directory);
+		this.store = new ProviderSupervisorStore(options.directory, options.jobs);
 	}
 
 	async initialize(): Promise<void> {
@@ -31,7 +40,7 @@ export class DurableProviderSupervisor {
 	}
 
 	close(): void {
-		this.store.close();
+		if (!this.options.jobs) this.store.close();
 		this.initialized = false;
 	}
 
@@ -40,7 +49,7 @@ export class DurableProviderSupervisor {
 	): Promise<ProviderSupervisorRecord> {
 		await this.initialize();
 		const record = this.store.claim(input);
-		if (record.state === "queued") this.launch(input.provider, input.operationId);
+		if (record.state === "queued") this.launch(record.jobId);
 		return record;
 	}
 
@@ -50,22 +59,9 @@ export class DurableProviderSupervisor {
 	): Promise<ProviderSupervisorRecord | null> {
 		await this.initialize();
 		const record = this.store.read(provider, operationId);
-		if (
-			record?.state === "started" &&
-			record.supervisorPid !== null &&
-			record.supervisorNonce !== null &&
-			!processIsAlive(record.supervisorPid)
-		) {
-			try {
-				return this.store.markUnknownIfOwned(
-					provider,
-					operationId,
-					record.supervisorPid,
-					record.supervisorNonce,
-				);
-			} catch {
-				return this.store.read(provider, operationId);
-			}
+		if (record?.state === "started") {
+			await this.store.reconcileDeadSupervisors();
+			return this.store.read(provider, operationId);
 		}
 		return record;
 	}
@@ -91,15 +87,35 @@ export class DurableProviderSupervisor {
 		throw new Error("timed out waiting for durable provider supervisor result");
 	}
 
-	private launch(provider: ProviderSupervisorKind, operationId: string): void {
+	/**
+	 * Resolve a provider job whose supervisor died. Rerunning launches a fresh
+	 * worker for a new attempt under the same job identity.
+	 */
+	async resolve(
+		provider: ProviderSupervisorKind,
+		operationId: string,
+		resolution: {
+			kind: "rerun-as-new-attempt" | "mark-failed";
+			reason: string;
+			operationId: string | null;
+		},
+	): Promise<ProviderSupervisorRecord> {
+		await this.initialize();
+		const jobId = providerJobId(provider, operationId);
+		const record = this.store.resolve(jobId, resolution);
+		if (record.state === "queued") this.launch(jobId);
+		return record;
+	}
+
+	/** Launch a worker for a queued provider job by id. */
+	launch(jobId: string): void {
 		const child = spawn(
 			this.options.runtimePath ?? process.execPath,
 			[
 				this.options.workerEntry ??
 					join(import.meta.dir, "provider-supervisor-worker.ts"),
 				this.store.directory,
-				provider,
-				operationId,
+				jobId,
 			],
 			{
 				detached: true,
@@ -112,22 +128,9 @@ export class DurableProviderSupervisor {
 	}
 }
 
-export { ProviderSupervisorReuseError, providerSupervisorFingerprint };
+export { ProviderSupervisorReuseError, providerJobId, providerSupervisorFingerprint };
 export type {
 	ProviderSupervisorKind,
 	ProviderSupervisorRecord,
 	ProviderSupervisorSubmission,
 };
-
-function processIsAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		const code =
-			error && typeof error === "object" && "code" in error
-				? String(error.code)
-				: "";
-		return code !== "ESRCH";
-	}
-}

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
@@ -6,6 +7,20 @@ import { EditorBridge, type BridgeConnectionIdentity } from "./editor-bridge";
 import { AudioCleanupService } from "./clean-audio";
 import { CapabilitySnapshotService } from "./capability-snapshot";
 import { ExportBatchQueue } from "./export-batches";
+import { ExportJobStore } from "./export-job-store";
+import { InlineJobMirror } from "./inline-jobs";
+import {
+	executeCancelJob as executeCancelUnifiedJob,
+	executeResolveJob,
+	executeRetryJob,
+	recoverCancelJob as recoverCancelUnifiedJob,
+	recoverResolveJob,
+	recoverRetryJob,
+} from "./job-ledger-operations";
+import { JobService, JobServiceError } from "./job-service";
+import { JobStore } from "./job-store";
+import { stableSerialize } from "./matte-generation-data";
+import { DurableProviderSupervisor } from "./provider-supervisor";
 import { ExportJobQueue } from "./export-jobs";
 import { ExportProjectService } from "./export-project";
 import { ExportReceiptStore } from "./export-receipts";
@@ -76,6 +91,11 @@ import {
 	generateMatteInputSchema,
 	getExportBatchInputSchema,
 	getExportJobInputSchema,
+	getJobInputSchema,
+	listJobsInputSchema,
+	cancelJobInputSchema,
+	retryJobInputSchema,
+	resolveJobInputSchema,
 	getExportReceiptInputSchema,
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
@@ -169,6 +189,11 @@ const bridge = new EditorBridge({
 	comparisonEvidence,
 });
 let capabilitySnapshots: CapabilitySnapshotService;
+const jobStoreDirectory =
+	process.env.OPENCUT_JOB_STORE_DIR ?? join(exportReceipts.directory, "jobs");
+const jobStore = new JobStore(jobStoreDirectory);
+await jobStore.initialize();
+const inlineJobs = new InlineJobMirror(jobStore);
 const previewFrames = new PreviewFrameService(bridge, previewEvidence, () =>
 	capabilitySnapshots.capture(),
 );
@@ -177,12 +202,14 @@ const previewRanges = new RangePreviewService(
 	rangePreviewEvidence,
 	previewRangeLimits,
 	() => capabilitySnapshots.capture(),
+	inlineJobs,
 );
 const comparisons = new ComparisonService(
 	bridge,
 	comparisonEvidence,
 	previewRangeLimits,
 	() => capabilitySnapshots.capture(),
+	inlineJobs,
 );
 const editPlanPreflightStore = new EditPlanPreflightStore(
 	process.env.OPENCUT_EDIT_PLAN_PREFLIGHT_DIR ??
@@ -200,6 +227,7 @@ const audioCleanup = new AudioCleanupService(
 	bridge,
 	undefined,
 	join(exportReceipts.directory, "provider-operations", "audio-cleanup"),
+	jobStoreDirectory,
 );
 const exportValidator = new ExportValidator(exportReceipts);
 const projectExports = new ExportProjectService(
@@ -215,34 +243,79 @@ const editorWorker = ManagedEditorWorker.fromEnvironment(
 const exportJobs = new ExportJobQueue(
 	bridge,
 	projectExports,
-	ExportJobQueue.storeForReceiptDirectory(exportReceipts.directory),
+	new ExportJobStore(jobStoreDirectory, jobStore),
 	{
 		ensureEditor: (projectId) => editorWorker.ensureConnected(projectId),
 		capabilitySnapshotHash: () => capabilitySnapshots.snapshotHash(),
+		receipts: exportReceipts,
 	},
 );
+await exportJobs.store.initialize();
 const exportBatches = new ExportBatchQueue(
 	exportJobs,
 	ExportBatchQueue.storeForReceiptDirectory(exportReceipts.directory),
 );
+const providerSupervisor = new DurableProviderSupervisor({
+	directory: jobStoreDirectory,
+	jobs: jobStore,
+});
+const jobService = new JobService({
+	jobs: jobStore,
+	exportJobs,
+	providers: providerSupervisor,
+	mirror: inlineJobs,
+	cancelInline: {
+		"preview-range": (record) => previewRanges.cancel(record.operationId),
+		comparison: (record) => comparisons.cancel(record.operationId),
+	},
+});
+// Inline work cannot survive a process restart: fail the evidence records
+// and job rows that a dead owner left running before serving requests.
+await inlineJobs.reconcileInterrupted(async (record) => {
+	const reason = "MCP process stopped while inline work was running";
+	if (record.jobType === "preview-range") {
+		await rangePreviewEvidence.fail(record.operationId, reason);
+	} else if (record.jobType === "comparison") {
+		await comparisonEvidence.fail(record.operationId, reason);
+	}
+});
+await exportJobs.reconcileInterrupted();
 capabilitySnapshots = new CapabilitySnapshotService({
 	bridge,
 	worker: editorWorker,
 	stateDirectory: exportReceipts.directory,
 	queueState: async () => {
-		const jobs = await exportJobs.list({ limit: Number.MAX_SAFE_INTEGER });
-		const counts = {
-			total: jobs.length,
-			queued: 0,
-			running: 0,
-			completed: 0,
-			failed: 0,
-			cancelled: 0,
-		};
-		for (const job of jobs) counts[job.status] += 1;
+		await exportJobs.store.initialize();
+		const summary = exportJobs.store.jobs.summary();
+		const counts = summary.counts;
 		return {
-			jobs: counts,
+			jobs: {
+				total: Object.values(counts).reduce((sum, count) => sum + count, 0),
+				queued: counts.queued,
+				running: counts.starting + counts.running,
+				completed: counts.succeeded,
+				failed: counts.failed,
+				cancelled: counts.cancelled,
+				cancelling: counts.cancelling,
+				blocked: counts.blocked,
+				recoveryRequired: counts["recovery-required"],
+			},
 			batches: (await exportBatches.store.list()).length,
+			depth: summary.depth,
+			running: summary.running
+				? {
+						jobId: summary.running.jobId,
+						jobType: summary.running.jobType,
+						state: summary.running.state,
+						phase: summary.running.progress.phase,
+						completed: summary.running.progress.completed,
+						total: summary.running.progress.total,
+						heartbeatAt: summary.running.heartbeatAt,
+						cancellationRequestedAt: summary.running.cancellationRequestedAt,
+					}
+				: null,
+			recoveryRequired: summary.recoveryRequired,
+			byType: summary.byType,
 		};
 	},
 });
@@ -250,6 +323,7 @@ const matteGeneration = new MatteGenerationService(
 	bridge,
 	undefined,
 	join(exportReceipts.directory, "provider-operations", "matte-generation"),
+	jobStoreDirectory,
 );
 const subtitleFiles = new SubtitleFiles();
 const subtitleImport = new SubtitleImportOperation(bridge, subtitleFiles);
@@ -262,6 +336,7 @@ const subjectTracking = new SubjectTrackingService(
 		"subject-tracking",
 		"provider-results",
 	),
+	jobStoreDirectory,
 );
 const operationLedger = new OperationLedger(
 	process.env.OPENCUT_OPERATION_LEDGER_DIR ??
@@ -1033,9 +1108,28 @@ function createServer(): McpServer {
 				"Render the active timeline audio mix, transcribe it with OpenCut's local Whisper worker, chunk the result into captions, and atomically insert a new text track. The first model use may download model files and can take several minutes.",
 			inputSchema: withProjectMutationSafety(transcribeTimelineInputSchema),
 		},
-		async (input) =>
-			toolResult(
-				await ledgerBoundary.execute(
+		async (input) => {
+			const operationId = requiredOperationId(input.operationId);
+			const jobId = `transcription:${operationId}`;
+			await inlineJobs.start({
+				jobId,
+				jobType: "transcription",
+				operationId,
+				semanticInputHash: createHash("sha256")
+					.update(stableSerialize(input))
+					.digest("hex"),
+				preconditions: {
+					projectId: input.projectId,
+					revision: input.expectedRevision,
+				},
+				input: input as unknown as Parameters<
+					typeof inlineJobs.start
+				>[0]["input"],
+				progressUnits: "phases",
+				phase: "transcribing",
+			});
+			try {
+				const result = await ledgerBoundary.execute(
 					"opencut_transcribe_timeline",
 					input,
 					(context) =>
@@ -1046,8 +1140,29 @@ function createServer(): McpServer {
 							input,
 							2 * 60 * 60_000,
 						),
-				),
-			),
+				);
+				const status =
+					result && typeof result === "object" && "status" in result
+						? String((result as { status: unknown }).status)
+						: "unknown";
+				if (status === "recoverable") {
+					await inlineJobs.fail(
+						jobId,
+						"transcription outcome is unresolved",
+						"recoverable",
+					);
+				} else {
+					await inlineJobs.succeed(jobId, { status });
+				}
+				return toolResult(result);
+			} catch (error) {
+				await inlineJobs.fail(
+					jobId,
+					error instanceof Error ? error.message : "transcription failed",
+				);
+				throw error;
+			}
+		},
 	);
 
 	server.registerTool(
@@ -1361,7 +1476,7 @@ function createServer(): McpServer {
 		"opencut_cancel_export_job",
 		{
 			description:
-				"Cancel a queued export job. A running renderer cannot yet be interrupted.",
+				"Cancel a queued or running export job. A running renderer observes the signal through its export ticket within about 250 ms and the job reports cancelling until the renderer confirms it stopped; no output file is written for a cancelled render.",
 			inputSchema: cancelExportJobInputSchema,
 		},
 		async (input) =>
@@ -1416,6 +1531,141 @@ function createServer(): McpServer {
 							},
 							context,
 						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_job",
+		{
+			description:
+				"Read one job from the unified durable job store (export, preview range, comparison, transcription, provider, QC, packaging) with its attempt history, progress, lease, cancellation, diagnostics, and artifacts.",
+			inputSchema: getJobInputSchema,
+		},
+		async ({ jobId, includeHistory }) => {
+			const job = await jobService.get(jobId);
+			return toolResult(
+				job
+					? {
+							status: "found",
+							job,
+							...(includeHistory
+								? { history: await jobService.history(jobId) }
+								: {}),
+						}
+					: { status: "not-found", jobId },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_jobs",
+		{
+			description:
+				"List jobs in the unified durable job store, optionally filtered by type, state, and project, newest first, together with the queue depth and the job holding the compositor lease.",
+			inputSchema: listJobsInputSchema,
+		},
+		async (input) => {
+			const summary = await jobService.summary();
+			return toolResult({
+				jobs: await jobService.list(input),
+				queue: {
+					depth: summary.depth,
+					running: summary.running,
+					counts: summary.counts,
+					byType: summary.byType,
+					recoveryRequired: summary.recoveryRequired,
+				},
+			});
+		},
+	);
+
+	server.registerTool(
+		"opencut_cancel_job",
+		{
+			description:
+				"Cancel any job by id. Queued jobs cancel immediately; running exports, previews, comparisons, and providers observe the signal within their declared bound and report cancelling until they confirm. Terminal jobs are unchanged, so the call is idempotent.",
+			inputSchema: cancelJobInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await jobToolResult(() =>
+					ledgerBoundary.execute(
+						"opencut_cancel_job",
+						input,
+						(context) =>
+							executeCancelUnifiedJob(
+								jobService,
+								{ ...input, operationId: requiredOperationId(input.operationId) },
+								context,
+							),
+						(context) =>
+							recoverCancelUnifiedJob(
+								jobService,
+								{ ...input, operationId: requiredOperationId(input.operationId) },
+								context,
+							),
+					),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_retry_job",
+		{
+			description:
+				"Explicitly retry a failed export or provider job as a new attempt under the same job id, within its attempt policy. Attempt history is preserved.",
+			inputSchema: retryJobInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await jobToolResult(() =>
+					ledgerBoundary.execute(
+						"opencut_retry_job",
+						input,
+						(context) =>
+							executeRetryJob(
+								jobService,
+								{ ...input, operationId: requiredOperationId(input.operationId) },
+								context,
+							),
+						(context) =>
+							recoverRetryJob(
+								jobService,
+								{ ...input, operationId: requiredOperationId(input.operationId) },
+								context,
+							),
+					),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_resolve_job",
+		{
+			description:
+				"Resolve a job in recovery-required (its owner died before publishing an outcome): rerun-as-new-attempt requeues it under the same job id after quarantining any partial output, mark-failed terminalizes it. The original attempt history is preserved.",
+			inputSchema: resolveJobInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await jobToolResult(() =>
+					ledgerBoundary.execute(
+						"opencut_resolve_job",
+						input,
+						(context) =>
+							executeResolveJob(
+								jobService,
+								{ ...input, operationId: requiredOperationId(input.operationId) },
+								context,
+							),
+						(context) =>
+							recoverResolveJob(
+								jobService,
+								{ ...input, operationId: requiredOperationId(input.operationId) },
+								context,
+							),
+					),
 				),
 			),
 	);
@@ -1539,6 +1789,24 @@ function operationCheckpoint(
 		recordedAt: new Date().toISOString(),
 		metadata,
 	};
+}
+
+/**
+ * Job tool failures that are the caller's to fix (unknown job, illegal
+ * transition, exhausted attempts) are returned as structured rejections
+ * rather than thrown, so the ledger records the outcome and the agent can act.
+ */
+async function jobToolResult(
+	run: () => Promise<unknown>,
+): Promise<unknown> {
+	try {
+		return await run();
+	} catch (error) {
+		if (error instanceof JobServiceError) {
+			return { status: "rejected", code: error.code, reason: error.message };
+		}
+		throw error;
+	}
 }
 
 function requiredOperationId(value: string | undefined): string {

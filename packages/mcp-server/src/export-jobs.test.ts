@@ -51,10 +51,16 @@ describe("ExportJobQueue", () => {
 			attempts: 1,
 			result: { status: "exported" },
 		});
-		expect(await new ExportJobStore(directory).get("job-1")).toMatchObject({
+		const persisted = await new ExportJobStore(directory).get("job-1");
+		expect(persisted).toMatchObject({
 			status: "completed",
-			storeRevision: 2,
+			execution: {
+				jobState: "succeeded",
+				attemptHistory: [{ number: 1, outcome: "succeeded" }],
+				artifacts: [],
+			},
 		});
+		expect(persisted!.storeRevision).toBeGreaterThanOrEqual(2);
 		queue.stop();
 	});
 

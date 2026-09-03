@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { BridgeConnectionIdentity, EditorBridge } from "./editor-bridge";
 import type { McpOperationExecutionContext } from "./mcp-ledger-boundary";
 import { requestLedgeredBrowserStep } from "./mcp-ledger-boundary";
+import type { InlineJobMirror } from "./inline-jobs";
+import type { JsonValue } from "./job-store";
 import { stableSerialize } from "./matte-generation-data";
 import {
 	type ComparisonRecord,
@@ -40,6 +42,7 @@ export class ComparisonService {
 		private store: ComparisonEvidenceStore,
 		private limits: PreviewRangeLimits,
 		private capabilitySnapshot: () => Promise<unknown>,
+		private mirror?: InlineJobMirror,
 	) {}
 
 	async compare(
@@ -86,6 +89,27 @@ export class ComparisonService {
 				receiptId: session.record.receiptId,
 			}),
 		});
+		await this.mirror?.start({
+			jobId: session.record.jobId,
+			jobType: "comparison",
+			operationId: input.operationId,
+			semanticInputHash: semanticComparisonInputHash(input),
+			capabilitySnapshotHash,
+			input: input as unknown as JsonValue,
+			progressUnits: "frame-pairs",
+			total: session.record.execution.total,
+			phase: "rendering",
+		});
+		this.mirror?.track(session.record.jobId, async () => {
+			const current = await this.store.getByOperation(input.operationId);
+			return current
+				? {
+						phase: current.execution.phase,
+						completed: current.execution.completed,
+						total: current.execution.total,
+					}
+				: null;
+		});
 		try {
 			const browserResult = await requestLedgeredBrowserStep(
 				context,
@@ -111,6 +135,10 @@ export class ComparisonService {
 				input.operationId,
 				error instanceof Error ? error.message : "comparison failed",
 			);
+			await this.mirror?.fail(
+				session.record.jobId,
+				error instanceof Error ? error.message : "comparison failed",
+			);
 			throw error;
 		}
 	}
@@ -131,6 +159,12 @@ export class ComparisonService {
 
 	async cancel(targetOperationId: string) {
 		const record = await this.store.cancel(targetOperationId);
+		if (record) {
+			await this.mirror?.cancelRequest(
+				record.jobId,
+				"cancellation requested through MCP",
+			);
+		}
 		return record
 			? {
 					status:
@@ -179,6 +213,11 @@ export class ComparisonService {
 				input.operationId,
 				`${value.code}: ${value.reason}`,
 			);
+			await this.mirror?.fail(
+				`comparison:${input.operationId}`,
+				`${value.code}: ${value.reason}`,
+				"editor-rejected",
+			);
 			return value;
 		}
 		const session = await this.store.getByOperation(input.operationId);
@@ -196,6 +235,19 @@ export class ComparisonService {
 			evidence.status,
 			evidence,
 		);
+		if (receipt.execution.status === "cancelled") {
+			await this.mirror?.cancelled(
+				receipt.jobId,
+				"renderer stopped after observing the cancellation request",
+			);
+		} else {
+			await this.mirror?.succeed(receipt.jobId, {
+				receiptId: receipt.receiptId,
+				status: receipt.execution.status,
+				completed: receipt.execution.completed,
+				total: receipt.execution.total,
+			});
+		}
 		return response(
 			receipt,
 			receipt.execution.status === "cancelled" ? "cancelled" : evidence.status,

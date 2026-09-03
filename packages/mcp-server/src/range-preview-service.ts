@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { BridgeConnectionIdentity, EditorBridge } from "./editor-bridge";
 import type { McpOperationExecutionContext } from "./mcp-ledger-boundary";
 import { requestLedgeredBrowserStep } from "./mcp-ledger-boundary";
+import type { InlineJobMirror } from "./inline-jobs";
+import type { JsonValue } from "./job-store";
 import { stableSerialize } from "./matte-generation-data";
 import type {
 	PreviewRangeRecord,
@@ -38,6 +40,7 @@ export class RangePreviewService {
 		private store: RangePreviewEvidenceStore,
 		private limits: PreviewRangeLimits,
 		private capabilitySnapshot: () => Promise<unknown>,
+		private mirror?: InlineJobMirror,
 	) {}
 
 	async render(
@@ -85,6 +88,39 @@ export class RangePreviewService {
 				total: session.record.execution.total,
 			}),
 		});
+		await this.mirror?.start({
+			jobId: session.record.jobId,
+			jobType: "preview-range",
+			operationId: input.operationId,
+			semanticInputHash,
+			capabilitySnapshotHash,
+			preconditions: {
+				projectId: input.projectId,
+				sceneId: input.sceneId,
+				revision: input.expectedRevision,
+				contentHash: input.expectedProjectContentHash,
+				writeVersion: input.expectedWriteVersion,
+				saveReceiptId: input.expectedSaveReceiptId,
+			},
+			input: {
+				range: input.range,
+				canvasSize: input.canvasSize,
+				output: input.output,
+			} as unknown as JsonValue,
+			progressUnits: "frames",
+			total: session.record.execution.total,
+			phase: "rendering",
+		});
+		this.mirror?.track(session.record.jobId, async () => {
+			const current = await this.store.getByOperation(input.operationId);
+			return current
+				? {
+						phase: current.execution.phase,
+						completed: current.execution.completed,
+						total: current.execution.total,
+					}
+				: null;
+		});
 		try {
 			const browserResult = await requestLedgeredBrowserStep(
 				context,
@@ -109,6 +145,10 @@ export class RangePreviewService {
 				input.operationId,
 				error instanceof Error ? error.message : "preview range failed",
 			);
+			await this.mirror?.fail(
+				session.record.jobId,
+				error instanceof Error ? error.message : "preview range failed",
+			);
 			throw error;
 		}
 	}
@@ -130,6 +170,12 @@ export class RangePreviewService {
 
 	async cancel(targetOperationId: string) {
 		const record = await this.store.cancel(targetOperationId);
+		if (record) {
+			await this.mirror?.cancelRequest(
+				record.jobId,
+				"cancellation requested through MCP",
+			);
+		}
 		return record
 			? {
 					status: cancellationStatus(record.execution.status),
@@ -186,6 +232,13 @@ export class RangePreviewService {
 					? value.reason
 					: "editor rejected preview range",
 			);
+			await this.mirror?.fail(
+				`preview-range:${input.operationId}`,
+				typeof value.reason === "string"
+					? value.reason
+					: "editor rejected preview range",
+				"editor-rejected",
+			);
 			return value;
 		}
 		const record = await this.store.getByOperation(input.operationId);
@@ -219,6 +272,19 @@ export class RangePreviewService {
 				capabilitySnapshotHash,
 			},
 		);
+		if (finalized.execution.status === "cancelled") {
+			await this.mirror?.cancelled(
+				finalized.jobId,
+				"renderer stopped after observing the cancellation request",
+			);
+		} else {
+			await this.mirror?.succeed(finalized.jobId, {
+				receiptId: finalized.receiptId,
+				status: finalized.execution.status,
+				completed: finalized.execution.completed,
+				total: finalized.execution.total,
+			});
+		}
 		return response(
 			finalized,
 			finalized.execution.status === "cancelled"

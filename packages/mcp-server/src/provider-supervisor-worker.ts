@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { JOB_HEARTBEAT_INTERVAL_MS } from "./job-store";
 import {
 	ProviderSupervisorStore,
 	type ProviderSupervisorKind,
@@ -9,19 +10,35 @@ import {
 	type ProviderSupervisorRecord,
 } from "./provider-supervisor-store";
 
-const [directory, providerValue, operationId] = process.argv.slice(2);
-if (!directory || !isProvider(providerValue) || !operationId) {
-	throw new Error("provider supervisor worker requires directory, provider, and operation ID");
+const [directory, jobId] = process.argv.slice(2);
+if (!directory || !jobId) {
+	throw new Error("provider supervisor worker requires the job store directory and a job ID");
 }
 
 const store = new ProviderSupervisorStore(directory);
 await store.initialize();
 const nonce = randomUUID();
-const record = store.acquire(providerValue, operationId, process.pid, nonce);
-if (!record) {
+const acquired = store.acquire(jobId, process.pid, nonce);
+if (!acquired) {
 	store.close();
 	process.exit(0);
 }
+const { record, fence } = acquired;
+let cancellationRequested = false;
+let activeChild: { kill: () => void } | null = null;
+const heartbeat = setInterval(() => {
+	try {
+		store.heartbeat(jobId, fence);
+		if (!cancellationRequested && store.jobs.get(jobId)?.cancellationRequestedAt) {
+			// The provider observes cancellation within one heartbeat interval.
+			cancellationRequested = true;
+			activeChild?.kill();
+		}
+	} catch {
+		// A rejected fence means the job was reconciled away from this worker;
+		// the terminal publication below will be rejected the same way.
+	}
+}, JOB_HEARTBEAT_INTERVAL_MS);
 
 try {
 	const terminal = await invoke(record);
@@ -29,23 +46,29 @@ try {
 	if (Number.isSafeInteger(delay) && delay > 0) {
 		await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
 	}
-	store.complete(
-		record.provider,
-		record.operationId,
-		process.pid,
-		nonce,
-		terminal.result,
-		terminal.provenance,
-	);
+	store.heartbeat(jobId, fence, "publishing");
+	store.complete(jobId, fence, terminal.result, terminal.provenance);
 } catch (error) {
-	store.fail(
-		record.provider,
-		record.operationId,
-		process.pid,
-		nonce,
-		error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-	);
+	const message =
+		error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+	try {
+		if (cancellationRequested) {
+			store.jobs.confirmCancelled(jobId, fence, {
+				reason: "provider process was stopped after the cancellation request",
+			});
+		} else {
+			store.fail(
+				jobId,
+				fence,
+				message,
+				/timed out/.test(message) ? "provider-timeout" : "provider-failed",
+			);
+		}
+	} catch {
+		// The fence was rejected: another owner already reconciled the job.
+	}
 } finally {
+	clearInterval(heartbeat);
 	store.close();
 }
 
@@ -62,6 +85,8 @@ async function invoke(record: ProviderSupervisorRecord): Promise<{
 		stderr: "pipe",
 		env: { ...process.env },
 	});
+	activeChild = child;
+	if (cancellationRequested) child.kill();
 	child.stdin.write(JSON.stringify(request));
 	child.stdin.end();
 	let timedOut = false;
@@ -147,7 +172,7 @@ async function normalizeProviderResult(
 		provenance: {
 			provider,
 			providerProtocolVersion: 1,
-			supervisorProtocolVersion: 1,
+			supervisorProtocolVersion: 2,
 			modelId,
 			modelVersion,
 			artifactSha256,
@@ -224,14 +249,6 @@ async function hashFile(path: string): Promise<string> {
 	const hash = createHash("sha256");
 	for await (const chunk of createReadStream(path)) hash.update(chunk);
 	return hash.digest("hex");
-}
-
-function isProvider(value: string | undefined): value is ProviderSupervisorKind {
-	return new Set([
-		"audio-cleaner-command",
-		"matte-producer-command",
-		"subject-tracker-command",
-	]).has(String(value));
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {

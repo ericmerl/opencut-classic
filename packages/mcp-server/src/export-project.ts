@@ -42,6 +42,7 @@ export interface ExportProjectBridge {
 		create(
 			path: string,
 			format: "mp4" | "webm",
+			options?: { cancellationRequested?: () => boolean },
 		): Promise<{ url: string; outputPath: string }>;
 	};
 }
@@ -54,7 +55,13 @@ export class ExportProjectService {
 		private capabilitySnapshot?: () => Promise<unknown>,
 	) {}
 
-	async export(input: ExportProjectInput): Promise<Record<string, unknown>> {
+	async export(
+		input: ExportProjectInput,
+		options: {
+			cancellationRequested?: () => boolean;
+			onPhase?: (phase: string) => void;
+		} = {},
+	): Promise<Record<string, unknown>> {
 		const expectedIdentity = expectedV2Identity(input);
 		const requestIdentity =
 			input.requestConnectionIdentity ?? expectedIdentity ?? null;
@@ -202,6 +209,7 @@ export class ExportProjectService {
 		const ticket = await this.bridge.exportTickets.create(
 			input.outputPath,
 			input.format,
+			{ cancellationRequested: options.cancellationRequested },
 		);
 		const editorResult = readCompletedExport(
 			await this.bridge.request(
@@ -253,6 +261,7 @@ export class ExportProjectService {
 		const outputIdentity = readOutputIdentity(editorResult);
 		let validation: ExportMediaValidation | { status: "failed"; error: string };
 		try {
+			options.onPhase?.("validating");
 			await this.validator.verifyOutput(outputIdentity);
 			validation = await this.validator.validate({
 				operationId: input.operationId,

@@ -116,6 +116,7 @@ export class SubjectTrackingService {
 		private bridge: SubjectTrackingBridge,
 		private createTracker?: () => SubjectTracker,
 		private providerResultDirectory?: string,
+		private jobStoreDirectory?: string,
 	) {}
 
 	async track(
@@ -170,7 +171,9 @@ export class SubjectTrackingService {
 		const clip = findTrackingClip({ snapshot, input });
 		const tracker = this.createTracker
 			? this.createTracker()
-			: commandSubjectTrackerFromEnvironment(this.providerResultDirectory);
+			: commandSubjectTrackerFromEnvironment(
+					this.jobStoreDirectory ?? this.providerResultDirectory,
+				);
 		const jobDirectory = await mkdtemp(join(tmpdir(), "opencut-track-job-"));
 		try {
 			const sourcePath = join(

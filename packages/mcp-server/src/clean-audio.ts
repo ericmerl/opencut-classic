@@ -95,6 +95,7 @@ export class AudioCleanupService {
 		private bridge: AudioCleanupBridge,
 		private createCleaner?: () => AudioCleaner,
 		private durableArtifactRoot?: string,
+		private jobStoreDirectory?: string,
 	) {}
 
 	async clean(
@@ -150,9 +151,10 @@ export class AudioCleanupService {
 		const cleaner = this.createCleaner
 			? this.createCleaner()
 			: commandAudioCleanerFromEnvironment(
-					this.durableArtifactRoot
-						? join(this.durableArtifactRoot, "provider-results")
-						: undefined,
+					this.jobStoreDirectory ??
+						(this.durableArtifactRoot
+							? join(this.durableArtifactRoot, "provider-results")
+							: undefined),
 				);
 		if (this.durableArtifactRoot) {
 			await mkdir(this.durableArtifactRoot, { recursive: true });

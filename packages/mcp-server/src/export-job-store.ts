@@ -1,21 +1,58 @@
-import { createHash, randomBytes } from "node:crypto";
-import {
-	link,
-	mkdir,
-	readFile,
-	readdir,
-	unlink,
-	writeFile,
-} from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import type { ExportProjectInput } from "./export-project";
+import {
+	JobStore,
+	type JobArtifact,
+	type JobAttempt,
+	type JobDiagnostic,
+	type JobRecord,
+	type JobRestoreInput,
+	type JobState,
+	type JsonValue,
+} from "./job-store";
 
+/**
+ * Public export job statuses. The first five are the pre-#19 contract; the
+ * remaining values are additive and surface the unified job states that the
+ * legacy vocabulary could not express.
+ */
 export type ExportJobStatus =
 	| "queued"
 	| "running"
 	| "completed"
 	| "failed"
-	| "cancelled";
+	| "cancelled"
+	| "cancelling"
+	| "blocked"
+	| "recovery-required";
+
+export const EXPORT_JOB_STATUSES: readonly ExportJobStatus[] = [
+	"queued",
+	"running",
+	"completed",
+	"failed",
+	"cancelled",
+	"cancelling",
+	"blocked",
+	"recovery-required",
+];
+
+export interface ExportJobExecution {
+	jobState: JobState;
+	phase: string;
+	completed: number;
+	total: number | null;
+	heartbeatAt: string | null;
+	leaseOwner: string | null;
+	cancellationRequestedAt: string | null;
+	cancellationObservedAt: string | null;
+	blockedReason: string | null;
+	maximumAttempts: number;
+	attemptHistory: JobAttempt[];
+	diagnostics: JobDiagnostic[];
+	artifacts: JobArtifact[];
+}
 
 export interface ExportJobRecord {
 	schemaVersion: 1;
@@ -31,163 +68,335 @@ export interface ExportJobRecord {
 	input: ExportProjectInput;
 	result: Record<string, unknown> | null;
 	lastError: string | null;
+	execution: ExportJobExecution;
 }
 
+export interface ExportJobInputEnvelope {
+	fingerprint: string;
+	export: ExportProjectInput;
+}
+
+/**
+ * Read facade over the unified job store for export jobs. Writes go through
+ * `ExportJobQueue`; this class only projects unified job rows into the public
+ * export job record and imports pre-#19 JSON job files on first open.
+ */
 export class ExportJobStore {
 	readonly directory: string;
+	private retained: JobStore | null;
+	private readonly owned: boolean;
+	private imported = new WeakSet<JobStore>();
 
-	constructor(directory: string) {
+	/**
+	 * Without a shared `JobStore` the facade is stateless: every read opens a
+	 * connection, imports any legacy files once, and closes again, so nothing
+	 * holds the database file open. A queue or server that runs jobs calls
+	 * `retain()` to keep one connection for the fenced writes.
+	 */
+	constructor(directory: string, jobs?: JobStore) {
 		this.directory = resolve(directory);
+		this.retained = jobs ?? null;
+		this.owned = jobs === undefined;
 	}
 
-	async create(
-		record: Omit<ExportJobRecord, "storeRevision">,
-	): Promise<{ record: ExportJobRecord; replayed: boolean }> {
-		const existing = await this.get(record.jobId);
-		if (existing) {
-			if (existing.fingerprint !== record.fingerprint) {
-				throw new Error("jobId was already used for a different export job");
-			}
-			return { record: existing, replayed: true };
-		}
-		const created = { ...record, storeRevision: 0 };
-		try {
-			await this.publish(created);
-			return { record: created, replayed: false };
-		} catch (error) {
-			const raced = await this.get(record.jobId);
-			if (!raced || raced.fingerprint !== record.fingerprint) throw error;
-			return { record: raced, replayed: true };
+	/** The retained connection, opened on first use. */
+	get jobs(): JobStore {
+		return this.retain();
+	}
+
+	retain(): JobStore {
+		if (!this.retained) this.retained = new JobStore(this.directory);
+		return this.retained;
+	}
+
+	/** Close the retained connection when this facade owns it. */
+	close(): void {
+		if (this.owned && this.retained) {
+			this.retained.close();
+			this.retained = null;
 		}
 	}
 
-	async update(
-		jobId: string,
-		change: (current: ExportJobRecord) => ExportJobRecord,
-	): Promise<ExportJobRecord> {
-		const current = await this.get(jobId);
-		if (!current) throw new Error(`export job not found: ${jobId}`);
-		const next = change(current);
-		if (
-			next.jobId !== current.jobId ||
-			next.fingerprint !== current.fingerprint ||
-			next.createdAt !== current.createdAt
-		) {
-			throw new Error("export job identity cannot be changed");
-		}
-		const updated = {
-			...next,
-			storeRevision: current.storeRevision + 1,
-			updatedAt: new Date().toISOString(),
-		};
-		await this.publish(updated);
-		return updated;
+	async initialize(): Promise<void> {
+		await this.prepare(this.retain());
 	}
 
 	async get(jobId: string): Promise<ExportJobRecord | null> {
-		const key = jobKey(jobId);
-		const names = await this.versionFiles(key);
-		if (names.length === 0) return null;
-		return parseRecord(
-			JSON.parse(
-				await readFile(resolve(this.directory, names.at(-1)!), "utf8"),
-			),
-			jobId,
-		);
+		return this.withJobs((jobs) => {
+			const record = jobs.get(jobId);
+			return record && record.jobType === "export"
+				? toExportJobRecord(record)
+				: null;
+		});
 	}
 
 	async list(): Promise<ExportJobRecord[]> {
-		const names = await readdir(this.directory).catch(() => [] as string[]);
-		const latest = new Map<string, string>();
-		for (const name of names.sort()) {
-			const match = /^([a-f0-9]{64})\.(\d{12})\.json$/.exec(name);
-			if (match) latest.set(match[1]!, name);
-		}
-		const records = await Promise.all(
-			[...latest.values()].map(async (name) =>
-				parseRecord(
-					JSON.parse(await readFile(resolve(this.directory, name), "utf8")),
-				),
-			),
-		);
-		return records.sort((left, right) =>
-			right.createdAt.localeCompare(left.createdAt),
+		return this.withJobs((jobs) =>
+			jobs
+				.list({ types: ["export"], limit: Number.MAX_SAFE_INTEGER })
+				.map(toExportJobRecord),
 		);
 	}
 
-	async recoverInterrupted(): Promise<ExportJobRecord[]> {
-		const running = (await this.list()).filter(
-			(record) => record.status === "running",
-		);
-		return Promise.all(
-			running.map((record) =>
-				this.update(record.jobId, (current) => ({
-					...current,
-					status: "queued",
-					lastError: "MCP process stopped while the export job was running",
-				})),
-			),
-		);
-	}
-
-	private async publish(record: ExportJobRecord): Promise<void> {
-		await mkdir(this.directory, { recursive: true });
-		const path = resolve(
-			this.directory,
-			`${jobKey(record.jobId)}.${String(record.storeRevision).padStart(12, "0")}.json`,
-		);
-		const tempPath = `${path}.${randomBytes(12).toString("hex")}.tmp`;
-		await writeFile(tempPath, `${JSON.stringify(record, null, 2)}\n`, {
-			flag: "wx",
+	/**
+	 * Seed a job in a known legacy state. Used by the legacy import and by
+	 * tests that reproduce pre-#19 stores.
+	 */
+	async create(
+		record: Omit<ExportJobRecord, "storeRevision" | "execution"> & {
+			execution?: undefined;
+		},
+	): Promise<{ record: ExportJobRecord; replayed: boolean }> {
+		return this.withJobs((jobs) => {
+			const existing = jobs.get(record.jobId);
+			if (existing) {
+				if (existing.jobType !== "export") {
+					throw new Error("jobId was already used for a different job type");
+				}
+				const envelope = readEnvelope(existing.input);
+				if (envelope.fingerprint !== record.fingerprint) {
+					throw new Error("jobId was already used for a different export job");
+				}
+				return { record: toExportJobRecord(existing), replayed: true };
+			}
+			const restored = jobs.restore(
+				convertLegacyRecord(record as unknown as Record<string, unknown>),
+				"seeded as a legacy export job record",
+			);
+			return { record: toExportJobRecord(restored), replayed: false };
 		});
+	}
+
+	private async withJobs<T>(run: (jobs: JobStore) => T): Promise<T> {
+		if (this.retained) {
+			await this.prepare(this.retained);
+			return run(this.retained);
+		}
+		const jobs = new JobStore(this.directory);
 		try {
-			await link(tempPath, path);
-			await unlink(tempPath);
-		} catch (error) {
-			await unlink(tempPath).catch(() => undefined);
-			throw error;
+			await this.prepare(jobs);
+			return run(jobs);
+		} finally {
+			jobs.close();
 		}
 	}
 
-	private async versionFiles(key: string): Promise<string[]> {
-		const names = await readdir(this.directory).catch(() => [] as string[]);
-		return names
-			.filter((name) => name.startsWith(`${key}.`) && name.endsWith(".json"))
-			.sort();
+	private async prepare(jobs: JobStore): Promise<void> {
+		await jobs.initialize();
+		if (this.imported.has(jobs)) return;
+		await jobs.importLegacyExportJobs(this.directory, convertLegacyRecord);
+		this.imported.add(jobs);
 	}
 }
 
-function parseRecord(value: unknown, expectedJobId?: string): ExportJobRecord {
-	if (!isRecord(value)) throw new Error("durable export job is not an object");
+export function exportJobSemanticHash(fingerprint: string): string {
+	return createHash("sha256").update(fingerprint).digest("hex");
+}
+
+export function readEnvelope(input: JsonValue): ExportJobInputEnvelope {
 	if (
-		value.schemaVersion !== 1 ||
-		typeof value.storeRevision !== "number" ||
-		typeof value.jobId !== "string" ||
-		(expectedJobId !== undefined && value.jobId !== expectedJobId) ||
-		typeof value.fingerprint !== "string" ||
-		!isJobStatus(value.status) ||
-		typeof value.createdAt !== "string" ||
-		typeof value.updatedAt !== "string" ||
-		typeof value.attempts !== "number" ||
-		!isRecord(value.input)
+		!isRecord(input) ||
+		typeof input.fingerprint !== "string" ||
+		!isRecord(input.export)
 	) {
-		throw new Error("durable export job is incomplete");
+		throw new Error("export job input envelope is malformed");
 	}
-	return value as unknown as ExportJobRecord;
+	return {
+		fingerprint: input.fingerprint,
+		export: input.export as unknown as ExportProjectInput,
+	};
 }
 
-function jobKey(jobId: string): string {
-	return createHash("sha256").update(jobId).digest("hex");
+export function toExportJobRecord(record: JobRecord): ExportJobRecord {
+	const envelope = readEnvelope(record.input);
+	const lastAttempt = record.attempts.at(-1) ?? null;
+	return {
+		schemaVersion: 1,
+		storeRevision: record.storeRevision,
+		jobId: record.jobId,
+		fingerprint: envelope.fingerprint,
+		status: exportJobStatus(record.state),
+		createdAt: record.createdAt,
+		updatedAt: record.updatedAt,
+		attempts: record.attempt,
+		lastAttemptAt: lastAttempt?.startedAt ?? null,
+		completedAt: record.completedAt,
+		input: envelope.export,
+		result: isRecord(record.result)
+			? (record.result as Record<string, unknown>)
+			: null,
+		lastError: record.lastError,
+		execution: {
+			jobState: record.state,
+			phase: record.progress.phase,
+			completed: record.progress.completed,
+			total: record.progress.total,
+			heartbeatAt: record.heartbeatAt,
+			leaseOwner: record.lease?.ownerId ?? null,
+			cancellationRequestedAt: record.cancellationRequestedAt,
+			cancellationObservedAt: record.cancellationObservedAt,
+			blockedReason: record.blockedReason,
+			maximumAttempts: record.attemptPolicy.maximumAttempts,
+			attemptHistory: record.attempts,
+			diagnostics: record.diagnostics,
+			artifacts: record.artifacts,
+		},
+	};
 }
 
-function isJobStatus(value: unknown): value is ExportJobStatus {
-	return (
-		value === "queued" ||
-		value === "running" ||
-		value === "completed" ||
-		value === "failed" ||
-		value === "cancelled"
-	);
+export function exportJobStatus(state: JobState): ExportJobStatus {
+	switch (state) {
+		case "queued":
+			return "queued";
+		case "starting":
+		case "running":
+			return "running";
+		case "cancelling":
+			return "cancelling";
+		case "succeeded":
+			return "completed";
+		case "failed":
+			return "failed";
+		case "cancelled":
+			return "cancelled";
+		case "blocked":
+			return "blocked";
+		case "recovery-required":
+			return "recovery-required";
+	}
+}
+
+/** Public statuses that select each unified job state for list filters. */
+export function jobStatesForExportStatuses(
+	statuses: readonly ExportJobStatus[],
+): JobState[] {
+	const states = new Set<JobState>();
+	for (const status of statuses) {
+		switch (status) {
+			case "queued":
+				states.add("queued");
+				break;
+			case "running":
+				states.add("starting");
+				states.add("running");
+				break;
+			case "cancelling":
+				states.add("cancelling");
+				break;
+			case "completed":
+				states.add("succeeded");
+				break;
+			case "failed":
+				states.add("failed");
+				break;
+			case "cancelled":
+				states.add("cancelled");
+				break;
+			case "blocked":
+				states.add("blocked");
+				break;
+			case "recovery-required":
+				states.add("recovery-required");
+				break;
+		}
+	}
+	return [...states];
+}
+
+function convertLegacyRecord(legacy: Record<string, unknown>): JobRestoreInput {
+	if (
+		typeof legacy.jobId !== "string" ||
+		typeof legacy.fingerprint !== "string" ||
+		typeof legacy.status !== "string" ||
+		typeof legacy.createdAt !== "string" ||
+		!isRecord(legacy.input)
+	) {
+		throw new Error("legacy export job record is incomplete");
+	}
+	const input = legacy.input as unknown as ExportProjectInput;
+	const attemptsCount =
+		typeof legacy.attempts === "number" && Number.isSafeInteger(legacy.attempts)
+			? legacy.attempts
+			: 0;
+	const lastAttemptAt =
+		typeof legacy.lastAttemptAt === "string" ? legacy.lastAttemptAt : null;
+	const completedAt =
+		typeof legacy.completedAt === "string" ? legacy.completedAt : null;
+	const lastError = typeof legacy.lastError === "string" ? legacy.lastError : null;
+	const state = legacyState(legacy.status);
+	const attempts: JobAttempt[] = Array.from({ length: attemptsCount }, (_, index) => {
+		const last = index === attemptsCount - 1;
+		return {
+			number: index + 1,
+			ownerId: null,
+			startedAt: last ? lastAttemptAt : null,
+			completedAt: last ? completedAt : null,
+			outcome: last
+				? state === "succeeded"
+					? "succeeded"
+					: state === "failed"
+						? "failed"
+						: state === "cancelled"
+							? "cancelled"
+							: null
+				: "interrupted",
+			error: last ? lastError : null,
+			resolution: null,
+		};
+	});
+	return {
+		jobId: legacy.jobId,
+		jobType: "export",
+		operationId: input.operationId,
+		semanticInputHash: exportJobSemanticHash(legacy.fingerprint),
+		capabilitySnapshotHash: input.capabilitySnapshotHash ?? null,
+		preconditions: {
+			projectId: input.projectId,
+			revision: input.expectedRevision,
+			contentHash: input.expectedProjectContentHash ?? null,
+			writeVersion: input.queuedProjectPersistence?.writeVersion ?? null,
+		},
+		progressUnits: "phases",
+		input: {
+			fingerprint: legacy.fingerprint,
+			export: input as unknown as JsonValue,
+		},
+		createdAt: legacy.createdAt,
+		state: state === "running" ? "queued" : state,
+		attempt: attemptsCount,
+		attempts,
+		result: isRecord(legacy.result) ? (legacy.result as JsonValue) : null,
+		lastError:
+			state === "running"
+				? "MCP process stopped while the export job was running"
+				: lastError,
+		updatedAt:
+			typeof legacy.updatedAt === "string" ? legacy.updatedAt : legacy.createdAt,
+		completedAt,
+	};
+}
+
+function legacyState(status: string): JobState {
+	switch (status) {
+		case "queued":
+			return "queued";
+		case "running":
+			return "running";
+		case "completed":
+			return "succeeded";
+		case "failed":
+			return "failed";
+		case "cancelled":
+			return "cancelled";
+		case "cancelling":
+			return "cancelling";
+		case "blocked":
+			return "blocked";
+		case "recovery-required":
+			return "recovery-required";
+		default:
+			throw new Error(`legacy export job status ${status} is unknown`);
+	}
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -30,6 +30,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_cancel_comparison",
 	"opencut_cancel_export_batch",
 	"opencut_cancel_export_job",
+	"opencut_cancel_job",
 	"opencut_cancel_preview_range",
 	"opencut_capabilities",
 	"opencut_clean_audio",
@@ -44,6 +45,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_get_export_batch",
 	"opencut_get_export_job",
 	"opencut_get_export_receipt",
+	"opencut_get_job",
 	"opencut_get_operation",
 	"opencut_get_preview_frame",
 	"opencut_get_preview_range",
@@ -56,6 +58,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_list_effects",
 	"opencut_list_export_batches",
 	"opencut_list_export_jobs",
+	"opencut_list_jobs",
 	"opencut_list_operation_history",
 	"opencut_list_preview_frames",
 	"opencut_list_preview_ranges",
@@ -70,6 +73,8 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_record_export_inspection",
 	"opencut_render_preview_frame",
 	"opencut_render_preview_range",
+	"opencut_resolve_job",
+	"opencut_retry_job",
 	"opencut_run_export_jobs",
 	"opencut_save_project",
 	"opencut_search_stickers",
@@ -81,6 +86,13 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_undo",
 ] as const;
 
+import { EXPORT_CANCELLATION_POLICY } from "./export-jobs";
+import {
+	JOB_HEARTBEAT_INTERVAL_MS,
+	JOB_HEARTBEAT_STALE_MS,
+	JOB_LEASE_MS,
+	JOB_SCHEMA_VERSION,
+} from "./job-store";
 export { EDIT_PLAN_OPERATION_VARIANTS } from "./tool-schemas";
 
 export type ReadinessStatus =
@@ -123,7 +135,7 @@ interface CapabilityWorker {
 	};
 }
 
-interface CapabilityQueueState {
+export interface CapabilityQueueState {
 	jobs: {
 		total: number;
 		queued: number;
@@ -131,8 +143,26 @@ interface CapabilityQueueState {
 		completed: number;
 		failed: number;
 		cancelled: number;
+		cancelling?: number;
+		blocked?: number;
+		recoveryRequired?: number;
 	};
 	batches: number;
+	/** Queue depth of the single-instance job queue across every job type. */
+	depth?: number;
+	/** The job currently holding the compositor lease, if any. */
+	running?: {
+		jobId: string;
+		jobType: string;
+		state: string;
+		phase: string;
+		completed: number;
+		total: number | null;
+		heartbeatAt: string | null;
+		cancellationRequestedAt: string | null;
+	} | null;
+	recoveryRequired?: string[];
+	byType?: Record<string, { queued: number; active: number }>;
 }
 
 export interface CapabilitySnapshotServiceOptions {
@@ -216,10 +246,42 @@ export class CapabilitySnapshotService {
 				previewReceipt: 2,
 				previewRangeReceipt: 1,
 				comparisonReceipt: 1,
+				job: JOB_SCHEMA_VERSION,
 				projectStorage: 31,
 			},
 			projections: {
 				projectContent: CURRENT_PROJECT_CONTENT_PROJECTION_VERSION,
+			},
+			jobs: {
+				status: "ready",
+				schemaVersion: JOB_SCHEMA_VERSION,
+				store: "sqlite-wal",
+				types: [
+					"export",
+					"preview-range",
+					"comparison",
+					"transcription",
+					"provider",
+					"qc",
+					"packaging",
+				],
+				states: [
+					"queued",
+					"starting",
+					"running",
+					"cancelling",
+					"cancelled",
+					"succeeded",
+					"failed",
+					"blocked",
+					"recovery-required",
+				],
+				concurrency: "single-queue-per-instance",
+				heartbeatIntervalMs: JOB_HEARTBEAT_INTERVAL_MS,
+				heartbeatStaleAfterMs: JOB_HEARTBEAT_STALE_MS,
+				leaseMs: JOB_LEASE_MS,
+				resolutions: ["rerun-as-new-attempt", "mark-failed"],
+				exportCancellation: EXPORT_CANCELLATION_POLICY,
 			},
 			previewRange: {
 				status: "ready",

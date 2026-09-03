@@ -83,6 +83,7 @@ export class MatteGenerationService {
 		private bridge: MatteGenerationBridge,
 		private createProducer?: () => MatteProducer,
 		private durableArtifactRoot?: string,
+		private jobStoreDirectory?: string,
 	) {}
 
 	async generate(
@@ -137,9 +138,10 @@ export class MatteGenerationService {
 		const producer = this.createProducer
 			? this.createProducer()
 			: commandMatteProducerFromEnvironment(
-					this.durableArtifactRoot
-						? join(this.durableArtifactRoot, "provider-results")
-						: undefined,
+					this.jobStoreDirectory ??
+						(this.durableArtifactRoot
+							? join(this.durableArtifactRoot, "provider-results")
+							: undefined),
 				);
 		if (this.durableArtifactRoot) {
 			await mkdir(this.durableArtifactRoot, { recursive: true });

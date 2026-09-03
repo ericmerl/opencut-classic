@@ -885,6 +885,7 @@ function operationAction(
 		return "queued";
 	if (
 		toolName === "opencut_cancel_export_job" ||
+		toolName === "opencut_cancel_job" ||
 		toolName === "opencut_cancel_export_batch" ||
 		toolName === "opencut_cancel_preview_range" ||
 		toolName === "opencut_cancel_comparison"
@@ -1426,7 +1427,10 @@ const MUTATOR_RESULT_CONTRACTS = {
 			isRecord(value.summary) && typeof value.summary.batchId === "string",
 	),
 	opencut_cancel_export_batch: contract(["found"], rejectedOrMissing),
-	opencut_cancel_export_job: contract(["cancelled"], rejectedOrMissing),
+	opencut_cancel_export_job: contract(["cancelled", "cancelling"], rejectedOrMissing),
+	opencut_cancel_job: contract(["found"], rejected),
+	opencut_retry_job: contract(["found"], rejected),
+	opencut_resolve_job: contract(["found"], rejected),
 	opencut_run_export_jobs: contract(
 		[],
 		rejected,

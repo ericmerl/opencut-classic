@@ -423,8 +423,21 @@ export class EditorBridge {
 		url: URL,
 		origin: string | null,
 	): Promise<Response> {
-		const id = url.pathname.slice("/export/".length);
+		const remainder = url.pathname.slice("/export/".length);
+		const slash = remainder.indexOf("/");
+		const id = slash < 0 ? remainder : remainder.slice(0, slash);
+		const part = slash < 0 ? "" : remainder.slice(slash + 1);
 		const headers = exportCorsHeaders(origin);
+		if (request.method === "GET" && part === "status") {
+			try {
+				return Response.json(this.exportTickets.status(id), { headers });
+			} catch (error) {
+				return new Response(
+					error instanceof Error ? error.message : "Export status failed",
+					{ status: 404, headers },
+				);
+			}
+		}
 		if (request.method === "OPTIONS") {
 			return this.exportTickets.has(id)
 				? new Response(null, { status: 204, headers })
@@ -433,10 +446,10 @@ export class EditorBridge {
 						headers,
 					});
 		}
-		if (request.method !== "PUT") {
+		if (request.method !== "PUT" || part !== "") {
 			return new Response("Method not allowed", {
 				status: 405,
-				headers: { ...headers, Allow: "PUT, OPTIONS" },
+				headers: { ...headers, Allow: "GET, PUT, OPTIONS" },
 			});
 		}
 		try {

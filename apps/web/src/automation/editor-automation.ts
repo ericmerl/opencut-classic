@@ -2343,15 +2343,28 @@ export class EditorAutomation {
 				reason: `renderer unavailable: ${renderEnvironment.reason ?? renderEnvironment.status}`,
 			};
 		}
-		const exported = await this.editor.renderer.exportProject({
-			options: {
-				format: request.format,
-				quality: request.quality,
-				fps: request.fps,
-				includeAudio: request.includeAudio,
-				canvasSize: request.canvasSize,
-			},
-		});
+		// The export ticket carries the MCP-side cancellation signal. The native
+		// exporter polls `onCancel` every 100 ms, so a background poll of the
+		// ticket status keeps that callback synchronous and bounds observation
+		// to one poll interval plus the local status round trip.
+		const cancellation = watchExportCancellation(request.url);
+		let exported: Awaited<
+			ReturnType<typeof this.editor.renderer.exportProject>
+		>;
+		try {
+			exported = await this.editor.renderer.exportProject({
+				options: {
+					format: request.format,
+					quality: request.quality,
+					fps: request.fps,
+					includeAudio: request.includeAudio,
+					canvasSize: request.canvasSize,
+				},
+				onCancel: () => cancellation.requested(),
+			});
+		} finally {
+			cancellation.stop();
+		}
 		if (!exported.success || !exported.buffer) {
 			return {
 				status: "rejected",
@@ -3586,4 +3599,51 @@ async function sha256Text(value: string): Promise<string> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+const EXPORT_CANCELLATION_POLL_MS = 250;
+
+/**
+ * Poll the export ticket status endpoint until stopped. The exporter needs a
+ * synchronous answer, so the latest observed value is cached between polls.
+ */
+function watchExportCancellation(uploadUrl: string): {
+	requested: () => boolean;
+	stop: () => void;
+} {
+	let requested = false;
+	let stopped = false;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	const poll = async () => {
+		if (stopped || requested) return;
+		try {
+			const response = await fetch(`${uploadUrl}/status`, {
+				method: "GET",
+				cache: "no-store",
+			});
+			if (response.ok) {
+				const status: unknown = await response.json();
+				if (
+					status &&
+					typeof status === "object" &&
+					(status as Record<string, unknown>).cancellationRequested === true
+				) {
+					requested = true;
+				}
+			}
+		} catch {
+			// A transient status failure must not cancel or stall the render.
+		}
+		if (!stopped && !requested) {
+			timer = setTimeout(() => void poll(), EXPORT_CANCELLATION_POLL_MS);
+		}
+	};
+	void poll();
+	return {
+		requested: () => requested,
+		stop: () => {
+			stopped = true;
+			if (timer) clearTimeout(timer);
+		},
+	};
 }

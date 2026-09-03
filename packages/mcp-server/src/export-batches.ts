@@ -85,6 +85,9 @@ export class ExportBatchQueue {
 			completed: 0,
 			failed: 0,
 			cancelled: 0,
+			cancelling: 0,
+			blocked: 0,
+			"recovery-required": 0,
 			missing: 0,
 		};
 		for (const job of jobs) counts[job?.status ?? "missing"]++;
@@ -99,8 +102,9 @@ function deriveStatus(
 	if (counts.missing > 0) return "incomplete";
 	if (counts.completed === total) return "completed";
 	if (counts.cancelled === total) return "cancelled";
-	if (counts.running > 0) return "running";
-	if (counts.queued > 0) return "queued";
+	if (counts.running + counts.cancelling > 0) return "running";
+	if (counts.queued + counts.blocked + counts["recovery-required"] > 0)
+		return "queued";
 	if (counts.failed === total) return "failed";
 	return "partial";
 }

@@ -1621,7 +1621,18 @@ export const getExportJobInputSchema = z.object({
 
 export const listExportJobsInputSchema = z.object({
 	statuses: z
-		.array(z.enum(["queued", "running", "completed", "failed", "cancelled"]))
+		.array(
+			z.enum([
+				"queued",
+				"running",
+				"completed",
+				"failed",
+				"cancelled",
+				"cancelling",
+				"blocked",
+				"recovery-required",
+			]),
+		)
 		.min(1)
 		.optional(),
 	limit: z.number().int().min(1).max(100).default(25),
@@ -1663,5 +1674,64 @@ export const cancelExportJobInputSchema = withMutationOperationId(
 export const cancelExportBatchInputSchema = withMutationOperationId(
 	getExportBatchInputSchema.extend({
 		operationId: legacyCompatibleOperationIdSchema,
+	}),
+);
+
+export const JOB_TYPES = [
+	"export",
+	"preview-range",
+	"comparison",
+	"transcription",
+	"provider",
+	"qc",
+	"packaging",
+] as const;
+
+export const JOB_STATES = [
+	"queued",
+	"starting",
+	"running",
+	"cancelling",
+	"cancelled",
+	"succeeded",
+	"failed",
+	"blocked",
+	"recovery-required",
+] as const;
+
+export const getJobInputSchema = z.object({
+	jobId: z.string().trim().min(1),
+	includeHistory: z.boolean().default(false),
+});
+
+export const listJobsInputSchema = z.object({
+	types: z.array(z.enum(JOB_TYPES)).min(1).optional(),
+	states: z.array(z.enum(JOB_STATES)).min(1).optional(),
+	projectId: z.string().trim().min(1).optional(),
+	limit: z.number().int().min(1).max(200).default(25),
+});
+
+export const cancelJobInputSchema = withMutationOperationId(
+	z.object({
+		operationId: legacyCompatibleOperationIdSchema,
+		jobId: z.string().trim().min(1),
+		reason: z.string().trim().min(1).max(500).optional(),
+	}),
+);
+
+export const retryJobInputSchema = withMutationOperationId(
+	z.object({
+		operationId: legacyCompatibleOperationIdSchema,
+		jobId: z.string().trim().min(1),
+		reason: z.string().trim().min(1).max(500).optional(),
+	}),
+);
+
+export const resolveJobInputSchema = withMutationOperationId(
+	z.object({
+		operationId: legacyCompatibleOperationIdSchema,
+		jobId: z.string().trim().min(1),
+		resolution: z.enum(["rerun-as-new-attempt", "mark-failed"]),
+		reason: z.string().trim().min(1).max(500).optional(),
 	}),
 );

@@ -140,8 +140,10 @@ export async function recoverCancelJob(
 ) {
 	let job = await queue.get(input.jobId);
 	if (!job) return null;
-	if (job.status === "queued") job = await queue.cancel(input.jobId);
-	if (job.status !== "cancelled") return null;
+	if (job.status !== "cancelled" && job.status !== "cancelling") {
+		job = await queue.cancel(input.jobId);
+	}
+	if (job.status !== "cancelled" && job.status !== "cancelling") return null;
 	await context.checkpoint({
 		checkpoint: checkpoint(input.operationId, "job", "verified", {
 			jobId: input.jobId,

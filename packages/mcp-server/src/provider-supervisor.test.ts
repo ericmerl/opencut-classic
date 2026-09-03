@@ -123,7 +123,7 @@ describe("durable detached provider supervisor", () => {
 		).rejects.toBeInstanceOf(ProviderSupervisorReuseError);
 	});
 
-	test("supervisor death leaves an immutable unknown v1 outcome and never reruns", async () => {
+	test("supervisor death leaves a resolvable unknown outcome that only an explicit rerun repeats", async () => {
 		const fixture = await prepareFixture(
 			directory,
 			"subject-tracker-command",
@@ -157,7 +157,21 @@ describe("durable detached provider supervisor", () => {
 		await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
 		const replay = await client.submit(fixture.submission);
 		expect(replay.state).toBe("unknown");
+		expect(replay.jobState).toBe("recovery-required");
 		expect(await invocationCount(fixture.counterPath)).toBe(1);
+		const rerun = await client.resolve(
+			fixture.submission.provider,
+			fixture.submission.operationId,
+			{ kind: "rerun-as-new-attempt", reason: "operator rerun", operationId: null },
+		);
+		expect(rerun).toMatchObject({ state: "queued", attempt: 1 });
+		const reran = await client.waitForTerminal(
+			fixture.submission.provider,
+			fixture.submission.operationId,
+			10_000,
+		);
+		expect(reran).toMatchObject({ state: "succeeded", attempt: 2 });
+		expect(await invocationCount(fixture.counterPath)).toBe(2);
 	});
 });
 
@@ -252,7 +266,7 @@ function assertExactResult(
 	expect(record.provenance).toMatchObject({
 		provider,
 		providerProtocolVersion: 1,
-		supervisorProtocolVersion: 1,
+		supervisorProtocolVersion: 2,
 	});
 	if (provider === "audio-cleaner-command") {
 		expect(record.result).toMatchObject({

@@ -34,6 +34,9 @@ const successes: Record<MutatingToolName, Record<string, unknown>> = {
 	opencut_queue_export_batch: { summary: { batchId: "batch-1" } },
 	opencut_cancel_export_batch: { status: "found" },
 	opencut_cancel_export_job: { status: "cancelled" },
+	opencut_cancel_job: { status: "found", job: {} },
+	opencut_retry_job: { status: "found", job: {} },
+	opencut_resolve_job: { status: "found", job: {} },
 	opencut_run_export_jobs: { connected: true, processed: [] },
 	opencut_record_export_inspection: { receipt: {}, path: "C:/receipt.json" },
 };

@@ -139,6 +139,21 @@ export const MUTATING_TOOL_MANIFEST = {
 		requiresSaveVerification: false,
 		protocolMutationPolicy: "v2-required",
 	},
+	opencut_cancel_job: {
+		operationKind: "cancel-job",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_retry_job: {
+		operationKind: "retry-job",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_resolve_job: {
+		operationKind: "resolve-job",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
 	opencut_run_export_jobs: {
 		operationKind: "run-export-jobs",
 		requiresSaveVerification: false,

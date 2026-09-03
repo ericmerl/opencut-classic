@@ -26,7 +26,7 @@ describe("complete mutating handler ledger coverage", () => {
 		});
 	});
 
-	test("exactly replays and rejects changed reuse for all 30 mutators", async () => {
+	test("exactly replays and rejects changed reuse for all 33 mutators", async () => {
 		const ledger = new OperationLedger(directory);
 		const boundary = new McpLedgerBoundary(ledger, verificationBridge());
 		try {
@@ -277,6 +277,13 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 	}
 	if (toolName === "opencut_cancel_export_job") {
 		return { status: "cancelled", jobId: "job-1", storeRevision: 1 };
+	}
+	if (
+		toolName === "opencut_cancel_job" ||
+		toolName === "opencut_retry_job" ||
+		toolName === "opencut_resolve_job"
+	) {
+		return { status: "found", job: { jobId: "job-1", state: "queued" } };
 	}
 	if (toolName === "opencut_cancel_export_batch") {
 		return { status: "found", summary: { batchId: "batch-1" } };
