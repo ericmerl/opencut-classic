@@ -14,6 +14,13 @@ const webPreload = join(
 	"opencut-wasm.setup.ts",
 );
 const mcpRoot = join(repositoryRoot, "packages", "mcp-server", "src");
+/**
+ * wasm-pack's profiling profile compiles with the same release codegen the
+ * published package uses, so tested behaviour matches what ships, but
+ * rust/wasm/Cargo.toml turns off its optimizer pass. That pass is the whole
+ * cost of this build and it only shrinks a file Bun loads from disk.
+ */
+const nativeRuntimeProfile = "--profiling";
 const cargo = findExecutable({
 	name: process.platform === "win32" ? "cargo.exe" : "cargo",
 	fallbacks:
@@ -174,7 +181,15 @@ function buildSharedNativeRuntime(): void {
 	run({
 		label,
 		command: wasmPack,
-		args: ["build", "rust/wasm", "--target", "nodejs", "--out-dir", "pkg-node"],
+		args: [
+			"build",
+			"rust/wasm",
+			nativeRuntimeProfile,
+			"--target",
+			"nodejs",
+			"--out-dir",
+			"pkg-node",
+		],
 	});
 	if (stamp) writeFileSync(stampPath, stamp);
 }
@@ -188,7 +203,9 @@ function nativeRuntimeStamp(): string | undefined {
 	const version = spawnSync(wasmPack, ["--version"], { encoding: "utf8" });
 	if (version.error || version.status !== 0) return undefined;
 
-	const digest = createHash("sha256").update(`${version.stdout.trim()}\n`);
+	const digest = createHash("sha256")
+		.update(`${version.stdout.trim()}\n`)
+		.update(`${nativeRuntimeProfile}\n`);
 	const sources = Array.from(
 		new Bun.Glob("rust/**/*.{rs,toml}").scanSync({
 			cwd: repositoryRoot,

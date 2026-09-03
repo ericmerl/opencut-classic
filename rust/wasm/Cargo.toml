@@ -36,3 +36,9 @@ wasm-bindgen-test = "0.3.66"
 [features]
 default = ["wasm"]
 wasm = []
+
+[package.metadata.wasm-pack.profile.profiling]
+# The test runtime is only ever executed by Bun, so the optimizer pass buys
+# nothing here and costs more than every test it enables. Codegen still uses
+# the release profile, so behaviour matches the shipped package.
+wasm-opt = false
