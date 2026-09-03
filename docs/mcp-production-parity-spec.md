@@ -1,10 +1,11 @@
 # OpenCut Classic MCP production parity specification
 
-Status: review draft
-Normative target: production-ready MCP parity
+Status: revised draft, 2026-09-02 adversarial review findings and owner decisions applied
+Normative target: production-ready MCP parity for a local, single-user Windows installation
 Status authority: [`docs/mcp-capability-gap-audit.md`](./mcp-capability-gap-audit.md)
 Execution order: the audit dependency map, current owner direction, and this specification
 Draft date: 2026-09-02
+Deployment context: one Windows PC, personal use, never hosted or shared, operated by agents. One editor per MCP instance; concurrency by running additional instances. The owner decisions that fixed this scope are recorded in the audit under `Review corrections and owner decisions` and are not reopened here.
 
 ## 1. How to read this document
 
@@ -29,11 +30,11 @@ Normative terms have their conventional meanings:
 
 ## 2. Current implementation boundary
 
-This is a status snapshot, not a completion claim. The current branch contains validated and pushed milestones for reconnect-safe identity, hash-verified saves, the durable operation ledger, and exact-time single-frame preview evidence. The audit classifies those capabilities as fully supported and cites their tests and real browser integration evidence in sections A and I.
+This is a status snapshot, not a completion claim. The current branch contains pushed milestones for reconnect-safe identity, hash-verified saves, the durable operation ledger, and exact-time single-frame preview evidence. The 2026-09-02 review confirmed the ledger, identity, and preview evidence as implemented and reclassified the save barrier and revision-checked edit plans as partially supported (audit section A, `Review corrections and owner decisions`).
 
-The worktree also contains an in-progress edit-plan preflight implementation spanning Rust, the web editor, and the MCP service. Its presence in source and its tool registration do not make it supported. Until its semantic review, persistence checks, public transport tests, real browser edit, save/reload, preview, and export acceptance all pass and the audit is updated, audit section A's `Dry-run and plan validation` row remains the current classification.
+The worktree also contains an in-progress edit-plan preflight implementation spanning Rust, the web editor, and the MCP service. The review found its design sound (all 41 operation variants simulated, deterministic identifiers, one native transaction, hash comparison before commit, durable receipts) and found specific gaps (non-active scenes rejected, caption materialization without font readiness, receipt optional on the public apply tool). Its presence in source does not make it supported. Until its acceptance passes and the audit is updated, audit section A's `Dry-run and plan validation` row remains the current classification.
 
-The retained deployed MCP can lag the task branch. Branch completion and deployment completion are separate states. The service MUST report the running build identity and capability set so callers never infer deployed behavior from repository state.
+The running MCP can lag the task branch. Branch completion and upgrade completion are separate states. The service MUST report the running build identity and capability set so callers never infer running behavior from repository state.
 
 ## 3. Purpose
 
@@ -57,30 +58,33 @@ The system is intended to support the complete Simple Media workflows described 
 The production parity baseline does not require:
 
 - Reproducing transient UI state such as panel visibility, hover state, scroll position, or selection styling unless it affects durable state or review evidence.
-- Supporting every professional codec, NLE plugin, model provider, motion-graphics primitive, or cloud asset source.
-- Multiple simultaneous editor sessions for the initial single-user local deployment unless the active workflow requires parallel routing. This remains P2 in audit section K.
-- Remote or resumable cloud ingest for the local-first baseline. This remains optional until a named workflow requires it, as recorded in audit section B.
-- Optical flow, advanced semantic vision indexes, multicam, 3D, particles, expressions, or other P2 features before production-ready parity.
+- Supporting every professional codec, NLE plugin, model provider, motion-graphics primitive, or cloud asset source. Delivery formats are MP4 and WebM only.
+- Multiple simultaneous editor sessions within one MCP instance. Each instance owns exactly one editor. Parallel work is achieved by running additional instances, each with its own bridge port, browser profile, and state directory (section 8).
+- Remote or resumable cloud ingest. Every source is a local file.
+- Browser-independent rendering. The hidden managed browser is the production renderer (section 6.1).
+- Hosted-service hardening: MCP transport authentication, provider sandboxing, filtered child environments, private-path redaction, disk quotas, rate limits, allowlisted filesystem roots, atomic runtime promotion, deployment receipts, and metrics. The machine is isolated and single-user (section 21).
+- Nested-clip editing beyond create and break apart, shot and take analysis, drift or timecode or multicamera sync, multicam, insert/overwrite/lift/extract primitives, advanced keyframe curve editing, optical flow, semantic vision indexes, 3D, particles, expressions, or other P2 features before parity.
+- Non-Windows installation.
 
-Bundled background-removal generation, matte refinement, temporal correction, and advanced repair are intentionally deferred until the other foundational requirements are complete. The existing matte attachment model and provider command protocol MUST remain compatible and tested during the deferral. See section 22.
+Bundled background-removal generation, matte edge refinement, temporal correction, repair paint, and garbage mattes are outside the parity definition. They form the first project after parity (section 22). Attachment of a precomputed matte and the external provider protocol remain required and MUST keep passing their regression coverage.
 
 ## 5. Definition of production-ready MCP parity
 
-Production-ready MCP parity exists only when all production-critical rows in audit sections A through L meet their objective acceptance criteria on a fresh documented installation and the audit contains no stale claims.
+Production-ready MCP parity exists only when every audit row whose classification text marks it as required for parity (all P0 and P1 items) meets its objective acceptance criteria on a fresh documented installation of the owner's Windows PC, and the audit contains no stale claims. Bundled background removal (section 22) and every P2 item are excluded from the definition. The audit's `Definition of production-ready MCP parity` is the single authoritative list; this section restates it.
 
-At minimum, the installation MUST complete the audit's eleven parity outcomes without manual browser editing:
+At minimum, the installation MUST complete the audit's eleven parity outcomes without manual browser editing, with starting the web editor by hand as the only permitted manual step:
 
-1. Capability and provider discovery before work begins.
+1. Capability, provider, font, and build-identity discovery before work begins.
 2. Full project, scene, track, bookmark, and asset lifecycle needed by the workflow.
-3. Typed, revision-checked, dry-runnable, idempotent editing.
-4. Exact Simple Media visual, caption, audio, mask, tracking, reframe, retime, and transition behavior.
-5. Save, reload, and canonical hash verification.
-6. Exact preview and structured review evidence.
-7. Durable, cancellable, recoverable jobs with provider and model provenance.
+3. Typed, revision-checked, hash-checked, dry-runnable, idempotent editing.
+4. Exact Simple Media visual, caption, audio, mask, tracking, reframe, retime, and transition behavior, plus attachment of a precomputed matte.
+5. Save as a verified no-op when nothing changed, reload, and canonical hash verification.
+6. Exact preview frames, bounded ranges, before/after comparisons from retained snapshots, and structured review evidence.
+7. Durable, cancellable, recoverable jobs with provider and model provenance under one job model.
 8. Non-destructive platform variants.
-9. Decode, visual, audio, caption, safe-zone, watermark, and platform QC.
+9. Decode, recorded encoder settings, visual, decoded audio, caption, safe-zone, watermark with human final review, and platform QC.
 10. A durable delivery package with manifests, sidecars, evidence, hashes, and operation history.
-11. A service-grade runtime that requires no manually operated browser.
+11. Preview and export through the hidden managed browser with a pinned compositor backend recorded in every render receipt.
 
 The following do not constitute acceptance on their own:
 
@@ -94,6 +98,7 @@ The following do not constitute acceptance on their own:
 - A successful mutation without durable readback.
 - A successful preview without export parity.
 - A successful export without source, provider, and receipt provenance.
+- A test that passes only in isolation, only with an opt-in flag outside the standard test command, or only on one developer's machine.
 
 ## 6. Architecture and ownership boundaries
 
@@ -106,7 +111,7 @@ The target system has these components:
 3. **Rust domain core.** Owns platform-neutral project semantics, edit-plan evaluation, canonical state rules, deterministic identifiers, diff rules, time mapping, and reusable analysis logic.
 4. **Web editor adapter.** Owns browser-specific rendering, font and text measurement, media APIs, IndexedDB access, interaction state, and invocation of native editor commands.
 5. **Persistent stores.** Hold project snapshots, media bytes or immutable references, save receipts, operation history, preflight receipts, jobs, artifacts, review evidence, QC results, and delivery manifests.
-6. **Renderer workers.** Produce frames, ranges, audio, and exports from hash-locked project state. The final service-grade path MUST run without a manually operated browser.
+6. **Renderer.** The hidden managed browser produces frames, ranges, audio, and exports from hash-locked project state. It MUST be launched with a pinned software rasterizer or a declared GPU class, and every render receipt MUST record the compositor backend, surface format, browser version, and WASM artifact hash actually used. No manually operated browser is involved.
 7. **Provider adapters and supervisors.** Execute matte, tracking, cleanup, transcription, analysis, or other model work with readiness, provenance, bounded inputs, durable checkpoints, and recovery.
 8. **Validation and packaging services.** Inspect artifacts, record QC evidence, and assemble deterministic delivery packages.
 
@@ -123,7 +128,7 @@ The system MUST treat these as distinct trust domains:
 - Authentication tokens are secrets and remain separate from editor/session identity.
 - Browser state is mutable and MUST be revalidated before and after material work.
 - Persisted project state is authoritative only after a verified save barrier.
-- Local file paths are privileged host inputs and MUST pass boundary checks.
+- Local file paths are trusted host inputs on this isolated machine, but the bytes an operation hashes MUST be the bytes it uses, and no operation may overwrite an existing export or fetch a remote URL found in project state (section 21).
 - Provider processes and their output files are untrusted until validated and hashed.
 - Rendered artifacts are untrusted until decoded, inspected according to policy, and bound to their source receipt.
 - SQLite and IndexedDB records MUST be checksummed, versioned, and fail closed on corruption or unsupported versions.
@@ -154,15 +159,17 @@ The server MUST reject version mismatches and stale connection affinity before d
 
 A single non-mutating capability tool MUST return a machine-readable snapshot containing:
 
-- MCP server build and schema versions.
+- MCP server build identity: repository commit, dirty flag, build timestamp, and schema versions.
+- Instance identity: bridge port, browser profile directory, and state directory, so that several instances on one PC are distinguishable.
 - Supported bridge protocol versions and negotiated version.
-- Stable server/editor/session/generation identity.
+- Stable server/editor/session/generation identity, and editor reachability with a plain reason when the web editor is not running.
+- WASM artifact hash actually loaded by the editor, and the compositor backend actually selected with whether it matches the pinned backend.
 - Registered tools and versions.
 - Supported edit-plan operation variants and contract versions.
 - Project projection and hash versions.
 - Receipt, job, preview, comparison, review, QC, and package schema versions.
 - Renderer modes and readiness.
-- Browser and browser-independent worker readiness.
+- Managed browser readiness.
 - FFmpeg and FFprobe versions, supported containers, codecs, pixel formats, color spaces, and acceleration paths.
 - WebCodecs, WASM, GPU adapter, memory, disk, and media decoder readiness.
 - Fonts required by named presets, matched descriptors, and whether exact faces are loaded.
@@ -171,7 +178,7 @@ A single non-mutating capability tool MUST return a machine-readable snapshot co
 
 Readiness states MUST distinguish at least `ready`, `degraded`, `unavailable`, `misconfigured`, and `unknown`. Presence of a command path is not readiness. A readiness probe MUST validate enough of the dependency to predict whether the operation can begin, while avoiding paid provider work.
 
-The capability response MUST be hashable. Operations whose behavior depends on capabilities MUST record the capability snapshot hash and reject incompatible changes when exact repeatability requires it.
+The capability response MUST be hashable. Operations whose behavior depends on capabilities MUST record the capability snapshot hash and reject incompatible changes when exact repeatability requires it. The snapshot MUST be produced by this tool; no evaluator, preflight, or job may synthesize its own capability snapshot.
 
 ### 7.3 Provider selection and provenance
 
@@ -190,9 +197,11 @@ Provider choice MUST be explicit or deterministically resolved from a documented
 
 Secrets, signed URLs, tokens, and raw credentials MUST NOT appear in provenance or diagnostics.
 
+Model files MUST be pinned by content hash, resolved from a service-managed cache directory declared in section 25.1, and recorded in every result together with the execution device actually selected. A model identifier that resolves to different bytes on different days is not provenance. Model selection itself is deferred (audit owner decision 8); this rule applies to whichever models are later chosen and to the already bundled Whisper path.
+
 ### 7.4 Backward compatibility
 
-Protocol v1 behavior MAY remain available for existing callers. V1 omission MUST never be interpreted as v2 safety. New contracts MUST use explicit version discriminators. Breaking semantic changes require a new contract, projection, or receipt version, not a silent reinterpretation of an existing version.
+Protocol v1 mutation MUST be disabled by default in a parity deployment. It MAY be enabled only by an explicit configuration flag whose presence is reported in the capability snapshot as `degraded`. Parity evidence MUST be collected with v1 mutation disabled. V1 reads MAY remain available. V1 omission MUST never be interpreted as v2 safety. New contracts MUST use explicit version discriminators. Breaking semantic changes require a new contract, projection, or receipt version, not a silent reinterpretation of an existing version.
 
 ## 8. Stable editor, session, and connection identity
 
@@ -215,9 +224,13 @@ Every targeted v2 request MUST be dispatched only to the exact negotiated connec
 - A stale session or generation.
 - A response carrying a different execution identity.
 - An explicit protocol version different from the negotiated version.
-- A second live editor when the runtime is configured for one active editor.
+- A second live editor. Every MCP instance owns exactly one active editor.
 
-Durable work MAY rebind after restart only if its contract allows rebinding, the durable editor instance matches, persisted source state matches, and the receipt records both the original and recovery execution identities. Session-local revision MUST NOT be confused with durable write version.
+Durable work MAY rebind after restart only if its contract allows rebinding, the durable editor instance matches, the persisted canonical hash and write version recorded when the work was queued match the fresh readback, and the receipt records both the original and recovery execution identities. A bare string match on the editor instance ID is not sufficient on its own. The editor instance ID SHOULD be bound to a server-issued secret stored in the editor profile and proven on handshake. Session-local revision MUST NOT be confused with durable write version.
+
+### 8.1 Instances
+
+Concurrency is achieved by running more than one MCP instance on the PC. Each instance MUST be configurable with its own bridge port, browser profile directory, and state directory, and MUST report those in its capability response. Each browser profile owns a separate project library, so two instances cannot operate on the same project; the documentation MUST say so. Two instances share one GPU, so throughput is not expected to scale linearly. Within one instance, renders are serialized by the compositor lease and jobs run as a queue (section 17).
 
 ## 9. Canonical project state, revisions, and hashes
 
@@ -238,9 +251,9 @@ A request MUST declare the clock or identity it relies on. Recovery MUST not rej
 
 The versioned canonical project projection MUST include, at minimum:
 
-- Project ID, name, settings, active scene, and main scene.
+- Project ID, name, settings, active scene, and main scene. Projection version 1 omits the project ID; version 2 MUST include it so that duplicated projects hash differently (audit owner decision 12).
 - Every scene in deterministic order.
-- Every bookmark with stable identity, time/range, note, and color.
+- Every bookmark with stable identity, time/range, note, and color. The native bookmark model has no ID today; the ID MUST be added to the native model before bookmarks are projected by identity, and the projection version MUST be bumped when that happens.
 - Every track in deterministic order, including type, role, name, mute, hidden, locked if supported, and main-track semantics.
 - Every transition in deterministic order.
 - Every element recursively, including compounds.
@@ -255,7 +268,11 @@ The projection MUST exclude transient URLs, in-memory handles, selection state, 
 
 The canonical hash MUST be SHA-256 over versioned canonical UTF-8 bytes. The response MUST state the projection name and version. Every relevant mutation, save, preflight, preview, export, comparison, QC result, and package manifest MUST include the source and result hash as appropriate.
 
-Golden fixtures MUST prove byte-for-byte parity across Rust, browser JavaScript, MCP TypeScript, persisted reload, and process restart.
+Golden fixtures MUST prove byte-for-byte parity across Rust, browser JavaScript, MCP TypeScript, persisted reload, and process restart, for both Rust-authored fixture bytes and a projection built by the JavaScript adapter from real editor state. Every fingerprint that is compared across the bridge MUST use the canonical serializer; locale-dependent ordering is prohibited.
+
+### 9.4 Snapshot retention
+
+The persistence layer MUST retain a content-addressed canonical project snapshot, keyed by canonical hash, for every verified save, for 90 days (audit owner decision 9). Comparison, review, and package operations MUST resolve historical states from this store or from a preflight receipt's embedded before and predicted snapshots. An operation whose required historical state cannot be loaded MUST fail with `COMPARISON_SOURCE_UNAVAILABLE`; it MUST NOT substitute the current state.
 
 ## 10. Explicit save barrier and reload verification
 
@@ -272,10 +289,12 @@ The save tool is a correctness barrier, not a UI shortcut. It MUST:
 7. Recompute the canonical hash from fresh readback.
 8. Verify the requested hash, persisted hash, and readback hash are identical.
 9. Return only after an immutable save receipt is durably committed.
+10. Be a no-op when nothing changed. If no dirty generation is pending and the last committed envelope's canonical hash equals the requested hash, the barrier MUST NOT create a new write version. It MUST still verify by fresh readback and MUST return a receipt bound to the existing write version. An explicit save MUST NOT invalidate a preflight receipt for an unchanged project.
+11. Commit the save receipt atomically with the project envelope, or embed the receipt identity in the envelope so that a retry after receipt loss reconstructs an identical receipt.
 
 The receipt MUST include project and scene identity, source session revision, durable write version, canonical hash, readback hash, storage schema version, operation ID, receipt ID, connection identity, persisted/completed timestamps, and checksum.
 
-Exact retry of a completed save MUST return the same result. Changed reuse of an operation ID MUST be rejected. Corrupt, truncated, deleted-middle, or unsupported-version receipts MUST fail explicitly. Export, preview, preflight, comparison, QC, and packaging MUST bind to a verified save receipt unless their contract creates and verifies an equivalent barrier itself.
+Exact retry of a completed save MUST return the same result, including the same write version and receipt ID, even when the receipt commit was lost. Changed reuse of an operation ID MUST be rejected. Corrupt, truncated, deleted-middle, or unsupported-version receipts MUST fail explicitly. Export, preview, preflight, comparison, QC, and packaging MUST bind to a verified save receipt unless their contract creates and verifies an equivalent barrier itself.
 
 ## 11. Durable idempotency and operation history
 
@@ -295,10 +314,13 @@ The boundary MUST:
 - Fence stale workers and live owners.
 - Represent uncertain completion after process or connection loss.
 - Recover using durable receipts and authoritative readback without blindly redispatching side effects.
+- Offer a typed resolution operation for an operation left uncertain: it compares fresh readback with the recorded before state and marks the operation applied, not-applied, or conflicted, appending the decision to history.
+
+The ledger MUST also support a non-mutating `verification` operation kind that records tool calls, receipt identities, capability hash, and outcome without a mutation boundary, so that read-only acceptance runs (section 26.1) leave durable history.
 
 ### 11.2 Ledger durability
 
-The ledger MUST use an append-only, versioned, checksummed record and event model. It MUST survive MCP restart and concurrent processes. Reads MUST validate integrity, including event-chain and head/tail consistency. Schema migrations MUST be transactional and versioned. Busy handling MUST be bounded and diagnosable.
+The ledger MUST use an append-only, versioned, checksummed record and event model. It MUST survive MCP restart and concurrent processes. Reads MUST validate integrity, including event-chain and head/tail consistency. Schema migrations MUST be transactional and versioned. Busy handling MUST be bounded and diagnosable. Lease fencing MUST use a heartbeat timestamp in addition to process liveness so that a reused process ID cannot fence an operation forever.
 
 ### 11.3 Operation record
 
@@ -340,7 +362,9 @@ The request MUST bind:
 - Ordered raw operations.
 - Warning policy.
 - Provider execution policy, which MUST be `forbidden` for edit-plan preflight.
-- Cost policy.
+- Cost policy. On edit-plan preflight this field is reserved and has no effect, because provider execution is forbidden and cost is therefore always not applicable; it exists for a future job-planning preflight kind.
+
+The scene ID MAY name a non-active scene. Preflight MUST evaluate against the persisted state of that scene without activating it; the predicted snapshot MUST preserve the persisted active scene; and the diff MUST list the target scene as a changed object.
 
 ### 12.2 Deterministic evaluation
 
@@ -355,7 +379,7 @@ Evaluation MUST:
 - Reject unintended silent no-ops, while allowing only explicitly declared idempotent no-op semantics.
 - Produce a complete predicted canonical project projection and hash.
 - Produce a deterministic diff and summary from canonical before and predicted state.
-- Report warnings, provider requirements, capability snapshot, and exact, bounded, unavailable, or not-applicable cost.
+- Report warnings, provider requirements, the capability snapshot obtained from the section 7.2 tool (never synthesized), and exact, bounded, unavailable, or not-applicable cost.
 
 ### 12.3 Browser-materialized caption layout
 
@@ -363,14 +387,14 @@ Text wrapping and caption geometry depend on actual font readiness and browser m
 
 For any plan that inserts or changes text, captions, font descriptors, canvas geometry, safe zones, or per-line bubble settings, preflight MUST:
 
-1. Require the exact font family, style, weight, and stretch descriptors to be loaded.
-2. Record matched-face metadata and an identity appropriate to the available font evidence without claiming inaccessible font-byte identity.
-3. Measure wrapping and line boxes through the same layout path used by preview and export.
-4. Return line text, line count, bounds, baselines, bubble geometry, overflow/clipping status, safe-zone intersections, and measurement environment provenance.
+1. Require the exact font family, style, weight, and stretch descriptors to be loaded, using the same readiness procedure as section 16.1 (load, check, exact face match).
+2. Record matched-face metadata with the same identity scheme as preview receipts, and a byte hash when the face was loaded from bundled bytes (section 18.1).
+3. Measure wrapping and line boxes by calling the identical exported measurement function the renderer uses, named in the versioned contract, on a context configured identically. A separate measurement implementation that agrees by convention is not acceptable.
+4. Return per-line text, line count, per-line bounds, baselines, per-line bubble geometry, overflow/clipping status, safe-zone intersections, and measurement environment provenance.
 5. Incorporate materialized layout results into the predicted state or a hash-bound layout evidence attachment, according to the versioned contract.
 6. Recompute or reject if canvas, font readiness, renderer, or content changes before apply.
 
-The result MUST be deterministic for the recorded environment. A browser layout result that differs from the Rust evaluator's structural assumptions MUST reject the preflight rather than silently substituting behavior.
+The result MUST be deterministic for the recorded environment. A browser layout result that differs from the Rust evaluator's structural assumptions MUST reject the preflight rather than silently substituting behavior. A golden test MUST prove, for every caption fixture, that the materialized geometry equals the geometry the renderer measures at render time, including animation-resolved background parameters.
 
 ### 12.4 Deterministic diff
 
@@ -398,7 +422,7 @@ Ordering MUST be canonical and independent of map insertion order, locale, proce
 Preflight MUST sample a before and after observation containing at least:
 
 - Active project and scene.
-- Session revision, durable write version, canonical hash, and persistence fingerprint.
+- Session revision, durable write version, canonical hash, and persistence fingerprint. The persistence fingerprint is the canonical hash of the persisted envelope metadata, the save receipt identity, and the sorted list of media asset identity records (ID, byte size, last-modified, source fingerprint, source identity).
 - Save receipt identity.
 - Connection identity.
 - Playhead and playback state.
@@ -417,7 +441,7 @@ Preflight receipts are read-only evidence and MUST remain separate from the muta
 
 Audit reference: section A, `Revision-checked atomic edit plans`, `Idempotency`, and `Undo`; section C for edit behavior.
 
-A v2 apply MUST consume an exact validated preflight receipt. It MUST verify:
+A v2 apply MUST consume an exact validated preflight receipt. Until the preflight milestone is deployed, a v2 apply without a preflight receipt MUST verify `expectedProjectContentHash` against the live canonical hash in the browser before any command executes and MUST reject on mismatch with `CONTENT_HASH_CONFLICT`. Once the preflight milestone is deployed, `opencut_apply_edit_plan` MUST reject any v2 request without a preflight receipt with `PREFLIGHT_REQUIRED`. With a receipt, it MUST verify:
 
 - Receipt integrity and schema version.
 - Plan, preflight, diff, capability, source, and request hashes.
@@ -429,9 +453,11 @@ Apply MUST use explicit resolved behavior. It MUST NOT depend on unrecorded ambi
 
 The complete plan MUST execute as one native command transaction and create exactly one undo entry. If any operation fails before commit, the editor MUST restore the exact before state with no history entry, revision change, save, or partial side effect. If post-apply reconciliation does not produce the predicted canonical hash, the transaction MUST roll back and return a typed prediction mismatch. If rollback itself fails, the operation MUST become a high-severity uncertain state with diagnostics and no false success.
 
-After a successful in-memory commit, apply MUST cross the explicit save barrier. The terminal result MUST include the resulting revision, canonical hash, write version, save receipt, authoritative affected objects, and operation record. Exact retry MUST not execute a second native command or create a second undo entry.
+Before committing the native transaction, apply MUST cross the explicit save barrier and verify the persisted readback; nothing fallible may run after the commit. The terminal result MUST include the resulting revision, canonical hash, write version, save receipt, authoritative affected objects, and operation record. Exact retry MUST not execute a second native command or create a second undo entry.
 
-Undo and future redo/checkpoint operations MUST be ledgered, revision-checked, hash-aware, and readable in history. Audit section A defines the remaining redo, multi-step undo, checkpoint, and restore work.
+Apply MUST accept a receipt whose durable write version, canonical hash, and save receipt match the fresh persisted readback even when the live session revision differs after an editor restart, provided the live canonical hash equals the receipt's source hash. It MUST reject when the live hash differs. Apply MUST accept a non-active target scene and MUST leave the previously active scene active afterwards.
+
+Production parity MUST include history listing with operation IDs, descriptions, and affected objects, redo, bounded multi-step undo, and named checkpoint and restore. Each MUST be ledgered, revision-checked, hash-aware, and readable in history.
 
 ## 14. Project, scene, bookmark, track, and media lifecycle
 
@@ -451,11 +477,11 @@ MCP MUST support list, create, open, read, rename, duplicate, and delete.
 
 MCP MUST list every scene and expose current/main flags, deterministic order, canonical hash, and duration. It MUST create, clone, switch, rename, delete, set main, and reorder scenes.
 
-Preview, export, comparison, QC, and package operations MUST accept explicit scene identity and MUST work for a non-active scene without mutating active UI state. Deleting the main or active scene requires a typed replacement policy.
+Preflight, apply, preview, export, comparison, QC, and package operations MUST accept explicit scene identity and MUST work for a non-active scene without mutating active UI state. Deleting the main or active scene requires a typed replacement policy.
 
 ### 14.3 Bookmarks, notes, and markers
 
-Bookmarks MUST have stable IDs, scene identity, exact time or range, color, note, and deterministic order. CRUD and query are revision-checked and appear in canonical state. Review annotations MAY link to project bookmarks, but the review record remains immutable evidence and the bookmark remains editable project state.
+Bookmarks MUST have stable IDs, scene identity, exact time or range, color, note, and deterministic order. The stable ID MUST be added to the native model first (section 9.2). CRUD and query are revision-checked and appear in canonical state. Review annotations MAY link to project bookmarks, but the review record remains immutable evidence and the bookmark remains editable project state.
 
 ### 14.4 Tracks
 
@@ -477,7 +503,7 @@ MCP MUST support:
 - Relink or replace with compatibility checks and an explicit consequence diff.
 - Delete unused assets and explicitly cascade used assets only when requested.
 
-Every local asset MUST have a content identity. Remote ingest remains optional for local parity and, if implemented, requires an authenticated pluggable fetch, allowlists, size/type limits, resumability, immutable staging, and provenance.
+Every local asset MUST have a content identity. Remote ingest is out of scope (section 4).
 
 ## 15. Timeline construction and organization
 
@@ -512,19 +538,19 @@ The durable receipt MUST include:
 - Source and execution bindings.
 - Requested time and resolved source/frame timing.
 - Canvas and pixel format.
-- Font readiness and matched-face provenance.
-- Renderer and capability provenance.
+- Font readiness and matched-face provenance, with a byte hash for every face served from bundled bytes.
+- Renderer and capability provenance, including a render-environment fingerprint: compositor backend and adapter, surface texture format, browser version, and WASM artifact hash.
 - PNG hash, decoded RGBA hash, dimensions, byte count, and artifact location.
-- Editor-state before/after evidence.
+- Editor-state before/after evidence using the same observation set as section 12.5, including active scene and history activity sequence.
 - Checksum and operation linkage.
 
 ### 16.2 Range preview
 
-A range request MUST produce a bounded frame sequence or short review clip with exact per-frame timestamps and hashes. It MUST support cancellation and progress, preserve audio when requested, and record frame schedule, dropped/duplicated-frame policy, codec, and artifacts. The range MUST be short and policy-bounded so it cannot accidentally become an unbounded export.
+A range request MUST produce a bounded frame sequence or short review clip with exact per-frame timestamps and hashes. It MUST support cancellation and progress, preserve audio when requested, and record frame schedule, dropped/duplicated-frame policy, codec, and artifacts. The range MUST be bounded by configuration with defaults of 10 seconds and 300 frames so it cannot accidentally become an unbounded export; the limits MUST appear in the capability response.
 
 ### 16.3 Before/after comparison
 
-A comparison MUST bind two immutable revision/hash/save-receipt sources and render the same declared times or range with compatible renderer settings. It MUST produce:
+A comparison MUST bind two immutable revision/hash/save-receipt sources, each loaded from the snapshot store of section 9.4, and render the same declared times or range with compatible renderer settings and the same frame schedule. It MUST produce:
 
 - Both source artifacts.
 - Side-by-side or wipe artifact where requested.
@@ -572,19 +598,21 @@ A job MUST include:
 
 Required states include `queued`, `starting`, `running`, `cancelling`, `cancelled`, `succeeded`, `failed`, `blocked`, and `recovery-required`, with explicitly legal transitions.
 
-On restart, the supervisor MUST distinguish a dead worker from a slow or disconnected observer. Interrupted work MUST resume from a verified checkpoint, restart a safe attempt, or enter recovery-required. It MUST never be reported successful from a stale heartbeat.
+On restart, the supervisor MUST distinguish a dead worker from a slow or disconnected observer. Interrupted work MUST resume from a verified checkpoint, restart a safe attempt, or enter recovery-required. It MUST never be reported successful from a stale heartbeat, and it MUST NOT requeue a running job without first reconciling any partial artifact against the job's staging manifest.
+
+A job in `recovery-required`, or whose provider outcome is unknown, MUST be resolvable through a typed operation, `rerun-as-new-attempt` or `mark-failed`, that preserves the original attempt history under the same job identity. A job MUST never become a permanent dead end.
 
 ### 17.3 Cancellation
 
-Cancellation MUST work for queued and running jobs. A running renderer or provider MUST observe a cancellation signal. The contract MUST define whether partial artifacts are deleted, quarantined, or retained for diagnostics. Terminal cancellation is durable and idempotent. Cancellation MUST not leave a partially attached project artifact.
+Cancellation MUST work for queued and running jobs. A running renderer or provider MUST observe a cancellation signal within a declared bound. The contract MUST define whether partial artifacts are deleted, quarantined, or retained for diagnostics. Terminal cancellation is durable and idempotent. Cancellation MUST not leave a partially attached project artifact.
 
-### 17.4 Retry and resource policy
+### 17.4 Retry and queue policy
 
-Retry MUST be explicit for failed jobs, limited by typed policy, and preserve attempt history. Priorities, concurrency, CPU/GPU/memory/disk limits, schedules, and estimates MUST be discoverable. Resource exhaustion MUST produce an actionable degraded or blocked reason, not an indefinite hang.
+Retry MUST be explicit for failed jobs, limited by typed policy, and preserve attempt history. Within one instance, jobs run as an ordered queue because the compositor is a single exclusive lease; the queue depth, running job, and estimates MUST be discoverable. Parallelism is achieved with additional instances (section 8.1). Resource exhaustion MUST produce an actionable degraded or blocked reason, not an indefinite hang.
 
 ### 17.5 Runtime diagnostics
 
-The health surface MUST report service build, storage integrity, schema versions, bridge identity, editor state, browser and browser-independent renderer readiness, WASM status, GPU, codecs, font readiness, provider/model cache, disk capacity, job supervisor state, and recent bounded failures. It SHOULD provide a non-mutating sample decode/render/probe. Output MUST redact secrets and avoid exposing private local paths unless a privileged diagnostics mode explicitly requests them.
+The health surface is the capability tool of section 7.2. It MUST report build identity, instance identity, storage integrity, schema versions, bridge identity, editor reachability with a plain reason when the web editor is not running, compositor backend and whether it is the pinned one, WASM status and hash, codecs, font readiness, provider/model cache, disk capacity, job queue state, and recent bounded failures. It SHOULD provide a non-mutating sample decode/render/probe. Output MUST redact secrets.
 
 ## 18. Production editing behavior
 
@@ -603,8 +631,10 @@ Production parity MUST include:
 - Independent per-line caption bubbles with measured padding, radius, fill, and opacity.
 - Safe-zone and clipping validation.
 - Captions-on and captions-off render overlays without project mutation.
-- SRT and WebVTT behavior already present, plus ASS round-trip for the supported style subset and structured loss reports for unsupported features.
+- SRT and WebVTT behavior already present, plus ASS round-trip for the supported style subset enumerated in the audit row `Subtitle import`, with a structured loss report for every feature that row lists as dropped.
 - Sidecar and transcript JSON output when required by a delivery package.
+
+Fonts required by named presets MUST be bundled with the service, served from local files, and hashed by bytes; the managed editor MUST NOT fetch fonts from third-party hosts at run time. The owner has not yet chosen a font set. The implementing agent MUST ask the owner for the font set before starting caption-preset work and MUST NOT substitute a default (audit owner decision 6).
 
 Preview and export MUST use the same font descriptors, wrapping rules, line geometry, and bubble geometry. Browser-materialized preflight evidence in section 12.3 is required before a caption-heavy plan can be considered deterministic.
 
@@ -614,17 +644,17 @@ The exact realistic filter values already represented in the audit MUST remain d
 
 Production parity also requires stable, discoverable, typed implementations of the named Simple Media treatments identified in audit section E: Film Frame, Play Pendulum, Technicolor Flash, Scanner Bar, Glitch, Chromatic, Dark Night, Mirror, required body or meme treatments, and exact Pull In, Pull Out, and Swipe Left behavior.
 
-Each treatment MUST define defaults, parameter ranges, applicability, persistence, renderer behavior, and reference visual tolerances. A similarly named effect is not sufficient.
+Each treatment MUST define defaults, parameter ranges, applicability, persistence, renderer behavior, and reference visual tolerances. A similarly named effect is not sufficient. Implementation of a treatment MUST NOT start until its audit row records the owner-supplied reference clip or frame and a numeric tolerance (audit owner decision 5). This work is low priority and is scheduled after the foundations, lifecycle, evidence, and job milestones.
 
 ### 18.3 Transitions, keyframes, motion, and compositing
 
 Transitions MUST be discoverable through a catalog with stable IDs, constraints, duration rules, and compound-boundary policy. Preview and export parity MUST be tested across boundaries.
 
-Motion MUST support full scalar curve read/write, tangent and extrapolation controls, keyframe copy/paste, time transforms, and reusable presets where required. Existing simple keyframes remain backward compatible.
+Existing simple keyframes remain backward compatible. Advanced curve editing, tangent and extrapolation controls, keyframe copy/paste, time transforms, and reusable motion presets are optional for the first release (audit owner decision 4).
 
-Production-critical compositing features are those required by active workflows, including chroma key and track mattes for green-screen work. Broader 3D, parenting, motion blur, expressions, particles, and richer graphics remain P2 unless a named workflow elevates them.
+Chroma key and track mattes are production-critical at low priority for green-screen work and are scheduled last in the production-editing sequence (audit owner decision 2). Broader 3D, parenting, motion blur, expressions, particles, and richer graphics remain P2.
 
-Authored masks MUST retain stable IDs, deterministic stack order, typed geometry and feather/expand/invert controls, keyframes, snapshot readback, and preview/export parity. Mask-to-tracker binding MUST be explicit and reversible.
+Authored masks MUST retain stable IDs, deterministic stack order, typed geometry and feather/expand/invert controls, keyframes, snapshot readback, and preview/export parity. Mask-to-tracker binding MUST be explicit and reversible. Repair paint and garbage mattes belong to the post-parity background-removal project (section 22).
 
 Subject tracking is not part of the background-removal deferral. Production parity requires a ready bundled tracker with model provenance, CPU fallback, deterministic caching, first/last sample validation, and real-video evidence. Raw boxes, confidence, occlusion state, source-time mapping, correction keys, and provider provenance MUST persist as a reusable project object. Reframe, masks, and effects MUST be able to reference that object without discarding its samples.
 
@@ -644,13 +674,13 @@ Production parity MUST include:
 - Dialogue/activity-derived ducking from persistent VAD ranges.
 - Audio QC with LUFS, true peak, clipping, channel layout, sample rate, silence, sync, expected-audio rules, and audible start/end checks.
 
-Preview and export audio MUST be tolerance-tested against the same automation and effect graph. Fixed hidden mastering behavior MUST be reported and must not contradict requested output specifications.
+Preview and export audio MUST be tolerance-tested against the same automation and effect graph. The mastering chain MUST be the same graph with the same parameters in preview and export, or the preview receipt MUST declare the difference. The export receipt MUST record whether mastering was applied and its parameters, and mastering must not contradict requested output specifications. Drift correction, timecode, and multicamera sync are optional (audit owner decision 3).
 
 ### 18.5 Retiming
 
 Production parity MUST add a durable source-to-timeline time map for speed ramps, reverse, and freeze frames. It MUST define trim, split, keyframe, transition, caption, tracker, matte, and audio mapping at every boundary.
 
-The model MUST represent the exact Montage behavior required by the workflow, independent pitch policy, and frame interpolation mode. Frame blending and optical flow remain optional unless required by a delivery specification, but fallback and diagnostic behavior MUST be explicit.
+The model MUST represent the exact Montage behavior required by the workflow, independent pitch policy, and frame interpolation mode. The Montage curve is a named treatment under section 18.2 and its reference and tolerance MUST be recorded before implementation. Frame blending and optical flow remain optional, but fallback and diagnostic behavior MUST be explicit.
 
 ### 18.6 Variant exports
 
@@ -665,13 +695,13 @@ Variants MUST use immutable render overlays rather than destructively rewriting 
 - Thumbnail or cover-frame selection.
 - Format, codec, FPS, quality, audio, and color settings.
 
-Each receipt MUST record the requested overlay and fully resolved render specification. Platform batches MUST produce independent results and failures without losing the batch manifest.
+Each receipt MUST record the requested overlay and fully resolved render specification, including the frame schedule. Export MUST build the scene from the same persisted readback bound by the save receipt, never from unpinned live editor state. Platform batches MUST produce independent results and failures without losing the batch manifest.
 
-Encoding controls MUST be capability-probed and typed. The request and receipt MUST distinguish container, video codec, profile/level, rate-control mode, bitrate or quality target, pixel format, color primaries/transfer/matrix/range, audio codec/bitrate/sample rate/channel layout, GOP policy, acceleration, and alpha support where applicable. Unsupported combinations MUST be rejected or resolved through an explicit caller-approved fallback. The validator MUST report the actual encoder settings. MP4 and WebM remain backward compatible; MOV, HEVC, explicit Rec.709 behavior, and audio-only output MUST be implemented when required by the resolved current delivery specification.
+Delivery formats are MP4 and WebM only (audit owner decision 7). Encoding controls MUST be capability-probed and typed. The request and receipt MUST distinguish container, video codec, profile/level, rate-control mode, bitrate or quality target, pixel format, color primaries/transfer/matrix/range, audio codec/bitrate/sample rate/channel layout, and GOP policy. Unsupported combinations MUST be rejected or resolved through an explicit caller-approved fallback; the AAC-or-Opus fallback in particular MUST be recorded. The validator MUST report the actual encoder settings as read back from ffprobe, and MUST fail when audio was requested and no audio stream is present.
 
 ### 18.7 Structured QC
 
-QC MUST be policy-driven and return pass, warn, or fail for each check. Required checks include:
+QC MUST be policy-driven by a versioned policy schema with numeric thresholds per check, and return pass, warn, or fail for each check. Required checks include:
 
 - Container, codec, dimensions, frame rate, duration, and full decode.
 - Video and audio stream presence according to expectation.
@@ -767,34 +797,33 @@ Existing v1 callers MUST continue to work unless a separately documented version
 
 ## 21. Security and local-file boundaries
 
-The local-first deployment still processes untrusted inputs. It MUST:
+The deployment is an isolated single-user PC (audit owner decision 13). Hosted-service hardening is out of scope. The remaining rules protect against the agent's own mistakes and against silent data drift, not against hostile users. The system MUST:
 
-- Authenticate MCP and bridge endpoints independently of routing identity.
-- Bind bridge listeners according to documented network policy.
-- Canonicalize and validate absolute local paths.
-- Restrict import, provider output, export, preview, QC, and package paths to configured allowlisted roots.
-- Reject traversal, symlink escape, device paths, unsupported file types, oversized files, and path collisions according to policy.
-- Hash imported bytes before trusting extension or metadata.
-- Stage provider outputs immutably before attachment.
-- Avoid shell interpolation. Provider protocols SHOULD use structured arguments or stdin.
-- Redact tokens, credentials, signed URLs, private paths, and source text where diagnostics policy requires it.
-- Apply bounded request sizes, timeouts, concurrency, and disk quotas.
-- Never fetch remote media implicitly from a URL embedded in project state.
+- Keep the bridge bound to loopback and authenticated with the existing token, so that a stray local process cannot drive the editor.
+- Require absolute local paths and reject a path that does not exist or is not a regular file.
+- Serve to the editor exactly the bytes that were hashed; import and provider attachment MUST read from an immutable staged copy, never from a path that may change between hashing and use.
+- Never overwrite an existing export, subtitle, or package file.
+- Never fetch remote media or fonts implicitly from a URL embedded in project state. Library audio whose bytes are absent MUST fail with a typed error, not a network fetch.
+- Avoid shell interpolation. Provider protocols use structured arguments and stdin.
+- Redact tokens and credentials from every log, receipt, and diagnostic.
+- Apply bounded timeouts to every bridge request, provider invocation, and render.
 
-Provider processes MUST run with the minimum filesystem and network access practical for the adapter. Paid or credit-consuming operations require an explicit caller policy and cost evidence before execution.
+Paid or credit-consuming operations require an explicit caller policy and cost evidence before execution.
 
-## 22. Deferred background-removal work
+## 22. Post-parity background-removal project
 
-Audit reference: section F and P0 items 4 and 5.
+Audit reference: section F and the `Post-parity project` backlog entry.
 
-The following work is deferred while foundational protocol, lifecycle, preview, jobs, production editing, and semantic requirements are completed:
+The following work is outside the parity definition (audit owner decision 1) and forms the first project after parity is reached:
 
 - Bundled background-removal model distribution and execution.
 - Typed edge refinement beyond the preserved provider protocol.
 - Temporal matte stabilization and frame-range regeneration.
-- Advanced repair paint, garbage mattes, and propagated repair.
+- Repair paint, garbage mattes, and propagated repair.
 
-During the deferral, the system MUST preserve:
+Subject tracking is not part of this project; it remains a parity requirement under section 18.3, at low priority and with model selection deferred.
+
+Throughout, the system MUST preserve:
 
 - Absolute local precomputed matte attachment.
 - Matte asset and source identities.
@@ -804,7 +833,7 @@ During the deferral, the system MUST preserve:
 - Persistence, canonical projection, snapshot readback, preview, and export behavior.
 - The existing external matte provider protocol and its durable operation semantics.
 
-Changes elsewhere MUST include regression coverage proving matte attachments still save, reload, hash, preflight, apply, preview, export, and appear in history. The audit classification remains unchanged until the deferred acceptance criteria are implemented and validated.
+Changes elsewhere MUST keep the following regression tests passing: matte attach and detach through the public transport; save, reload, and hash equality with an attached matte; preflight and apply of a plan touching a matte-bearing element; preview and export of a frame inside the matte range with a pixel comparison against a fixture; matte, wipe, and geometric masks composing together; and history readback of the attachment operation. The audit classification of the deferred rows remains unchanged until the post-parity project delivers them.
 
 ## 23. P2 posture
 
@@ -812,14 +841,16 @@ P2 begins only after every production-critical requirement satisfies its objecti
 
 P2 currently includes:
 
-- Multiple simultaneous editor sessions.
+- Multiple simultaneous editor sessions within one instance.
 - Remote/resumable cloud ingest.
 - Advanced nested sequences and reusable components.
-- OCR, object, face, and semantic indexing beyond required transcript work.
-- Multicam.
-- Broad advanced compositing and motion graphics.
+- Insert/overwrite/lift/extract/close-gap primitives, alignment, and bulk timing/style transforms.
+- Advanced keyframe curve editing and reusable motion presets.
+- Drift correction, timecode, multicamera sync, shot and take analysis, OCR, object, face, and semantic indexing, and multicam.
+- Parenting, motion blur, 3D, expressions, particles, and richer motion graphics.
 - Optical flow and frame interpolation.
-- Extended professional codecs, HDR, alpha, proxy, image sequence, still, and audio-only output beyond proven delivery needs.
+- Browser-independent rendering.
+- MOV, HEVC, HDR, alpha, proxy, image sequence, still, and audio-only output.
 
 An optional feature MUST NOT weaken a P0/P1 invariant, delay a production-critical dependency, or be described as parity evidence unless a named workflow has elevated it.
 
@@ -838,7 +869,9 @@ Every capability receives tests proportional to its risk:
 5. **Integration tests.** MCP handler through bridge, native editor commands, storage, provider supervisor, renderer, validators, and receipts.
 6. **Public transport tests.** Invoke registered MCP tools over the actual stdio or deployed transport, never internal service methods only.
 7. **Real renderer tests.** Use actual video, audio, fonts, effects, transitions, mattes, captions, save/reload, preview, export, full decode, and measured comparison.
-8. **Fresh-install workflow tests.** Build and configure from documented prerequisites, deploy, discover readiness, edit through MCP, and produce the delivery result without manual browser editing.
+8. **Fresh-install workflow tests.** Build and configure from documented prerequisites, discover readiness, edit through MCP, and produce the delivery result without manual browser editing.
+
+All acceptance tests cited in the audit MUST pass in one unattended run from one documented command on the owner's PC, with no machine-specific paths and no order-dependent failures. Module mocks MUST be file-scoped or the affected suites MUST run in separate processes. The real-video milestone test MUST be part of that command, not an opt-in flag. The audit MUST cite the run that produced its evidence.
 
 ### 24.2 Required fault cases
 
@@ -855,10 +888,21 @@ Relevant milestones MUST test:
 - Provider timeout, malformed output, partial output, cancellation, and recovery.
 - Renderer cancellation, partial file, decode failure, font mismatch, and source state change.
 - Apply failure in the first, middle, and final operation, plus prediction mismatch and rollback failure.
+- Save receipt commit lost after the project envelope commit; exact retry returns identical write version and receipt ID.
+- Browser crash after the project commit and before the operation receipt commit; the operation is resolvable through the typed resolution operation.
+- Export process death with a partial upload; the retry reconciles the partial artifact and does not collide with the output path.
+- Provider supervisor death; the job is resolvable through rerun-as-new-attempt.
+- Lease owner process ID reused by an unrelated process.
+- Copied browser profile presenting the same editor instance ID.
+- File replaced between hashing and use.
+- IndexedDB eviction or quota failure in the managed profile.
+- Disk full during ledger append or artifact publication.
+- GPU initialization failure; the capability response reports the renderer as unavailable rather than every render failing.
+- Font missing from the bundled set; readiness fails rather than substituting a face.
 
 ### 24.3 Preview/export parity
 
-Any capability affecting pixels or audio MUST be tested in both preview and export. Tests MUST declare tolerances and explain why bitwise equality is or is not expected. Visual evidence SHOULD include opening, middle, ending, operation boundaries, effect peaks, caption wraps, transition intervals, matte edges, and safe-zone regions. Audio evidence SHOULD include waveform or sample comparison, loudness, peaks, channel layout, and audible boundaries.
+Any capability affecting pixels or audio MUST be tested in both preview and export. Each tolerance MUST be stated per metric with the reason bitwise equality is or is not expected. Frames at opening, middle, and ending MUST be compared between preview and export, not only hashed. Visual evidence MUST also cover operation boundaries, effect peaks, caption wraps, transition intervals, matte edges, and safe-zone regions once those features exist. Audio MUST be verified by decoded-sample comparison against the preview mix at declared boundaries, plus integrated loudness and true peak within declared tolerance; a missing audio stream when audio was requested MUST fail.
 
 ### 24.4 Milestone end-to-end gate
 
@@ -873,7 +917,7 @@ Every milestone ends with an actual end-to-end video edit through public MCP too
 7. Prove the canonical hash.
 8. Render exact frame evidence at relevant times.
 9. Export and fully decode the complete result.
-10. Verify audio and hash representative opening, middle, and ending frames.
+10. Verify decoded audio and compare opening, middle, and ending frames between preview and export.
 11. Query the durable operation and artifact receipts after restart.
 
 A milestone that changes renderer behavior MUST add direct preview/export comparison. A milestone that changes lifecycle or persistence MUST demonstrate restart readback. A milestone that changes providers or jobs MUST demonstrate durable progress, recovery, cancellation, and provenance as applicable.
@@ -882,39 +926,28 @@ A milestone that changes renderer behavior MUST add direct preview/export compar
 
 ### 25.1 Documented fresh installation
 
-The repository MUST document and automate, where practical:
+The repository MUST document and automate, where practical, for Windows 10 and 11 only (audit owner decision 14):
 
-- Supported operating systems and versions.
-- Runtime versions for Rust, Bun/Node, browser, FFmpeg/FFprobe, WASM tooling, and database support.
-- Build commands and generated-artifact policy.
-- Configuration files, environment variables, allowed filesystem roots, and secret handling.
-- Model/provider installation, cache paths, licenses, CPU/GPU requirements, and readiness probes.
-- Managed editor and browser-independent renderer setup.
+- Runtime versions for Rust, Bun, Chrome or Edge, FFmpeg/FFprobe, and WASM tooling.
+- Build commands, including the WASM build, and the rule that the WASM artifact hash is pinned in the build identity and verified at editor boot.
+- Configuration files, environment variables, and the bridge token.
+- Model cache paths and readiness probes (model selection deferred).
+- Bundled font location (font set to be supplied by the owner).
+- The start sequence: start the web editor by hand, then start MCP. The capability response MUST say plainly when the editor is not reachable.
+- Instance-N configuration: bridge port, browser profile directory, and state directory per instance.
 - MCP client configuration.
-- Persistent data locations, backup, migration, recovery, and retention.
+- Persistent data locations, 90-day retention, and recovery.
 - Service start, stop, health, log, and upgrade commands.
 
-A new machine or clean user profile MUST be able to follow the documentation without relying on a developer's existing browser profile, untracked files, globally implicit command, or private process state.
+A clean user profile on the owner's PC MUST be able to follow the documentation without relying on untracked files, a globally implicit command, a hardcoded developer path, or private process state.
 
 ### 25.2 Build identity
 
-The running service MUST expose repository commit, build timestamp, dirty-state policy, schema versions, and migration state. A deployment receipt MUST bind the artifact hash to the commit and test evidence.
+The running service MUST expose repository commit, dirty flag, build timestamp, WASM artifact hash, schema versions, and migration state through the capability tool.
 
-### 25.3 Retained-runtime promotion
+### 25.3 Upgrade
 
-Promotion to the retained MCP runtime MUST be atomic and recoverable:
-
-1. Build into a new versioned runtime directory.
-2. Verify artifact hashes and dependencies.
-3. Run schema compatibility and migration preflight.
-4. Stop or drain the prior service without a visible interactive console.
-5. Switch the service pointer atomically.
-6. Start the new runtime hidden and non-interactively.
-7. Verify health and expected capability hash through the deployed endpoint.
-8. Run a non-mutating smoke test, then the appropriate real edit milestone.
-9. Retain a bounded rollback target until acceptance completes.
-
-Repository success MUST NOT be reported as deployment success. If promotion fails, the prior healthy runtime SHOULD remain active and the exact blocker MUST be recorded.
+Upgrading the running MCP is a documented script that builds, runs the full test command of section 24.1, restarts MCP hidden and non-interactively, and verifies the capability response reports the expected commit. Repository success MUST NOT be reported as an upgrade success until that verification passes.
 
 ## 26. Simple Media end-to-end acceptance workflows
 
@@ -922,20 +955,20 @@ Audit reference: `Exact Simple Media workflow gaps` and `Definition of productio
 
 ### 26.1 Non-mutating v8b preflight
 
-After save barrier, exact-time preview, and dry-run are implemented, validated, committed, pushed, and deployed, launch a fresh v8b preflight. The prior v8a operation has a durable blocked receipt and MUST NOT be reused or rewritten.
+After the no-op save barrier, exact-time preview, dry-run, the capability tool, and build identity are implemented, validated, committed, pushed, and running, launch a fresh v8b preflight. The prior v8a operation has a durable blocked receipt and MUST NOT be reused or rewritten. V8a and v8b receipts are ledger records of the `verification` kind (section 11.1) under the versioned namespace `simple-media-preflight/v8`.
 
 V8b MUST:
 
-- Use new job, deployment, preflight, operation, and receipt identities in a new versioned namespace.
-- Call only an explicit allowlist of readiness, read, save-verification if needed, receipt, and dry-run tools.
+- Use new job, preflight, operation, and receipt identities in that namespace.
+- Call only an explicit allowlist of capability, read, receipt-lookup, and dry-run tools.
 - Make zero paid provider calls and consume zero generation credits.
-- Apply no edit plan, create no timeline/project content mutation, and run no production export.
-- Bind to the deployed server build and capability snapshot.
-- Verify the deployed names and contracts for save, exact-time preview, and edit-plan preflight rather than stale aliases.
-- Use an existing valid save receipt or perform only a content-preserving save verification, then prove the project canonical hash is unchanged.
+- Apply no edit plan, create no timeline/project content mutation, run no production export, and perform no save. If no valid save receipt exists for the project, v8b MUST record a blocked result rather than save.
+- Bind to the running server build identity and capability snapshot hash.
+- Verify the deployed names and contracts for save, exact-time preview, edit-plan preflight, and capability rather than stale aliases.
+- Prove the project canonical hash and durable write version are unchanged before and after the run.
 - Execute a representative non-mutating dry-run and verify its no-mutation proof.
-- Persist a terminal operation receipt that directly links the capability/preflight receipt path and SHA-256.
-- Verify terminal receipt lookup after a fresh supervisor or MCP process read.
+- Persist a terminal `verification` receipt that directly links the capability and preflight receipt identities and SHA-256 values.
+- Verify terminal receipt lookup after a fresh MCP process read.
 
 If any capability is absent or degraded, v8b MUST create a new blocked result with exact evidence. It MUST not alter v8a.
 
@@ -948,31 +981,31 @@ The final Simple Media workflow MUST run solely through MCP and durable jobs:
 3. Import source media into the bin, place and organize it across scenes/tracks, and add bookmarks.
 4. Create a transcript, search/select source content, detect silence, and persist editorial decisions.
 5. Preflight and atomically apply the complete edit.
-6. Apply the exact realistic filter and required named effects, transitions, motion, masks, tracking, reframe, audio, retime, graphics, and captions.
-7. Save, restart, reload, and verify the same canonical hash.
+6. Apply the exact realistic filter and required named effects, transitions, motion, masks, a precomputed matte, tracking, reframe, audio, retime, graphics, and captions.
+7. Save, restart, reload, and verify the same canonical hash and write version.
 8. Render exact frames, ranges, and before/after comparisons.
 9. Record and resolve structured review evidence.
 10. Render platform variants through immutable overlays.
 11. Run structured video, audio, caption, safe-zone, watermark, and platform QC.
 12. Produce and re-verify the delivery package after restart.
 
-No manual browser edit, UI selection, timeline drag, hidden provider setup, unrecorded file substitution, or receipt repair is permitted.
+No manual browser edit, UI selection, timeline drag, hidden provider setup, unrecorded file substitution, or receipt repair is permitted. Starting the web editor by hand before the run is the only permitted manual step.
 
 ## 27. Observability
 
-The production system MUST make the following inspectable without reading internal source:
+The system MUST make the following inspectable through MCP tools without reading internal source:
 
 - Current build and capability hash.
 - Connected editor identity and negotiated protocol.
 - Active and recent operations with state, age, actor, project/scene, and disposition.
 - Preflight receipts and no-mutation evidence.
 - Save, preview, comparison, review, export, QC, and package receipts.
-- Jobs with phase, progress, ETA confidence, attempts, provider, artifacts, and cancellation state.
+- Jobs with phase, progress, attempts, provider, artifacts, and cancellation state.
 - Storage integrity and migration status.
 - Provider and renderer readiness.
 - Bounded recent diagnostics with correlation IDs.
 
-Logs MUST use stable correlation IDs linking MCP request, operation, preflight, bridge request, native command, save, job, provider, renderer, artifact, and receipt. Metrics SHOULD cover latency, failures, retries, cancellations, recovery, queue depth, render throughput, storage use, and capability degradation. Logs and metrics MUST be bounded and redact secrets.
+Logs MUST use stable correlation IDs linking MCP request, operation, preflight, bridge request, native command, save, job, provider, renderer, artifact, and receipt, and MUST redact secrets. Metrics are not required.
 
 ## 28. Acceptance and release gates
 
@@ -988,33 +1021,33 @@ A capability may be classified `Fully supported` only when all applicable gates 
 8. **Fault gate:** relevant disconnect, crash, cancellation, retry, and rollback scenarios pass.
 9. **Public transport gate:** registered tools pass through the real MCP transport.
 10. **Milestone E2E gate:** a real video edit completes, saves, reloads, previews, exports, decodes, and replays receipts after restart.
-11. **Audit gate:** the audit row is immediately updated with classification, objective evidence, tests, and current file-and-line references.
-12. **Delivery gate:** the coherent commit is pushed to the task branch and deployed when it affects the retained service.
+11. **Audit gate:** the audit row is immediately updated with classification, objective evidence, tests, current file-and-line references, and the identifier of the test run that produced the evidence.
+12. **Delivery gate:** the coherent commit is pushed to the task branch and the running MCP is upgraded per section 25.3 when it affects the running service.
 
 Production-ready parity has additional global gates:
 
-- Every production-critical audit row passes.
+- Every parity-required audit row (all P0 and P1) passes.
 - No stale audit claim remains.
-- The fresh-install instructions succeed from an empty supported environment.
-- The complete Simple Media workflow succeeds without manual browser editing.
-- The deployed retained runtime reports the expected build and capability set.
-- Background-removal deferral is disclosed and does not hide a required active workflow blocker.
+- The fresh-install instructions succeed on a clean user profile of the owner's PC.
+- The complete Simple Media workflow succeeds without manual browser editing, with the hand-started web editor as the only manual step.
+- The running MCP reports the expected build and capability set.
 - Genuine external blockers are recorded with evidence and no unsupported completion claim.
 
 ## 29. Current delivery sequence
 
 The implementation sequence follows dependency order, even where an older priority label reflects a broader release grouping:
 
-1. Finish and validate foundational protocol/state: stable identity, capability readiness, canonical hashes, save barriers, durable idempotency/history, and deterministic preflight.
-2. Complete project, scene, bookmark, track, media-bin, and timeline lifecycle.
-3. Complete range preview, visual comparison, and structured review evidence on top of exact-time frame rendering.
-4. Generalize persistent jobs, cancellation, retry, progress, recovery, diagnostics, and provenance.
-5. Complete production-critical captions, text, effects, transitions, motion, audio, retiming, variants, QC, and delivery packaging.
-6. Complete semantic transcript editing, silence detection, reusable editorial decisions, and other production-critical P1 requirements.
-7. Reaudit every requirement and run the fresh-install Simple Media workflow.
-8. Begin P2 only after parity is proven.
+1. Fix the correctness defects found by the 2026-09-02 review: hash verification on receipt-less v2 apply, no-op idempotent save, v1 mutation off by default, projection version 2 with the project ID, and test discipline (one unattended command, no order-dependent failures, no machine-specific paths).
+2. Capability, readiness, and build-identity tool with pinned compositor backend and WASM hash.
+3. Finish and validate deterministic preflight with receipt-consuming apply, non-active scene support, and caption materialization with font readiness.
+4. Content-addressed snapshot retention, range preview, and before/after comparison on top of exact-time frame rendering.
+5. One durable job model with running cancellation, explicit retry, progress, recovery, and resolution of uncertain outcomes.
+6. Project, scene, bookmark, track, media-bin, and timeline lifecycle.
+7. Production editing: captions and fonts (after the owner supplies the font set), variants, encoder recording, structured QC, delivery packaging, transcript and silence editing, redo and checkpoints, speed ramps, review annotations, then named treatments (after references are recorded), tracking and audio providers (after models are chosen), and finally chroma key.
+8. Reaudit every requirement and run the fresh-install Simple Media workflow.
+9. Begin P2 and the post-parity background-removal project only after parity is proven.
 
-The immediate Simple Media deployment gate is the validated combination of explicit save, exact-time preview, and deterministic dry-run. Save and exact-time preview are currently documented as validated on the task branch, but all three MUST be present in the deployed capability response before v8b launches.
+The immediate Simple Media gate is the validated combination of no-op explicit save, exact-time preview, deterministic dry-run, the capability tool, and build identity. All five MUST be present in the running capability response before v8b launches.
 
 ## 30. Decisions and open questions
 
@@ -1030,21 +1063,18 @@ These decisions are already part of this specification:
 - Long work converges on one generic durable job model.
 - Variants are immutable render overlays.
 - Every milestone ends with a public MCP real-video edit and renderer validation.
-- Background-removal generation/refinement is deferred, but matte attachment and provider protocols are preserved.
-- P2 cannot displace production-critical work.
+- Background-removal generation and refinement are outside parity and form the first post-parity project; matte attachment and provider protocols are preserved.
+- P2 cannot displace parity-required work.
+- The deployment is one Windows PC, personal use, one editor per instance, more instances for concurrency.
+- The fourteen owner decisions of 2026-09-02 recorded in the audit are settled.
 
-The following require owner or implementation-team resolution before their dependent contracts freeze:
+The following remain open and MUST be resolved before their dependent contracts freeze:
 
-1. Which exact reference assets and numerical tolerances define each named Simple Media effect, motion preset, and transition?
-2. Which fonts may be bundled, and what licensing or installation mechanism is acceptable on a fresh installation?
-3. Which codecs and delivery specifications are genuinely required for current handoff, especially MOV, HEVC, Rec.709 controls, and audio-only output?
-4. Is browser-independent rendering required to be bitwise identical to browser rendering, or is a declared per-feature visual/audio tolerance acceptable?
-5. Which local provider models are approved for subject tracking, audio cleanup, stem separation, VAD, and later background removal?
-6. What maximum local CPU/GPU, disk, render duration, and concurrency targets define production readiness?
-7. What retention and backup policy applies to project media, operation history, previews, provider artifacts, and delivery packages?
-8. Which automated watermark and visual QC detectors, if any, may satisfy policy without human confirmation?
-9. Which transcript/EDL interchange formats are required beyond the versioned internal JSON contract?
-10. Does the first production deployment require a Windows service only, or must fresh-install parity include another operating system?
+1. The reference clip or frame and numeric tolerance for each named Simple Media effect, motion preset, transition, and the Montage curve. Owner supplies from the course material; recorded per audit row before implementation.
+2. The bundled font set. Owner supplies; the implementing agent asks before caption-preset work.
+3. Which local provider models are approved for subject tracking, audio cleanup, stem separation, and VAD. Deferred; low priority.
+4. Whether renders must be bitwise reproducible across driver updates on this PC or only within declared tolerance with a recorded environment fingerprint. Deferred; the fingerprint is required either way.
+5. Which transcript or EDL interchange formats are required beyond the versioned internal JSON contract.
 
 An unanswered question MUST become a typed unavailable or policy-required result where it affects execution. It MUST not be filled by an undocumented default.
 
@@ -1098,8 +1128,10 @@ An adversarial reviewer should answer every item with `pass`, `fail`, `unclear`,
 - Can running work be cancelled and partial artifacts handled safely?
 - Are retry, progress, resource limits, and provenance explicit?
 - Does readiness prove actual provider/model/codec/renderer availability without paid work?
-- Can the retained runtime be promoted and rolled back atomically?
-- Can a fresh installation succeed without untracked developer state or manual browser editing?
+- Does every render receipt record the compositor backend, browser version, and WASM hash actually used?
+- Can the running MCP be upgraded with the documented script and verified through its capability response?
+- Can a fresh installation succeed without untracked developer state, with starting the web editor as the only manual step?
+- Can several instances run side by side with distinct ports, profiles, and state directories?
 
 ### Tests and release
 
