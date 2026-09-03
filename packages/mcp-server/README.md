@@ -1,16 +1,223 @@
 # OpenCut MCP server
 
-This local sidecar exposes OpenCut Classic tools over MCP stdio and relays calls to one authenticated browser editor over a loopback-only WebSocket.
+This local Windows sidecar exposes OpenCut Classic tools over MCP stdio and
+relays calls to one authenticated browser editor over a loopback-only
+WebSocket. The MCP client owns the stdio process; the supplied launcher keeps
+that process attached to the client while hiding its console window.
 
-Set the same token in the MCP process and the OpenCut web build. Use at least 32 random characters and do not commit it.
+## Fresh Windows installation
+
+Use Windows 10 or 11 and install these prerequisites. Run the version commands
+after installation so a failed upgrade never depends on an implicit executable.
+
+| Runtime | Supported version | Check |
+| --- | --- | --- |
+| Bun | 1.2.18 (the version pinned by `packageManager`) | `bun --version` |
+| Rust | 1.85 or newer with Cargo (edition 2024 support) | `rustc --version`; `cargo --version` |
+| wasm-pack | 0.13 or newer | `wasm-pack --version` |
+| Chrome or Edge | A current stable Windows release with WebGPU | `chrome.exe --version` or `msedge.exe --version` |
+| FFmpeg and FFprobe | Matching 6.x or newer builds | `ffmpeg -version`; `ffprobe -version` |
+
+Install the locked JavaScript dependencies from a tracked clone. The verified
+build runs after the instance and secret are configured below.
 
 ```powershell
-$env:OPENCUT_BRIDGE_TOKEN = "replace-with-a-random-secret-of-at-least-32-characters"
-$env:NEXT_PUBLIC_OPENCUT_BRIDGE_TOKEN = $env:OPENCUT_BRIDGE_TOKEN
-bun run mcp
+git clone https://github.com/ericmerl/opencut-classic.git
+Set-Location opencut-classic
+bun install --frozen-lockfile
 ```
 
-The bridge defaults to `127.0.0.1:32191`. Override both sides with `OPENCUT_BRIDGE_PORT` and `NEXT_PUBLIC_OPENCUT_BRIDGE_PORT`.
+The upgrade/build script later builds WASM, copies it into the dependency tree,
+builds the web app, and runs `bun run test`, the repository's one unattended
+test command. That command runs the MCP suite, isolated web suites, and Rust
+workspace tests. The optional real-video milestone is included when its
+documented integration variables are set.
+
+### Configure instance 1
+
+Copy the tracked example outside the repository so upgrades cannot overwrite
+local paths. `%LOCALAPPDATA%` is expanded by the launcher; an empty browser path
+enables automatic Chrome/Edge discovery.
+
+```powershell
+$configRoot = Join-Path $env:LOCALAPPDATA "OpenCut\mcp\config"
+New-Item -ItemType Directory -Path $configRoot -Force | Out-Null
+Copy-Item packages/mcp-server/config/windows-instance.example.json `
+  (Join-Path $configRoot "instance-1.json")
+
+$tokenBytes = [byte[]]::new(32)
+$random = [Security.Cryptography.RandomNumberGenerator]::Create()
+$random.GetBytes($tokenBytes)
+$random.Dispose()
+$token = [BitConverter]::ToString($tokenBytes).Replace("-", "").ToLowerInvariant()
+[Environment]::SetEnvironmentVariable("OPENCUT_BRIDGE_TOKEN", $token, "User")
+```
+
+Open a new PowerShell window and restart the MCP client after setting the user
+variable. The bridge token must contain at least 32 characters, must be
+identical in the web and MCP processes, and must never be committed or passed
+on a command line.
+
+Build and verify the fresh installation. This is the same safe path used for
+later upgrades:
+
+```powershell
+$env:OPENCUT_BRIDGE_TOKEN = [Environment]::GetEnvironmentVariable("OPENCUT_BRIDGE_TOKEN", "User")
+$config = Join-Path $env:LOCALAPPDATA "OpenCut\mcp\config\instance-1.json"
+powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden `
+  -File packages/mcp-server/scripts/Upgrade-OpenCutMcp.ps1 -Config $config
+```
+
+This offline build probe only validates the replacement MCP process; it does
+not start the managed editor or mutate a project. The operational start order
+remains web editor first, MCP client second.
+
+Now start the web editor by hand and leave this foreground process running.
+The tracked helper supplies the complete local editor environment, including
+the matching `NEXT_PUBLIC_` bridge values, without an untracked `.env.local`:
+
+```powershell
+& packages/mcp-server/scripts/Start-OpenCutWeb.ps1 -Config $config
+```
+
+The placeholder database, Redis, CMS, and sound-service values are sufficient
+for the local editor and MCP routes. Configure real services before using the
+site's account, feedback, CMS, or online sound-library routes.
+
+Then let the MCP client launch the server with the tracked launcher. A generic
+stdio client entry is shown below; replace only the repository and config paths.
+The PowerShell flags and `windowsHide` keep every console process hidden and
+non-interactive while preserving MCP stdin/stdout.
+
+```json
+{
+  "mcpServers": {
+    "opencut-1": {
+      "command": "powershell.exe",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-File",
+        "C:\\source\\opencut-classic\\packages\\mcp-server\\scripts\\Start-OpenCutMcp.ps1",
+        "-Config",
+        "%LOCALAPPDATA%\\OpenCut\\mcp\\config\\instance-1.json"
+      ],
+      "windowsHide": true
+    }
+  }
+}
+```
+
+The exact configuration envelope varies by MCP client. The executable, flags,
+launcher arguments, inherited token, working directory, and hidden-window
+setting are the required values. Do not run the `.ps1` through a `.bat` or
+interactive console wrapper.
+
+Call `opencut_capabilities` first. Before the web editor connects it deliberately
+reports `editor.status: "unavailable"` and the plain reason “OpenCut web editor
+is not running or connected.” After connection, verify the reported bridge
+port, profile directory, state directory, build commit, WASM SHA-256, media
+tools, renderer, and fonts. Use `opencut_start_editor_worker` to start the hidden
+managed renderer and `opencut_stop_editor_worker` before shutting down the MCP
+client. MCP diagnostics go to the client's stderr log.
+
+Operational commands are intentionally small: run `Start-OpenCutWeb.ps1` and
+connect the configured MCP client to start; call `opencut_stop_editor_worker`,
+disconnect the MCP client, and press Ctrl+C in the web shell to stop; call
+`opencut_capabilities` for health; inspect the MCP client's stderr for service
+logs and `<state>\runtime\upgrade-capability.log` for the last upgrade probe.
+
+### Instance N
+
+Every simultaneous editor requires a separate MCP process, loopback port,
+browser profile, and state directory. Copy the example to `instance-2.json`, use
+another unoccupied port such as `32192`, and change both paths from
+`instances\\1` to `instances\\2`. Start a second web process with the matching
+`NEXT_PUBLIC_OPENCUT_BRIDGE_PORT`, and add a second MCP-client entry using that
+configuration.
+
+Browser profiles own separate IndexedDB project libraries. Instances therefore
+cannot open or modify one another's projects by ID; move media or an exported
+project explicitly when work must cross that boundary. Multiple instances also
+share the PC's GPU, so render throughput is not expected to scale linearly.
+
+### Configuration reference
+
+The runtime uses the variables below. The instance JSON accepts the non-secret,
+MCP-side settings from this table; the token and web-side `NEXT_PUBLIC_` values
+are inherited or set in the web shell instead.
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENCUT_BRIDGE_TOKEN` / `NEXT_PUBLIC_OPENCUT_BRIDGE_TOKEN` | Required shared secret (32+ characters); MCP/web names respectively. |
+| `OPENCUT_BRIDGE_PORT` / `NEXT_PUBLIC_OPENCUT_BRIDGE_PORT` | Required matching loopback port for each MCP/web pair. |
+| `OPENCUT_RECEIPT_DIR` | Instance state root. Jobs, receipts, ledgers, preview evidence, provider records, and the default browser profile live below it. |
+| `OPENCUT_HEADLESS_PROFILE_DIR` | Dedicated Chrome/Edge profile and project library; defaults below the state root. |
+| `OPENCUT_HEADLESS_EDITOR_URL` | Web editor base URL; enables the managed browser worker. |
+| `OPENCUT_HEADLESS_BROWSER_PATH` | Optional absolute Chrome/Edge path; empty means automatic discovery. |
+| `OPENCUT_HEADLESS_CONNECTION_TIMEOUT_MS` | Optional managed-editor connection timeout. |
+| `OPENCUT_FFMPEG_PATH`, `OPENCUT_FFPROBE_PATH` | Executable name on `PATH` or absolute path. |
+| `OPENCUT_RENDERER_CLASS` | `software` (the deterministic default) or explicitly declared `hardware`. |
+| `OPENCUT_PREVIEW_EVIDENCE_DIR`, `OPENCUT_OPERATION_LEDGER_DIR` | Optional overrides; normally leave both under the state root. |
+| `OPENCUT_WASM_ARTIFACT_PATH`, `OPENCUT_WASM_PACKAGE_VERSION` | Optional WASM identity overrides for a custom deployment. |
+| `OPENCUT_AUDIO_CLEANER_*`, `OPENCUT_MATTE_PRODUCER_*`, `OPENCUT_SUBJECT_TRACKER_*` | Optional external-provider command and JSON-array arguments. |
+
+Protocol-v1 mutation remains disabled unless
+`OPENCUT_ENABLE_PROTOCOL_V1_MUTATION=1`; do not enable it in a production
+instance. `OPENCUT_BUILD_COMMIT` and `OPENCUT_BUILD_TIMESTAMP` are deployment
+identity overrides for packaged trees without Git metadata. Test-only variables
+are intentionally excluded from the instance file.
+
+### Persistent data, retention, and recovery
+
+Without an instance file, Windows state defaults to
+`%LOCALAPPDATA%\OpenCut\mcp\receipts` and the browser profile defaults to its
+`headless-profile` child. The documented instance layout instead uses
+`%LOCALAPPDATA%\OpenCut\mcp\instances\N\state` and a sibling
+`browser-profile`. Treat those two directories as one recovery unit.
+
+Retain the complete state and browser-profile directories for at least 90 days
+after the last operation or project that refers to them. OpenCut does not prune
+them automatically. Back up both directories while the instance is stopped;
+restoring only receipts or only the browser profile can leave durable hashes
+without their matching project library. To recover, restore the pair, use the
+same instance configuration and token, start the web editor, reconnect MCP, call
+`opencut_capabilities`, and read the relevant operation/save/export receipt.
+
+Provider model caches are owned by their configured provider commands, not by
+OpenCut. Record their locations with those provider installations and retain
+them under the same 90-day policy when replay depends on a model. The selected
+caption font bundle and local AI models are deliberately deferred to issues #21
+and #29; capability readiness reports their current state rather than assuming
+an untracked cache.
+
+### Upgrade
+
+Commit or stash intentional source changes, pull the desired commit, and run:
+
+```powershell
+$config = Join-Path $env:LOCALAPPDATA "OpenCut\mcp\config\instance-1.json"
+powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden `
+  -File packages/mcp-server/scripts/Upgrade-OpenCutMcp.ps1 -Config $config
+```
+
+The script installs the locked dependencies, builds the local WASM package,
+copies that package into the web/MCP dependency tree, builds the web app, runs
+`bun run test`, stops only a listener proven to be this checkout's MCP process,
+and launches a replacement MCP/capability probe with `-WindowStyle Hidden` and
+`windowsHide`. Upgrade success is written under
+`<state>\runtime\upgrades\<commit>.json` only after the public capability tool
+reports the expected 40-character commit. Because MCP is stdio, that verification
+process exits after the probe; reconnecting the configured MCP client launches
+the same verified build as the new client-owned service process. The probe log
+is `<state>\runtime\upgrade-capability.log`.
+
+If install was already completed from the same lockfile, `-SkipInstall` is
+available. It does not skip either build, the full test command, hidden restart,
+or capability verification.
 
 Protocol v1 reads remain available, but mutation is disabled by default because
 it has no connection affinity or retry-stable operation identity. Use explicit
@@ -18,14 +225,9 @@ protocol v2 requests for mutation. For temporary legacy compatibility only, set
 `OPENCUT_ENABLE_PROTOCOL_V1_MUTATION=1`; `opencut_connection_status` will then
 report the compatibility mode as `degraded`.
 
-The repository's complete unattended test command is `bun test` from the
-repository root. It includes the MCP server suite, isolated web suites, and
-`cargo test`. To include the real-video MCP milestone, first start the web editor
-(the only manual step), then configure `OPENCUT_HEADLESS_INTEGRATION_URL`,
-`OPENCUT_HEADLESS_BROWSER_PATH`, and ffmpeg/ffprobe as described below. The test
-command preflights the editor URL and tools before launching the milestone.
-
-For local development, the MCP process also accepts the matching `NEXT_PUBLIC_` token and port variables as fallbacks, so one ignored environment file can configure both processes.
+For local development, the MCP process also accepts the matching `NEXT_PUBLIC_`
+token and port variables as fallbacks, so one ignored environment file can
+configure both processes.
 
 Background removal is intentionally staged separately. See [BACKGROUND_REMOVAL_SCOPE.md](./BACKGROUND_REMOVAL_SCOPE.md) for the model-independent matte foundation, browser prototype boundary, production inference requirements, and acceptance criteria.
 

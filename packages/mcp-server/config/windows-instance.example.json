@@ -1,0 +1,10 @@
+{
+	"OPENCUT_BRIDGE_PORT": "32191",
+	"OPENCUT_RECEIPT_DIR": "%LOCALAPPDATA%\\OpenCut\\mcp\\instances\\1\\state",
+	"OPENCUT_HEADLESS_PROFILE_DIR": "%LOCALAPPDATA%\\OpenCut\\mcp\\instances\\1\\browser-profile",
+	"OPENCUT_HEADLESS_EDITOR_URL": "http://127.0.0.1:3000",
+	"OPENCUT_HEADLESS_BROWSER_PATH": "",
+	"OPENCUT_FFMPEG_PATH": "ffmpeg",
+	"OPENCUT_FFPROBE_PATH": "ffprobe",
+	"OPENCUT_RENDERER_CLASS": "software"
+}

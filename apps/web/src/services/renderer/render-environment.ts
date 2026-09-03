@@ -160,7 +160,7 @@ function detectBackend(
 async function readAdapter(
 	rendererClass: RenderEnvironmentIdentity["rendererClass"],
 ): Promise<RenderEnvironmentIdentity["adapter"]> {
-	const gpu = navigator.gpu as unknown as
+	const gpu = (navigator as unknown as { gpu?: unknown }).gpu as
 		| {
 				requestAdapter(options?: {
 					powerPreference?: "high-performance";
