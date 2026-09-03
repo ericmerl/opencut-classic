@@ -21,3 +21,17 @@ Each app is a frontend that calls into Rust. Logic is never duplicated between a
 
 - Read components before using them. They may already apply classes, which affects what you need to pass and how to override them.
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues for `ericmerl/opencut-classic`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the five default canonical label names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Domain documentation uses the single-context layout. See `docs/agents/domain.md`.
+
