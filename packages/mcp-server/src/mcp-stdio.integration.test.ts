@@ -1,14 +1,42 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const integrationTest =
 	process.env.OPENCUT_RUN_HEADLESS_INTEGRATION === "1" ? test : test.skip;
+// Preview frames are straight RGBA while the WebM carries lossy VP9 with 4:2:0
+// chroma, so bitwise equality is impossible. MAE bounds the average per-channel
+// drift; the PSNR floor catches a small number of large errors (a wrong frame,
+// a missing overlay) that a low MAE would hide. A frame taken from the wrong
+// time measured 20 dB on the real path while matching frames measure 33 dB
+// and above, so 28 dB separates the two with margin for codec loss.
 const PREVIEW_EXPORT_RGBA_MAE_TOLERANCE = 16;
+const PREVIEW_EXPORT_RGBA_MIN_PSNR_DB = 28;
+// The preview WAV is lossless PCM while the WebM carries lossy Opus. Both are
+// decoded to the same 44.1 kHz stereo PCM so the comparison measures encoder
+// loss only. The export is decoded once in full and each window is sliced by
+// sample index, because seeking into the Opus stream with ffmpeg lands on a
+// packet boundary and fakes a lag of up to 10 ms. The streams are then aligned
+// within a 20 ms search window before the sample comparison, and the lag is
+// bounded separately because it is the audio-to-video sync error. The real path
+// measured a 0.7 ms lag and an aligned MAE of about 10 on a signal averaging
+// 1275, so 2 ms and 128 (0.4% of full scale) leave several times the observed
+// values while still rejecting a dropped Opus frame (20 ms) or a dropout. The
+// export ends 6.5 ms early because the encoder tail is not flushed (issue #53);
+// the ending window tolerates that through the sample-count bound below.
+const PREVIEW_EXPORT_PCM_MAE_TOLERANCE = 128;
+const PREVIEW_EXPORT_PCM_LAG_SEARCH_SECONDS = 0.02;
+const PREVIEW_EXPORT_PCM_MAX_LAG_SECONDS = 0.002;
+const PREVIEW_EXPORT_LOUDNESS_TOLERANCE_LU = 1;
+const PREVIEW_EXPORT_TRUE_PEAK_TOLERANCE_DB = 1;
+const AUDIO_BOUNDARY_WINDOW_SECONDS = 0.5;
+const MEDIA_TICKS_PER_SECOND = 120_000;
+const PARITY_AUDIO_SAMPLE_RATE = 44_100;
+const PARITY_AUDIO_CHANNELS = 2;
 
 let directory: string;
 const processes: McpStdioHarness[] = [];
@@ -19,6 +47,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	for (const process of processes.splice(0)) await process.close();
+	if (process.env.OPENCUT_INTEGRATION_KEEP_ARTIFACTS === "1") {
+		console.log(`[integration] keeping artifacts in ${directory}`);
+		return;
+	}
 	await removeTemporaryDirectory(directory);
 });
 
@@ -855,15 +887,6 @@ integrationTest(
 			},
 		});
 		expect((await stat(outputPath)).size).toBeGreaterThan(0);
-		const previewRgba = await extractRgba(
-			requireString(preview.outputPath, "preview outputPath"),
-		);
-		const exportRgba = await extractRgba(outputPath, 0.5);
-		expect(previewRgba.byteLength).toBe(320 * 240 * 4);
-		expect(exportRgba.byteLength).toBe(previewRgba.byteLength);
-		expect(meanAbsoluteError(previewRgba, exportRgba)).toBeLessThanOrEqual(
-			PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
-		);
 		const validation = requireRecord(exported.validation, "validation");
 		const samples = requireRecords(validation.frameSamples, "frameSamples");
 		expect(samples.map((sample) => sample.position)).toEqual([
@@ -875,6 +898,201 @@ integrationTest(
 			expect(sample.bytes).toBeGreaterThan(0);
 			expect(sample.sha256).toMatch(/^[a-f0-9]{64}$/);
 		}
+		const videoValidation = requireRecord(validation.video, "validated video");
+		for (const field of [
+			"codec",
+			"profile",
+			"level",
+			"pixelFormat",
+			"colorPrimaries",
+			"colorTransfer",
+			"colorMatrix",
+			"colorRange",
+		]) {
+			expect(Object.hasOwn(videoValidation, field)).toBe(true);
+		}
+		const audioValidation = requireRecord(validation.audio, "validated audio");
+		expect(audioValidation).toMatchObject({
+			present: true,
+			codec: "opus",
+			fallback: {
+				preferredCodec: "opus",
+				actualCodec: "opus",
+				outcome: "preferred",
+			},
+		});
+		expect(validation.mastering).toMatchObject({
+			preview: { chain: "opencut-fixed-mastering-v1" },
+			export: { chain: "opencut-fixed-mastering-v1" },
+			difference: expect.stringContaining("per rendered buffer"),
+		});
+
+		const videoDurationSeconds = requireNumber(
+			videoValidation.durationSeconds,
+			"export video duration",
+		);
+		const exportFullPcm = await extractPcmI16(outputPath);
+		for (const sample of samples) {
+			const position = requireString(sample.position, "sample position");
+			const sampleSeconds = requireNumber(
+				sample.timeSeconds,
+				`${position} sample time`,
+			);
+			const expectedTicks = Math.round(
+				sampleSeconds * MEDIA_TICKS_PER_SECOND,
+			);
+			const previewFrame = await third.callTool(
+				"opencut_render_preview_frame",
+				{
+					...previewRequest,
+					...affinity(thirdIdentity),
+					operationId: `public-parity-frame-${position}`,
+					time: {
+						kind: "media-time",
+						ticks: expectedTicks,
+						rounding: "exact",
+					},
+				},
+				5 * 60_000,
+			);
+			expect(previewFrame).toMatchObject({
+				status: "rendered",
+				requestedTicks: expectedTicks,
+				resolvedTicks: expectedTicks,
+			});
+			const previewRgba = await extractRgba(
+				requireString(previewFrame.outputPath, `${position} preview path`),
+			);
+			const exportRgba = await extractRgba(
+				requireString(sample.path, `${position} export path`),
+			);
+			const rgbaMetrics = rgbaComparisonMetrics(previewRgba, exportRgba);
+			console.log(
+				`[parity] ${position} frame t=${sampleSeconds.toFixed(6)}s MAE=${rgbaMetrics.meanAbsoluteError.toFixed(3)} PSNR=${rgbaMetrics.psnrDb.toFixed(2)} dB`,
+			);
+			assertMetricAtMost({
+				label: `${position} frame RGBA MAE`,
+				actual: rgbaMetrics.meanAbsoluteError,
+				maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+			});
+			assertMetricAtLeast({
+				label: `${position} frame PSNR`,
+				actual: rgbaMetrics.psnrDb,
+				minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
+			});
+
+			const { startSeconds, endSeconds } = audioBoundaryWindow({
+				position,
+				centerSeconds: sampleSeconds,
+				durationSeconds: videoDurationSeconds,
+			});
+			const previewAudioRange = await third.callTool(
+				"opencut_render_preview_range",
+				{
+					...affinity(thirdIdentity),
+					contractVersion: 1,
+					operationId: `public-parity-audio-${position}`,
+					projectId,
+					sceneId: previewRequest.sceneId,
+					expectedRevision: previewRequest.expectedRevision,
+					expectedProjectContentHash:
+						previewRequest.expectedProjectContentHash,
+					expectedWriteVersion: previewRequest.expectedWriteVersion,
+					saveReceiptOperationId: previewRequest.saveReceiptOperationId,
+					expectedSaveReceiptId: previewRequest.expectedSaveReceiptId,
+					range: {
+						kind: "media-time",
+						startTicks: Math.round(startSeconds * MEDIA_TICKS_PER_SECOND),
+						endTicksExclusive: Math.round(
+							endSeconds * MEDIA_TICKS_PER_SECOND,
+						),
+					},
+					canvasSize: { width: 16, height: 16 },
+					output: {
+						kind: "frame-sequence",
+						frameFormat: "png",
+						includeAudio: true,
+					},
+				},
+				5 * 60_000,
+			);
+			expect(previewAudioRange).toMatchObject({
+				status: "rendered",
+				execution: { status: "succeeded" },
+			});
+			const previewAudio = requireRecord(
+				previewAudioRange.audio,
+				`${position} preview audio`,
+			);
+			const actualStartSeconds =
+				requireNumber(
+					previewAudio.startTicks,
+					`${position} preview audio start`,
+				) / MEDIA_TICKS_PER_SECOND;
+			const actualEndSeconds =
+				requireNumber(
+					previewAudio.endTicksExclusive,
+					`${position} preview audio end`,
+				) / MEDIA_TICKS_PER_SECOND;
+			const previewAudioPath = requireString(
+				previewAudio.path,
+				`${position} preview audio path`,
+			);
+			const previewPcm = await extractPcmI16(previewAudioPath);
+			const exportPcm = exportFullPcm.subarray(
+				Math.round(actualStartSeconds * PARITY_AUDIO_SAMPLE_RATE) *
+					PARITY_AUDIO_CHANNELS,
+				Math.round(actualEndSeconds * PARITY_AUDIO_SAMPLE_RATE) *
+					PARITY_AUDIO_CHANNELS,
+			);
+			expect(Math.abs(previewPcm.length - exportPcm.length)).toBeLessThanOrEqual(
+				PARITY_AUDIO_SAMPLE_RATE * PARITY_AUDIO_CHANNELS * 0.1,
+			);
+			const pcmMetrics = pcmComparisonMetrics(previewPcm, exportPcm);
+			console.log(
+				`[parity] ${position} audio ${actualStartSeconds.toFixed(3)}-${actualEndSeconds.toFixed(3)}s samples=${previewPcm.length}/${exportPcm.length} lag=${(pcmMetrics.lagFrames / PARITY_AUDIO_SAMPLE_RATE * 1000).toFixed(2)}ms aligned PCM MAE=${pcmMetrics.meanAbsoluteError.toFixed(1)}`,
+			);
+			assertMetricAtMost({
+				label: `${position} audio alignment lag (seconds)`,
+				actual: Math.abs(pcmMetrics.lagFrames) / PARITY_AUDIO_SAMPLE_RATE,
+				maximum: PREVIEW_EXPORT_PCM_MAX_LAG_SECONDS,
+			});
+			assertMetricAtMost({
+				label: `${position} audio PCM MAE`,
+				actual: pcmMetrics.meanAbsoluteError,
+				maximum: PREVIEW_EXPORT_PCM_MAE_TOLERANCE,
+			});
+			const [previewLoudness, exportLoudness] = await Promise.all([
+				measureEbur128(previewAudioPath),
+				measureEbur128(outputPath, {
+					startSeconds: actualStartSeconds,
+					durationSeconds: actualEndSeconds - actualStartSeconds,
+				}),
+			]);
+			console.log(
+				`[parity] ${position} audio loudness preview=${previewLoudness.integratedLufs} LUFS / ${previewLoudness.truePeakDbtp} dBTP export=${exportLoudness.integratedLufs} LUFS / ${exportLoudness.truePeakDbtp} dBTP`,
+			);
+			assertMetricAtMost({
+				label: `${position} audio integrated loudness delta`,
+				actual: Math.abs(
+					previewLoudness.integratedLufs - exportLoudness.integratedLufs,
+				),
+				maximum: PREVIEW_EXPORT_LOUDNESS_TOLERANCE_LU,
+			});
+			assertMetricAtMost({
+				label: `${position} audio true-peak delta`,
+				actual: Math.abs(
+					previewLoudness.truePeakDbtp - exportLoudness.truePeakDbtp,
+				),
+				maximum: PREVIEW_EXPORT_TRUE_PEAK_TOLERANCE_DB,
+			});
+		}
+		const exportMeasurements = requireRecord(
+			audioValidation.measurements,
+			"export audio measurements",
+		);
+		expect(exportMeasurements.integratedLufs).not.toBeNull();
+		expect(exportMeasurements.truePeakDbtp).not.toBeNull();
 		const outerReceipt = await third.callTool("opencut_get_export_receipt", {
 			operationId: "public-pinned-export",
 		});
@@ -1045,10 +1263,24 @@ class McpStdioHarness {
 		return requireRecord(JSON.parse(text.text), `${name} payload`);
 	}
 
+	private async persistDiagnostics(childPid: number | undefined): Promise<void> {
+		const diagnosticsDirectory =
+			process.env.OPENCUT_INTEGRATION_DIAGNOSTICS_DIR;
+		if (!diagnosticsDirectory || !this.diagnostics) return;
+		await mkdir(diagnosticsDirectory, { recursive: true });
+		await appendFile(
+			join(diagnosticsDirectory, `mcp-stderr-${process.pid}.log`),
+			`
+===== MCP server ${childPid ?? "?"} =====
+${this.diagnostics}`,
+		);
+	}
+
 	async close(): Promise<void> {
 		const child = this.child;
 		if (!child) return;
 		this.child = null;
+		await this.persistDiagnostics(child.pid);
 		const exited = new Promise<void>((resolve) => {
 			if (hasExited(child)) resolve();
 			else child.once("exit", () => resolve());
@@ -1262,15 +1494,250 @@ async function extractRgba(path: string, seconds?: number): Promise<Buffer> {
 	});
 }
 
-function meanAbsoluteError(left: Buffer, right: Buffer): number {
+function rgbaComparisonMetrics(left: Buffer, right: Buffer): {
+	meanAbsoluteError: number;
+	psnrDb: number;
+} {
 	if (left.byteLength !== right.byteLength || left.byteLength === 0) {
 		throw new Error("RGBA buffers must have equal nonzero lengths");
 	}
-	let total = 0;
+	let absoluteTotal = 0;
+	let squaredTotal = 0;
 	for (let index = 0; index < left.byteLength; index += 1) {
-		total += Math.abs(left[index]! - right[index]!);
+		const delta = left[index]! - right[index]!;
+		absoluteTotal += Math.abs(delta);
+		squaredTotal += delta * delta;
 	}
-	return total / left.byteLength;
+	const meanSquaredError = squaredTotal / left.byteLength;
+	return {
+		meanAbsoluteError: absoluteTotal / left.byteLength,
+		psnrDb:
+			meanSquaredError === 0
+				? Number.POSITIVE_INFINITY
+				: 10 * Math.log10((255 * 255) / meanSquaredError),
+	};
+}
+
+async function extractPcmI16(path: string): Promise<Int16Array> {
+	const ffmpeg =
+		process.env.OPENCUT_FFMPEG_PATH ?? process.env.FFMPEG_PATH ?? "ffmpeg";
+	return new Promise((resolve, reject) => {
+		const output: Buffer[] = [];
+		let diagnostics = "";
+		const child = spawn(
+			ffmpeg,
+			[
+				"-v",
+				"error",
+				"-i",
+				path,
+				"-map",
+				"0:a:0",
+				"-ac",
+				String(PARITY_AUDIO_CHANNELS),
+				"-ar",
+				String(PARITY_AUDIO_SAMPLE_RATE),
+				"-f",
+				"s16le",
+				"-acodec",
+				"pcm_s16le",
+				"pipe:1",
+			],
+			{ windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+		);
+		child.stdout.on("data", (chunk) => output.push(Buffer.from(chunk)));
+		child.stderr.on("data", (chunk) => {
+			diagnostics += String(chunk);
+		});
+		child.once("error", reject);
+		child.once("exit", (code) => {
+			if (code !== 0) {
+				reject(new Error(`ffmpeg PCM extraction failed: ${diagnostics}`));
+				return;
+			}
+			const bytes = Buffer.concat(output);
+			if (bytes.byteLength === 0 || bytes.byteLength % 2 !== 0) {
+				reject(new Error("decoded PCM must contain complete non-empty i16 samples"));
+				return;
+			}
+			const copy = bytes.buffer.slice(
+				bytes.byteOffset,
+				bytes.byteOffset + bytes.byteLength,
+			);
+			resolve(new Int16Array(copy));
+		});
+	});
+}
+
+
+function pcmComparisonMetrics(
+	before: Int16Array,
+	after: Int16Array,
+): { lagFrames: number; comparedFrames: number; meanAbsoluteError: number } {
+	// The decoded export is aligned to the preview mix before the sample-wise
+	// comparison. Every candidate lag compares the same central span of the
+	// preview (one search window trimmed from each end) so shrinking overlap can
+	// never lower the error, and ties within 2% resolve to the smallest lag: the
+	// fixture tone is periodic, so equally good lags recur every period and the
+	// smallest alias is the conservative report. The lag is bounded separately.
+	const channels = PARITY_AUDIO_CHANNELS;
+	const beforeFrames = Math.floor(before.length / channels);
+	const afterFrames = Math.floor(after.length / channels);
+	const maxLag = Math.round(
+		PREVIEW_EXPORT_PCM_LAG_SEARCH_SECONDS * PARITY_AUDIO_SAMPLE_RATE,
+	);
+	const start = maxLag;
+	const end = beforeFrames - maxLag;
+	const comparedFrames = end - start;
+	if (comparedFrames <= 0) throw new Error("audio comparison window is empty");
+	const candidates: Array<{ lagFrames: number; meanAbsoluteError: number }> =
+		[];
+	for (let lag = -maxLag; lag <= maxLag; lag += 1) {
+		if (start + lag < 0 || end + lag > afterFrames) continue;
+		let absoluteTotal = 0;
+		for (let frame = start; frame < end; frame += 1) {
+			const beforeIndex = frame * channels;
+			const afterIndex = (frame + lag) * channels;
+			for (let channel = 0; channel < channels; channel += 1) {
+				absoluteTotal += Math.abs(
+					before[beforeIndex + channel]! - after[afterIndex + channel]!,
+				);
+			}
+		}
+		candidates.push({
+			lagFrames: lag,
+			meanAbsoluteError: absoluteTotal / (comparedFrames * channels),
+		});
+	}
+	if (candidates.length === 0)
+		throw new Error("decoded export does not cover the audio comparison span");
+	const minimum = Math.min(
+		...candidates.map((candidate) => candidate.meanAbsoluteError),
+	);
+	const best = candidates
+		.filter((candidate) => candidate.meanAbsoluteError <= minimum * 1.02)
+		.sort((left, right) => Math.abs(left.lagFrames) - Math.abs(right.lagFrames))[0]!;
+	return { ...best, comparedFrames };
+}
+
+function assertMetricAtMost({
+	label,
+	actual,
+	maximum,
+}: {
+	label: string;
+	actual: number;
+	maximum: number;
+}): void {
+	if (actual > maximum) {
+		throw new Error(`${label} ${actual} exceeds tolerance ${maximum}`);
+	}
+}
+
+function assertMetricAtLeast({
+	label,
+	actual,
+	minimum,
+}: {
+	label: string;
+	actual: number;
+	minimum: number;
+}): void {
+	if (actual < minimum) {
+		throw new Error(`${label} ${actual} is below tolerance ${minimum}`);
+	}
+}
+
+function audioBoundaryWindow({
+	position,
+	centerSeconds,
+	durationSeconds,
+}: {
+	position: string;
+	centerSeconds: number;
+	durationSeconds: number;
+}): { startSeconds: number; endSeconds: number } {
+	const windowSeconds = Math.min(
+		AUDIO_BOUNDARY_WINDOW_SECONDS,
+		durationSeconds,
+	);
+	if (position === "opening") {
+		return { startSeconds: 0, endSeconds: windowSeconds };
+	}
+	if (position === "ending") {
+		return {
+			startSeconds: Math.max(0, durationSeconds - windowSeconds),
+			endSeconds: durationSeconds,
+		};
+	}
+	const startSeconds = Math.max(
+		0,
+		Math.min(
+			durationSeconds - windowSeconds,
+			centerSeconds - windowSeconds / 2,
+		),
+	);
+	return { startSeconds, endSeconds: startSeconds + windowSeconds };
+}
+
+async function measureEbur128(
+	path: string,
+	range?: { startSeconds: number; durationSeconds: number },
+): Promise<{
+	integratedLufs: number;
+	truePeakDbtp: number;
+}> {
+	const ffmpeg =
+		process.env.OPENCUT_FFMPEG_PATH ?? process.env.FFMPEG_PATH ?? "ffmpeg";
+	return new Promise((resolve, reject) => {
+		let diagnostics = "";
+		const child = spawn(
+			ffmpeg,
+			[
+				"-hide_banner",
+				"-nostats",
+				...(range ? ["-ss", range.startSeconds.toFixed(6)] : []),
+				"-i",
+				path,
+				...(range ? ["-t", range.durationSeconds.toFixed(6)] : []),
+				"-map",
+				"0:a:0",
+				"-filter_complex",
+				"ebur128=peak=true",
+				"-f",
+				"null",
+				"-",
+			],
+			{ windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+		);
+		child.stderr.on("data", (chunk) => {
+			diagnostics += String(chunk);
+		});
+		child.once("error", reject);
+		child.once("exit", (code) => {
+			if (code !== 0) {
+				reject(new Error(`ffmpeg ebur128 analysis failed: ${diagnostics}`));
+				return;
+			}
+			const summary = diagnostics.slice(diagnostics.lastIndexOf("Summary:"));
+			const integrated =
+				/Integrated loudness:\s*[\s\S]*?I:\s*(-?\d+(?:\.\d+)?)\s+LUFS/i.exec(
+					summary,
+				)?.[1];
+			const truePeak =
+				/True peak:\s*[\s\S]*?Peak:\s*(-?\d+(?:\.\d+)?)\s+dBFS/i.exec(
+					summary,
+				)?.[1];
+			if (!integrated || !truePeak) {
+				reject(new Error("ffmpeg ebur128 summary is incomplete"));
+				return;
+			}
+			resolve({
+				integratedLufs: Number(integrated),
+				truePeakDbtp: Number(truePeak),
+			});
+		});
+	});
 }
 
 function requireProjectContentHash(value: Record<string, unknown>): string {

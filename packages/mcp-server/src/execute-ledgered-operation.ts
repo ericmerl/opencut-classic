@@ -201,6 +201,10 @@ export async function executeLedgeredOperation<TInput, TResult>(
 		const outcome = await spec.execute(context);
 		return await applyOutcome(spec, record, outcome);
 	} catch (error) {
+		console.error(
+			`[opencut-mcp] operation ${record.operationId} (${record.operationKind}) is recoverable:`,
+			error instanceof Error ? (error.stack ?? error.message) : String(error),
+		);
 		return recoverable(
 			record,
 			error instanceof Error ? error.name : "operation execution failed",

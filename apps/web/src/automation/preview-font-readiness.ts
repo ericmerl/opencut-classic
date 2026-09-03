@@ -58,6 +58,12 @@ export async function waitForFonts(
 			provenance: "font-face-set",
 		});
 		if (matchingFaces.length === 0) {
+			// Probe that the family is installed locally, but never add the probe
+			// face to the document: `local(family)` resolves to the regular file,
+			// and registering it under bold or italic descriptors would make every
+			// later canvas draw use regular glyphs without synthesis. Style and
+			// weight resolution stays with the platform font matcher, which is
+			// exactly what the export path uses.
 			const localFace = new FontFace(
 				descriptor.family,
 				`local(${JSON.stringify(descriptor.family)})`,
@@ -68,7 +74,6 @@ export async function waitForFonts(
 				},
 			);
 			await localFace.load();
-			document.fonts.add(localFace);
 			matchingFaces = exactFontFaces({
 				faces: [localFace],
 				descriptor,

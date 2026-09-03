@@ -2,6 +2,7 @@ import type { EditorCore } from "@/core";
 import type { MediaAsset } from "@/media/types";
 import { extractTimelineAudioRange } from "@/media/mediabunny";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
+import { VideoCache } from "@/services/video-cache/service";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { ComparisonSourceUnavailableError } from "@/services/storage/project-snapshot-storage";
 import { calculateTotalDuration } from "@/timeline";
@@ -106,9 +107,13 @@ export async function compareAutomationProjectStates({
 		const objectUrls: string[] = [];
 		const beforeMedia = hydrateMedia({ source: before, objectUrls });
 		const afterMedia = hydrateMedia({ source: after, objectUrls });
+		// Exact evidence renders own a private frame cache so the live preview
+		// loop cannot hand them a superseded frame from the shared cache.
+		const exactVideoCache = new VideoCache({ exact: true });
 		const renderer = new CanvasRenderer({
 			...request.canvasSize,
 			fps: before.settings.fps,
+			videoCache: exactVideoCache,
 		});
 		const canvas = document.createElement("canvas");
 		canvas.width = request.canvasSize.width;
@@ -150,6 +155,7 @@ export async function compareAutomationProjectStates({
 			return finish("rendered");
 		} finally {
 			for (const url of objectUrls) URL.revokeObjectURL(url);
+			exactVideoCache.clearAll();
 		}
 
 		async function finish(

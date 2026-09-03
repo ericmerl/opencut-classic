@@ -38,9 +38,37 @@ describe("ExportValidator", () => {
 		expect(validation).toMatchObject({
 			status: "validated",
 			fullDecode: true,
-			video: { width: 160, height: 90, fps: 10 },
-			audio: { present: true },
+			video: {
+				codec: "h264",
+				width: 160,
+				height: 90,
+				fps: 10,
+				pixelFormat: "yuv420p",
+				colorPrimaries: "bt709",
+				colorTransfer: "bt709",
+				colorMatrix: "bt709",
+				colorRange: "tv",
+			},
+			audio: {
+				present: true,
+				codec: "aac",
+				fallback: {
+					preferredCodec: "aac",
+					actualCodec: "aac",
+					outcome: "preferred",
+				},
+			},
+			mastering: {
+				preview: { chain: "opencut-fixed-mastering-v1" },
+				export: { chain: "opencut-fixed-mastering-v1" },
+				difference: expect.stringContaining("per rendered buffer"),
+			},
 		});
+		expect(validation.video.profile).not.toBeNull();
+		expect(validation.video.level).not.toBeNull();
+		expect(validation.audio.sampleRate).toBe(44_100);
+		expect(validation.audio.measurements?.integratedLufs).not.toBeNull();
+		expect(validation.audio.measurements?.truePeakDbtp).not.toBeNull();
 		expect(validation.frameSamples.map((sample) => sample.position)).toEqual([
 			"opening",
 			"middle",
@@ -61,6 +89,27 @@ describe("ExportValidator", () => {
 				includeAudio: false,
 			}),
 		).rejects.toThrow("includeAudio is false");
+	});
+
+	test("fails when requested audio is absent", async () => {
+		const outputPath = join(directory, "silent-video.mp4");
+		await createFixture(outputPath, { includeAudio: false });
+		const validator = new ExportValidator(
+			new ExportReceiptStore(join(directory, "silent-receipts")),
+			{ ffmpeg, ffprobe },
+		);
+
+		await expect(
+			validator.validate({
+				operationId: "missing-requested-audio",
+				outputPath,
+				format: "mp4",
+				expectedWidth: 160,
+				expectedHeight: 90,
+				expectedFps: 10,
+				includeAudio: true,
+			}),
+		).rejects.toThrow("includeAudio is true");
 	});
 
 	test("samples the ending from video duration when audio outlasts video", async () => {
@@ -92,7 +141,12 @@ async function createFixture(
 	{
 		audioDuration = 1,
 		shortest = true,
-	}: { audioDuration?: number; shortest?: boolean } = {},
+		includeAudio = true,
+	}: {
+		audioDuration?: number;
+		shortest?: boolean;
+		includeAudio?: boolean;
+	} = {},
 ): Promise<void> {
 	const process = Bun.spawn(
 		[
@@ -103,17 +157,28 @@ async function createFixture(
 			"lavfi",
 			"-i",
 			"color=c=blue:s=160x90:r=10:d=1",
-			"-f",
-			"lavfi",
-			"-i",
-			`sine=frequency=440:duration=${audioDuration}`,
-			...(shortest ? ["-shortest"] : []),
+			...(includeAudio
+				? [
+						"-f",
+						"lavfi",
+						"-i",
+						`sine=frequency=440:duration=${audioDuration}`,
+					]
+				: []),
+			...(includeAudio && shortest ? ["-shortest"] : []),
 			"-c:v",
 			"libx264",
 			"-pix_fmt",
 			"yuv420p",
-			"-c:a",
-			"aac",
+			"-color_primaries",
+			"bt709",
+			"-color_trc",
+			"bt709",
+			"-colorspace",
+			"bt709",
+			"-color_range",
+			"tv",
+			...(includeAudio ? ["-c:a", "aac"] : []),
 			outputPath,
 		],
 		{ stdout: "pipe", stderr: "pipe" },

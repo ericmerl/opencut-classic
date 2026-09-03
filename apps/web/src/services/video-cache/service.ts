@@ -17,11 +17,25 @@ interface VideoSinkData {
 	prefetchPromise: Promise<void> | null;
 }
 
+export interface VideoCacheOptions {
+	/**
+	 * Exact caches never short-circuit a superseded request with whatever frame
+	 * happens to be current. Interactive scrubbing wants that shortcut; exact
+	 * evidence renders must always receive the frame for the requested time.
+	 */
+	exact?: boolean;
+}
+
 export class VideoCache {
+	private readonly exact: boolean;
 	private sinks = new Map<string, VideoSinkData>();
 	private initPromises = new Map<string, Promise<void>>();
 	private frameChain = new Map<string, Promise<unknown>>();
 	private seekGenerations = new Map<string, number>();
+
+	constructor({ exact = false }: VideoCacheOptions = {}) {
+		this.exact = exact;
+	}
 
 	async getFrameAt({
 		mediaId,
@@ -42,7 +56,7 @@ export class VideoCache {
 
 		const previous = this.frameChain.get(mediaId) ?? Promise.resolve();
 		const current = previous.then(() => {
-			if (this.seekGenerations.get(mediaId) !== generation) {
+			if (!this.exact && this.seekGenerations.get(mediaId) !== generation) {
 				return sinkData.currentFrame ?? null;
 			}
 			return this.resolveFrame({ sinkData, time });

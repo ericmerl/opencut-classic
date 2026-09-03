@@ -23,7 +23,7 @@ import {
 	resolveTransformAtTime,
 } from "@/rendering/animation-values";
 import { computeReframeGeometry, DEFAULT_REFRAME } from "@/rendering";
-import { videoCache } from "@/services/video-cache/service";
+import { videoCache, type VideoCache } from "@/services/video-cache/service";
 import type { CanvasRenderer } from "./canvas-renderer";
 import type { AnyBaseNode } from "./nodes/base-node";
 import {
@@ -312,7 +312,8 @@ async function resolveVideoNode({
 			clipTime: sampleClipTime,
 			retime: node.params.retime,
 		});
-	const frame = await videoCache.getFrameAt({
+	const cache = context.renderer.videoCache ?? videoCache;
+	const frame = await cache.getFrameAt({
 		mediaId: node.params.mediaId,
 		file: node.params.file,
 		time: mediaTimeToSeconds({
@@ -323,6 +324,7 @@ async function resolveVideoNode({
 		return null;
 	}
 	const matte = await resolveVideoMatte({
+		cache,
 		node,
 		time: mediaTimeToSeconds({
 			time: roundMediaTime({ time: sourceTimeTicks }),
@@ -349,16 +351,18 @@ async function resolveVideoNode({
 }
 
 async function resolveVideoMatte({
+	cache,
 	node,
 	time,
 }: {
+	cache: VideoCache;
 	node: VideoNode;
 	time: number;
 }): Promise<Partial<ResolvedVideoNodeState> | null> {
 	const matte = node.params.matte;
 	if (!matte) return null;
 	if (matte.type === "video") {
-		const frame = await videoCache.getFrameAt({
+		const frame = await cache.getFrameAt({
 			mediaId: matte.mediaId,
 			file: matte.file,
 			time,
@@ -538,7 +542,11 @@ async function resolveBlurBackgroundNode({
 		return null;
 	}
 
-	const backdropSource = await resolveBackdropSource({ node, clipTime });
+	const backdropSource = await resolveBackdropSource({
+		cache: context.renderer.videoCache ?? videoCache,
+		node,
+		clipTime,
+	});
 	if (!backdropSource) {
 		return null;
 	}
@@ -561,9 +569,11 @@ async function resolveBlurBackgroundNode({
 }
 
 async function resolveBackdropSource({
+	cache,
 	node,
 	clipTime,
 }: {
+	cache: VideoCache;
 	node: BlurBackgroundNode;
 	clipTime: number;
 }): Promise<BackdropSource | null> {
@@ -574,7 +584,7 @@ async function resolveBackdropSource({
 				clipTime,
 				retime: node.params.retime,
 			});
-		const frame = await videoCache.getFrameAt({
+		const frame = await cache.getFrameAt({
 			mediaId: node.params.mediaId,
 			file: node.params.file,
 			time: mediaTimeToSeconds({

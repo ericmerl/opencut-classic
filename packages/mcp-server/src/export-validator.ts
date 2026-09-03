@@ -7,6 +7,13 @@ import type { ExportReceiptStore } from "./export-receipts";
 interface ProbeStream extends Record<string, unknown> {
 	codec_type?: string;
 	codec_name?: string;
+	profile?: string;
+	level?: number;
+	pix_fmt?: string;
+	color_primaries?: string;
+	color_transfer?: string;
+	color_space?: string;
+	color_range?: string;
 	width?: number;
 	height?: number;
 	avg_frame_rate?: string;
@@ -24,6 +31,7 @@ interface ProbeDocument extends Record<string, unknown> {
 
 export interface ExportFrameSample {
 	position: "opening" | "middle" | "ending";
+	frameIndex: number;
 	timeSeconds: number;
 	path: string;
 	bytes: number;
@@ -38,9 +46,17 @@ export interface ExportMediaValidation {
 	durationSeconds: number;
 	video: {
 		codec: string;
+		profile: string | null;
+		level: number | null;
+		pixelFormat: string | null;
+		colorPrimaries: string | null;
+		colorTransfer: string | null;
+		colorMatrix: string | null;
+		colorRange: string | null;
 		width: number;
 		height: number;
 		fps: number | null;
+		durationSeconds: number;
 	};
 	audio: {
 		present: boolean;
@@ -48,9 +64,44 @@ export interface ExportMediaValidation {
 		sampleRate: number | null;
 		channels: number | null;
 		channelLayout: string | null;
+		fallback: {
+			preferredCodec: "aac" | "opus";
+			actualCodec: "aac" | "opus";
+			outcome: "preferred" | "aac-to-opus";
+		} | null;
+		measurements: {
+			integratedLufs: number | null;
+			truePeakDbtp: number | null;
+		} | null;
+	};
+	mastering: {
+		preview: typeof FIXED_MASTERING_POLICY;
+		export: typeof FIXED_MASTERING_POLICY;
+		difference: string;
 	};
 	frameSamples: ExportFrameSample[];
 }
+
+const FIXED_MASTERING_POLICY = {
+	chain: "opencut-fixed-mastering-v1",
+	application: "conditional-above-output-headroom",
+	conditionScope: "rendered-buffer-peak",
+	limiter: {
+		thresholdDb: -1,
+		kneeDb: 0,
+		ratio: 20,
+		attackSeconds: 0.001,
+		releaseSeconds: 0.12,
+	},
+	outputHeadroomLinear: 0.98,
+} as const;
+
+// The same chain runs for previews and exports, but the limiter only engages
+// when the rendered buffer peaks above the output headroom. The export decides
+// that over the full timeline mix while a preview range decides over its own
+// window, so a quiet window can stay unlimited where the full export is limited.
+const MASTERING_SCOPE_DIFFERENCE =
+	"limiter engagement is decided per rendered buffer: the export evaluates the full timeline mix while a preview range evaluates only its requested window";
 
 export class ExportValidator {
 	private preflightPromise: Promise<void> | null = null;
@@ -130,6 +181,9 @@ export class ExportValidator {
 			);
 		}
 		const audio = streams.find((stream) => stream.codec_type === "audio");
+		if (includeAudio && !audio) {
+			throw new Error("export does not contain audio even though includeAudio is true");
+		}
 		if (!includeAudio && audio) {
 			throw new Error(
 				"export contains audio even though includeAudio is false",
@@ -143,13 +197,23 @@ export class ExportValidator {
 			2 * 60 * 60_000,
 		);
 		const videoDurationSeconds = numericValueOrNull(video.duration);
+		const validatedVideoDurationSeconds =
+			videoDurationSeconds !== null && videoDurationSeconds > 0
+				? Math.min(durationSeconds, videoDurationSeconds)
+				: durationSeconds;
+		const audioCodec = stringValue(audio?.codec_name);
+		const audioFallback = resolveAudioFallback({
+			format,
+			includeAudio,
+			audioCodec,
+		});
+		const audioMeasurements = audio
+			? await this.measureAudio(outputPath)
+			: null;
 		const frameSamples = await this.extractFrameSamples({
 			operationId,
 			outputPath,
-			durationSeconds:
-				videoDurationSeconds !== null && videoDurationSeconds > 0
-					? Math.min(durationSeconds, videoDurationSeconds)
-					: durationSeconds,
+			durationSeconds: validatedVideoDurationSeconds,
 			fps: fps ?? expectedFps,
 		});
 		return {
@@ -160,19 +224,59 @@ export class ExportValidator {
 			durationSeconds,
 			video: {
 				codec: stringValue(video.codec_name) ?? "unknown",
+				profile: stringValue(video.profile),
+				level: numericValueOrNull(video.level),
+				pixelFormat: stringValue(video.pix_fmt),
+				colorPrimaries: stringValue(video.color_primaries),
+				colorTransfer: stringValue(video.color_transfer),
+				colorMatrix: stringValue(video.color_space),
+				colorRange: stringValue(video.color_range),
 				width,
 				height,
 				fps,
+				durationSeconds: validatedVideoDurationSeconds,
 			},
 			audio: {
 				present: !!audio,
-				codec: stringValue(audio?.codec_name),
+				codec: audioCodec,
 				sampleRate: numericValueOrNull(audio?.sample_rate),
 				channels: numericValueOrNull(audio?.channels),
 				channelLayout: stringValue(audio?.channel_layout),
+				fallback: audioFallback,
+				measurements: audioMeasurements,
+			},
+			mastering: {
+				preview: FIXED_MASTERING_POLICY,
+				export: FIXED_MASTERING_POLICY,
+				difference: MASTERING_SCOPE_DIFFERENCE,
 			},
 			frameSamples,
 		};
+	}
+
+	private async measureAudio(outputPath: string): Promise<{
+		integratedLufs: number | null;
+		truePeakDbtp: number | null;
+	}> {
+		const { stderr } = await runCommandResult(
+			this.ffmpeg,
+			[
+				"-hide_banner",
+				"-nostats",
+				"-i",
+				outputPath,
+				"-map",
+				"0:a:0",
+				"-filter_complex",
+				"ebur128=peak=true",
+				"-f",
+				"null",
+				"-",
+			],
+			"export audio loudness analysis",
+			2 * 60 * 60_000,
+		);
+		return parseEbur128Summary(stderr);
 	}
 
 	async verifyOutput({
@@ -234,18 +338,29 @@ export class ExportValidator {
 		fps: number;
 	}): Promise<ExportFrameSample[]> {
 		const directory = await this.receipts.artifactsDirectory(operationId);
-		const finalFrameOffset = Math.max(2 / Math.max(fps, 1), 0.1);
-		const positions: Array<{
-			position: ExportFrameSample["position"];
-			timeSeconds: number;
-		}> = [
-			{ position: "opening", timeSeconds: 0 },
-			{ position: "middle", timeSeconds: durationSeconds / 2 },
-			{
-				position: "ending",
-				timeSeconds: Math.max(0, durationSeconds - finalFrameOffset),
-			},
-		];
+		// Samples are pinned to integer frame indices so an exact-time preview can
+		// request the identical media time. The ending sample stays at least two
+		// frames (and 100 ms) before the end so container duration rounding cannot
+		// push it past the last encoded frame.
+		const safeFps = Math.max(fps, 1);
+		const frameCount = Math.max(1, Math.round(durationSeconds * safeFps));
+		const endingOffsetFrames = Math.max(2, Math.ceil(0.1 * safeFps));
+		const positions = (
+			[
+				{ position: "opening", frameIndex: 0 },
+				{ position: "middle", frameIndex: Math.floor(frameCount / 2) },
+				{
+					position: "ending",
+					frameIndex: Math.max(0, frameCount - endingOffsetFrames),
+				},
+			] satisfies Array<{
+				position: ExportFrameSample["position"];
+				frameIndex: number;
+			}>
+		).map((sample) => ({
+			...sample,
+			timeSeconds: sample.frameIndex / safeFps,
+		}));
 		const samples: ExportFrameSample[] = [];
 		for (const position of positions) {
 			const path = join(directory, `${position.position}.png`);
@@ -256,8 +371,11 @@ export class ExportValidator {
 					"error",
 					"-i",
 					outputPath,
+					// Seek half a frame early: WebM stores millisecond timestamps, so an
+					// exact seek could land just after a rounded-down frame time and
+					// return the following frame instead.
 					"-ss",
-					position.timeSeconds.toFixed(6),
+					Math.max(0, (position.frameIndex - 0.5) / safeFps).toFixed(6),
 					"-frames:v",
 					"1",
 					"-an",
@@ -288,6 +406,15 @@ async function runCommand(
 	label: string,
 	timeoutMs = 60_000,
 ): Promise<string> {
+	return (await runCommandResult(command, args, label, timeoutMs)).stdout;
+}
+
+async function runCommandResult(
+	command: string,
+	args: string[],
+	label: string,
+	timeoutMs = 60_000,
+): Promise<{ stdout: string; stderr: string }> {
 	let process: ReturnType<typeof Bun.spawn>;
 	try {
 		process = Bun.spawn([command, ...args], {
@@ -317,7 +444,62 @@ async function runCommand(
 			`${label} failed with code ${exitCode}: ${stderr.trim() || "no diagnostic output"}`,
 		);
 	}
-	return stdout;
+	return { stdout, stderr };
+}
+
+function resolveAudioFallback({
+	format,
+	includeAudio,
+	audioCodec,
+}: {
+	format: "mp4" | "webm";
+	includeAudio: boolean;
+	audioCodec: string | null;
+}): ExportMediaValidation["audio"]["fallback"] {
+	if (!includeAudio) return null;
+	const preferredCodec = format === "mp4" ? "aac" : "opus";
+	if (audioCodec !== "aac" && audioCodec !== "opus") {
+		throw new Error(
+			`export audio codec ${audioCodec ?? "unknown"} is not AAC or Opus`,
+		);
+	}
+	if (audioCodec === preferredCodec) {
+		return { preferredCodec, actualCodec: audioCodec, outcome: "preferred" };
+	}
+	if (preferredCodec === "aac" && audioCodec === "opus") {
+		return { preferredCodec, actualCodec: audioCodec, outcome: "aac-to-opus" };
+	}
+	throw new Error(
+		`export audio codec ${audioCodec} does not match the required ${preferredCodec} codec`,
+	);
+}
+
+function parseEbur128Summary(stderr: string): {
+	integratedLufs: number | null;
+	truePeakDbtp: number | null;
+} {
+	const summary = stderr.slice(stderr.lastIndexOf("Summary:"));
+	if (!summary.startsWith("Summary:")) {
+		throw new Error("FFmpeg ebur128 output did not contain a summary");
+	}
+	const integrated = /Integrated loudness:\s*[\s\S]*?I:\s*(-?inf|-?\d+(?:\.\d+)?)\s+LUFS/i.exec(
+		summary,
+	)?.[1];
+	const truePeak = /True peak:\s*[\s\S]*?Peak:\s*(-?inf|-?\d+(?:\.\d+)?)\s+dBFS/i.exec(
+		summary,
+	)?.[1];
+	if (!integrated || !truePeak) {
+		throw new Error("FFmpeg ebur128 summary is incomplete");
+	}
+	return {
+		integratedLufs: finiteMetric(integrated),
+		truePeakDbtp: finiteMetric(truePeak),
+	};
+}
+
+function finiteMetric(value: string): number | null {
+	const parsed = Number(value);
+	return Number.isFinite(parsed) ? parsed : null;
 }
 
 async function hashFile(path: string): Promise<string> {

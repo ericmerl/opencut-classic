@@ -1,6 +1,7 @@
 import type { EditorCore } from "@/core";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
+import { VideoCache } from "@/services/video-cache/service";
 import { storageService } from "@/services/storage/service";
 import { calculateTotalDuration } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
@@ -120,9 +121,13 @@ export async function renderAutomationPreviewFrame({
 		const canvas = document.createElement("canvas");
 		canvas.width = request.canvasSize.width;
 		canvas.height = request.canvasSize.height;
+		// Exact evidence renders own a private frame cache so the live preview
+		// loop cannot hand them a superseded frame from the shared cache.
+		const exactVideoCache = new VideoCache({ exact: true });
 		const renderer = new CanvasRenderer({
 			...request.canvasSize,
 			fps,
+			videoCache: exactVideoCache,
 		});
 		try {
 			await renderer.renderToCanvas({
@@ -132,6 +137,7 @@ export async function renderAutomationPreviewFrame({
 			});
 		} finally {
 			for (const url of objectUrls) URL.revokeObjectURL(url);
+			exactVideoCache.clearAll();
 		}
 		const context = canvas.getContext("2d", { willReadFrequently: true });
 		if (!context)

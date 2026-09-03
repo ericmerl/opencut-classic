@@ -3,6 +3,7 @@ import type { MediaAsset } from "@/media/types";
 import { extractTimelineAudioRange } from "@/media/mediabunny";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
+import { VideoCache } from "@/services/video-cache/service";
 import { storageService } from "@/services/storage/service";
 import { calculateTotalDuration } from "@/timeline";
 import { scheduleFrameRange } from "@/services/renderer/frame-schedule";
@@ -123,7 +124,14 @@ export async function renderAutomationPreviewRange({
 		const canvas = document.createElement("canvas");
 		canvas.width = request.canvasSize.width;
 		canvas.height = request.canvasSize.height;
-		const renderer = new CanvasRenderer({ ...request.canvasSize, fps });
+		// Exact evidence renders own a private frame cache so the live preview
+		// loop cannot hand them a superseded frame from the shared cache.
+		const exactVideoCache = new VideoCache({ exact: true });
+		const renderer = new CanvasRenderer({
+			...request.canvasSize,
+			fps,
+			videoCache: exactVideoCache,
+		});
 		try {
 			for (const frame of schedule.frames) {
 				await renderer.renderToCanvas({
@@ -154,6 +162,7 @@ export async function renderAutomationPreviewRange({
 			}
 		} finally {
 			for (const url of objectUrls) URL.revokeObjectURL(url);
+			exactVideoCache.clearAll();
 		}
 
 		if (request.output.includeAudio) {

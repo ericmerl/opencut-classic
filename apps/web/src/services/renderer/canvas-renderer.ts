@@ -4,6 +4,7 @@ import { createCanvasSurface } from "./canvas-utils";
 import { buildFrameDescriptor } from "./compositor/frame-descriptor";
 import { wasmCompositor } from "./compositor/wasm-compositor";
 import { resolveRenderTree } from "./resolve";
+import type { VideoCache } from "@/services/video-cache/service";
 import { withExclusiveRender } from "./render-coordinator";
 import {
 	measureSpanAsync,
@@ -15,6 +16,8 @@ export type CanvasRendererParams = {
 	width: number;
 	height: number;
 	fps: FrameRate;
+	/** Private frame cache for exact renders; defaults to the shared cache. */
+	videoCache?: VideoCache;
 };
 
 export class CanvasRenderer {
@@ -23,11 +26,13 @@ export class CanvasRenderer {
 	width: number;
 	height: number;
 	fps: FrameRate;
+	videoCache: VideoCache | null;
 
-	constructor({ width, height, fps }: CanvasRendererParams) {
+	constructor({ width, height, fps, videoCache }: CanvasRendererParams) {
 		this.width = width;
 		this.height = height;
 		this.fps = fps;
+		this.videoCache = videoCache ?? null;
 
 		const surface = createCanvasSurface({ width, height });
 		this.canvas = surface.canvas;

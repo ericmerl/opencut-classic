@@ -157,11 +157,28 @@ export class RangePreviewService {
 
 	private async finalize(
 		input: RenderPreviewRangeInput,
-		value: unknown,
+		bridgeValue: unknown,
 		capabilitySnapshotHash: string,
 	): Promise<Record<string, unknown>> {
-		if (!isRecord(value))
+		if (!isRecord(bridgeValue))
 			throw new Error("editor returned an invalid preview-range result");
+		// The live bridge stamps every response with the connection identity it
+		// was dispatched to. Those fields are transport evidence, not part of the
+		// editor result contract, so strip them before the exact-shape check.
+		const {
+			bridgeProtocolVersion: _bridgeProtocolVersion,
+			connectionIdentity,
+			requestConnectionIdentity: _requestConnectionIdentity,
+			...value
+		} = bridgeValue;
+		if (
+			connectionIdentity !== undefined &&
+			stableSerialize(connectionIdentity) !==
+				stableSerialize(input.expectedConnectionIdentity)
+		)
+			throw new Error(
+				"editor preview-range response identity does not match the request",
+			);
 		if (value.status !== "rendered" && value.status !== "cancelled") {
 			await this.store.fail(
 				input.operationId,
@@ -282,11 +299,13 @@ function validateCompletedBrowserResult({
 		value.capabilitySnapshotHash !== capabilitySnapshotHash ||
 		contentIdentity.status !== "hashed" ||
 		contentHash.digest !== input.expectedProjectContentHash ||
+		// The receipt revision is session-local to the editor that saved it, so it
+		// is deliberately not compared with the live revision: the receipt id,
+		// content hash, and write version already bind the retained source.
 		saveReceipt.receiptId !== input.expectedSaveReceiptId ||
 		saveReceipt.operationId !== input.saveReceiptOperationId ||
 		saveReceipt.projectId !== input.projectId ||
 		saveReceipt.sceneId !== input.sceneId ||
-		saveReceipt.revision !== input.expectedRevision ||
 		saveReceipt.contentHash !== input.expectedProjectContentHash ||
 		saveReceipt.readbackContentHash !== input.expectedProjectContentHash ||
 		saveReceipt.writeVersion !== input.expectedWriteVersion ||
@@ -307,7 +326,42 @@ function validateCompletedBrowserResult({
 			stableSerialize(input.expectedConnectionIdentity)
 	)
 		throw new Error(
-			"editor preview-range evidence is incomplete or source-mismatched",
+			`editor preview-range evidence is incomplete or source-mismatched: ${JSON.stringify(
+				{
+					expected: {
+						operationId: input.operationId,
+						projectId: input.projectId,
+						sceneId: input.sceneId,
+						revision: input.expectedRevision,
+						writeVersion: input.expectedWriteVersion,
+						saveReceiptId: input.expectedSaveReceiptId,
+						saveReceiptOperationId: input.saveReceiptOperationId,
+						contentHash: input.expectedProjectContentHash,
+						capabilitySnapshotHash,
+						requiredWasmSha256,
+						connectionIdentity: input.expectedConnectionIdentity,
+					},
+					actual: {
+						contractVersion: value.contractVersion,
+						status: value.status,
+						operationId: value.operationId,
+						projectId: value.projectId,
+						sceneId: value.sceneId,
+						revision: value.revision,
+						writeVersion: value.writeVersion,
+						saveReceiptId: value.saveReceiptId,
+						saveReceiptOperationId: value.saveReceiptOperationId,
+						capabilitySnapshotHash: value.capabilitySnapshotHash,
+						contentIdentity,
+						saveReceipt,
+						sourceVerification: source,
+						editorStateUnchanged: editorState.unchanged,
+						renderer: { ...renderer, environment: undefined },
+						environmentCapabilitySnapshotHash: environment.capabilitySnapshotHash,
+						environmentWasmSha256: environment.wasmSha256,
+					},
+				},
+			)}`,
 		);
 	return value as Record<string, unknown> & {
 		status: "rendered" | "cancelled";
@@ -386,13 +440,17 @@ function validateRendererEvidence({
 		environment.capabilitySnapshotHash !== capabilitySnapshotHash ||
 		(requiredWasmSha256 !== null &&
 			environment.wasmSha256 !== requiredWasmSha256) ||
+		// Real WebGPU adapters routinely report empty architecture, device, or
+		// description strings, so only their presence as strings is required.
 		!["vendor", "architecture", "device", "description"].every(
-			(key) => typeof adapter[key] === "string" && adapter[key].length > 0,
+			(key) => typeof adapter[key] === "string",
 		) ||
 		(typeof adapter.isFallbackAdapter !== "boolean" &&
 			adapter.isFallbackAdapter !== null)
 	)
-		throw new Error("editor preview-range renderer provenance is invalid");
+		throw new Error(
+			`editor preview-range renderer provenance is invalid: ${JSON.stringify({ browser: renderer.browser, environment, requiredWasmSha256, capabilitySnapshotHash })}`,
+		);
 }
 
 function validateFontReadiness(fonts: Record<string, unknown>): void {
