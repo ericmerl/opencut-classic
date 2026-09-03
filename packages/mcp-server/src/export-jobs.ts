@@ -7,6 +7,7 @@ import {
 import {
 	type ExportProjectBridge,
 	type ExportProjectInput,
+	type QueuedProjectPersistence,
 } from "./export-project";
 import type { BridgeConnectionIdentity } from "./editor-bridge";
 import { stableSerialize } from "./matte-generation-data";
@@ -62,18 +63,52 @@ export class ExportJobQueue {
 				"production protocol v2 export jobs require expectedProjectContentHash",
 			);
 		}
+		const fingerprint = exportJobFingerprint(input);
+		const existing = await this.store.get(jobId);
+		if (existing) {
+			const existingFingerprint = exportJobFingerprint(existing.input);
+			const isRecognizedStoredFingerprint =
+				existing.fingerprint === existingFingerprint ||
+				existing.fingerprint === legacyExportJobFingerprint(existing.input);
+			if (
+				!isRecognizedStoredFingerprint ||
+				existingFingerprint !== fingerprint
+			) {
+				throw new Error("jobId was already used for a different export job");
+			}
+			if (
+				existing.input.bridgeProtocolVersion === 2 &&
+				existing.input.queuedProjectPersistence === undefined &&
+				existing.status === "queued"
+			) {
+				const migrated = await this.prepareQueuedJob(existing, input);
+				return { job: migrated, replayed: true };
+			}
+			return { job: existing, replayed: true };
+		}
+		const persistedInput =
+			input.bridgeProtocolVersion === 2
+				? {
+						...input,
+						queuedProjectPersistence: await captureQueuedProjectPersistence(
+							this.bridge,
+							input,
+							jobId,
+						),
+					}
+				: input;
 		const timestamp = new Date().toISOString();
 		const created = await this.store.create({
 			schemaVersion: 1,
 			jobId,
-			fingerprint: stableSerialize(input),
+			fingerprint,
 			status: "queued",
 			createdAt: timestamp,
 			updatedAt: timestamp,
 			attempts: 0,
 			lastAttemptAt: null,
 			completedAt: null,
-			input,
+			input: persistedInput,
 			result: null,
 			lastError: null,
 		});
@@ -177,8 +212,24 @@ export class ExportJobQueue {
 	}
 
 	private async run(job: ExportJobRecord): Promise<ExportJobRecord> {
-		const attempt = job.attempts + 1;
-		const running = await this.store.update(job.jobId, (current) => {
+		let prepared: ExportJobRecord;
+		try {
+			prepared = await this.prepareQueuedJob(job);
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "export job failed";
+			if (isConnectionFailure(message)) {
+				return this.store.update(job.jobId, (current) => ({
+					...current,
+					status: "queued",
+					lastError: message,
+				}));
+			}
+			return this.finish(job.jobId, "failed", null, message);
+		}
+		if (prepared.status !== "queued") return prepared;
+		const attempt = prepared.attempts + 1;
+		const running = await this.store.update(prepared.jobId, (current) => {
 			if (current.status !== "queued") return current;
 			return {
 				...current,
@@ -191,13 +242,16 @@ export class ExportJobQueue {
 		if (running.status !== "running") return running;
 
 		try {
-			const executionInput = bindJobToConnectedEditor(job.input, this.bridge);
+			const executionInput = bindJobToConnectedEditor(
+				running.input,
+				this.bridge,
+			);
 			const executionIdentity = executionInput.expectedConnectionIdentity;
 			const opened = await this.bridge.request(
 				"open_project",
 				{
-					operationId: `export-job:${job.jobId}:open:${attempt}`,
-					projectId: job.input.projectId,
+					operationId: `export-job:${running.jobId}:open:${attempt}`,
+					projectId: running.input.projectId,
 					...(executionInput.bridgeProtocolVersion === 2
 						? {
 								bridgeProtocolVersion: 2 as const,
@@ -210,13 +264,21 @@ export class ExportJobQueue {
 			);
 			if (!isProjectOpened(opened)) {
 				return this.finish(
-					job.jobId,
+					running.jobId,
 					"failed",
 					isRecord(opened) ? opened : null,
 					resultReason(opened),
 				);
 			}
 			const observedInput = bindJobToObservedProject(executionInput, opened);
+			if (observedInput.bridgeProtocolVersion === 2) {
+				await verifyQueuedProjectPersistence(
+					this.bridge,
+					observedInput,
+					job.jobId,
+					attempt,
+				);
+			}
 			const result = await this.exports.export(observedInput);
 			const status = result.status;
 			if (status === "exported" || status === "replayed") {
@@ -237,6 +299,34 @@ export class ExportJobQueue {
 		}
 	}
 
+	private async prepareQueuedJob(
+		job: ExportJobRecord,
+		replayInput?: ExportProjectInput,
+	): Promise<ExportJobRecord> {
+		if (
+			job.status !== "queued" ||
+			job.input.bridgeProtocolVersion !== 2 ||
+			job.input.queuedProjectPersistence !== undefined
+		) {
+			return job;
+		}
+		const captureInput =
+			replayInput ?? bindJobToConnectedEditor(job.input, this.bridge);
+		const queuedProjectPersistence = await captureQueuedProjectPersistence(
+			this.bridge,
+			captureInput,
+			job.jobId,
+		);
+		return this.store.update(job.jobId, (current) => ({
+			...current,
+			input:
+				current.status === "queued" &&
+				current.input.queuedProjectPersistence === undefined
+					? { ...current.input, queuedProjectPersistence }
+					: current.input,
+		}));
+	}
+
 	private finish(
 		jobId: string,
 		status: "completed" | "failed",
@@ -251,6 +341,157 @@ export class ExportJobQueue {
 			completedAt: new Date().toISOString(),
 		}));
 	}
+}
+
+async function captureQueuedProjectPersistence(
+	bridge: PersistentExportJobBridge,
+	input: ExportProjectInput,
+	jobId: string,
+): Promise<QueuedProjectPersistence> {
+	const expectedIdentity = input.expectedConnectionIdentity;
+	if (!expectedIdentity) {
+		throw new Error("bridge protocol v2 requires durable job affinity");
+	}
+	const result = await bridge.request(
+		"save_project",
+		{
+			projectId: input.projectId,
+			operationId: [
+				"export-job",
+				jobId,
+				"queue-save-barrier",
+				expectedIdentity.serverInstanceId,
+				expectedIdentity.editorSessionId,
+				expectedIdentity.connectionGeneration,
+			].join(":"),
+			expectedRevision: input.expectedRevision,
+			expectedContentHash: input.expectedProjectContentHash,
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: expectedIdentity,
+		},
+		5 * 60_000,
+		expectedIdentity,
+	);
+	return readVerifiedProjectPersistence(
+		result,
+		input.expectedProjectContentHash!,
+		"queue-time",
+	);
+}
+
+async function verifyQueuedProjectPersistence(
+	bridge: PersistentExportJobBridge,
+	input: ExportProjectInput,
+	jobId: string,
+	attempt: number,
+): Promise<void> {
+	const queued = input.queuedProjectPersistence;
+	const expectedIdentity = input.expectedConnectionIdentity;
+	if (!isQueuedProjectPersistence(queued) || !expectedIdentity) {
+		throw new Error(
+			"durable v2 export job lacks verified queue-time persistence",
+		);
+	}
+	const result = await bridge.request(
+		"save_project",
+		{
+			projectId: input.projectId,
+			operationId: `export-job:${jobId}:rebind-save-barrier:${attempt}`,
+			expectedRevision: input.expectedRevision,
+			expectedContentHash: queued.contentHash,
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: expectedIdentity,
+		},
+		5 * 60_000,
+		expectedIdentity,
+	);
+	const observed = readVerifiedProjectPersistence(
+		result,
+		queued.contentHash,
+		"rebind",
+	);
+	if (
+		observed.contentHashProjectionVersion !==
+		queued.contentHashProjectionVersion
+	) {
+		throw new Error(
+			"queued export project projection version no longer matches persisted state",
+		);
+	}
+	if (observed.writeVersion !== queued.writeVersion) {
+		throw new Error(
+			"queued export project write version no longer matches persisted state",
+		);
+	}
+}
+
+function isQueuedProjectPersistence(
+	value: unknown,
+): value is QueuedProjectPersistence {
+	return (
+		isRecord(value) &&
+		typeof value.contentHash === "string" &&
+		/^[a-f0-9]{64}$/.test(value.contentHash) &&
+		(value.contentHashProjectionVersion === 1 ||
+			value.contentHashProjectionVersion === 2) &&
+		typeof value.writeVersion === "number" &&
+		Number.isSafeInteger(value.writeVersion) &&
+		value.writeVersion > 0
+	);
+}
+
+function readVerifiedProjectPersistence(
+	value: unknown,
+	expectedContentHash: string,
+	phase: "queue-time" | "rebind",
+): QueuedProjectPersistence {
+	if (
+		!isRecord(value) ||
+		(value.status !== "saved" && value.status !== "replayed") ||
+		value.reloadVerified !== true ||
+		typeof value.contentHash !== "string" ||
+		!/^[a-f0-9]{64}$/.test(value.contentHash) ||
+		value.contentHash !== expectedContentHash ||
+		(value.contentHashProjectionVersion !== 1 &&
+			value.contentHashProjectionVersion !== 2) ||
+		typeof value.writeVersion !== "number" ||
+		!Number.isSafeInteger(value.writeVersion) ||
+		value.writeVersion <= 0
+	) {
+		throw new Error(
+			`queued export ${phase} persisted-state verification failed`,
+		);
+	}
+	return {
+		contentHash: value.contentHash,
+		contentHashProjectionVersion: value.contentHashProjectionVersion,
+		writeVersion: value.writeVersion,
+	};
+}
+
+function exportJobFingerprint(input: ExportProjectInput): string {
+	const {
+		expectedConnectionIdentity,
+		requestConnectionIdentity,
+		queuedProjectPersistence: _queuedProjectPersistence,
+		...semanticInput
+	} = input;
+	const durableIdentity =
+		requestConnectionIdentity ?? expectedConnectionIdentity;
+	return stableSerialize({
+		...semanticInput,
+		...(durableIdentity
+			? { durableEditorInstanceId: durableIdentity.editorInstanceId }
+			: {}),
+	});
+}
+
+function legacyExportJobFingerprint(input: ExportProjectInput): string {
+	const {
+		queuedProjectPersistence: _queuedProjectPersistence,
+		...legacyInput
+	} = input;
+	return stableSerialize(legacyInput);
 }
 
 function bindJobToConnectedEditor(

@@ -20,6 +20,13 @@ export interface ExportProjectInput {
 	includeAudio: boolean;
 	canvasSize?: { width: number; height: number };
 	expectedProjectContentHash?: string;
+	queuedProjectPersistence?: QueuedProjectPersistence;
+}
+
+export interface QueuedProjectPersistence {
+	contentHash: string;
+	contentHashProjectionVersion: 1 | 2;
+	writeVersion: number;
 }
 
 export interface ExportProjectBridge {
