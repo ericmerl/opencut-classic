@@ -15,7 +15,9 @@ mock.module("opencut-wasm", () => ({
 	snappedSeekTime: ({ time }: { time: number }) => time,
 }));
 
-class ToggleSourceAudioSeparationCommand {}
+class ToggleSourceAudioSeparationCommand {
+	constructor(readonly params: unknown) {}
+}
 
 mock.module(
 	"@/commands/timeline/element/toggle-source-audio-separation",
@@ -60,6 +62,39 @@ describe("source audio separation", () => {
 		});
 
 		expect(command.constructor.name).toBe("ToggleSourceAudioSeparationCommand");
+	});
+
+	test("passes every evaluator-resolved ID to the native command", () => {
+		const resolvedAllocations = [
+			{
+				role: "keyframe" as const,
+				sourceId: "source-gain-keyframe",
+				resolvedId: "resolved-gain-keyframe",
+			},
+		];
+		const command = buildSourceAudioSeparationCommand({
+			element: video(),
+			trackId: "main",
+			mediaAsset: videoAsset(true),
+			resolvedIds: {
+				audioTrackId: "resolved-audio-track",
+				audioElementId: "resolved-audio-element",
+				linkId: "resolved-link",
+				resolvedAllocations,
+			},
+		});
+		if (!(command instanceof ToggleSourceAudioSeparationCommand)) {
+			throw new Error("expected source audio separation command");
+		}
+
+		expect(command.params).toEqual({
+			trackId: "main",
+			elementId: "video-1",
+			audioTrackId: "resolved-audio-track",
+			audioElementId: "resolved-audio-element",
+			linkId: "resolved-link",
+			resolvedAllocations,
+		});
 	});
 
 	test("is a deterministic no-op when source audio is already separated", () => {

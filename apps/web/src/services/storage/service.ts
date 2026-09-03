@@ -432,6 +432,24 @@ class StorageService {
 		id: string;
 	}): Promise<FreshProjectReadback | null> {
 		await this.ensureMigrations();
+		return this.readProjectFresh({ id, persistIdentityBackfill: true });
+	}
+
+	async loadProjectFreshReadOnly({
+		id,
+	}: {
+		id: string;
+	}): Promise<FreshProjectReadback | null> {
+		return this.readProjectFresh({ id, persistIdentityBackfill: false });
+	}
+
+	private async readProjectFresh({
+		id,
+		persistIdentityBackfill,
+	}: {
+		id: string;
+		persistIdentityBackfill: boolean;
+	}): Promise<FreshProjectReadback | null> {
 		const stored = await this.createProjectsAdapter().get(id);
 		const envelope = asProjectEnvelope(stored);
 		const serialized = unwrapStoredProject(stored);
@@ -455,7 +473,7 @@ class StorageService {
 				file,
 				storedIdentity: metadata.sourceIdentity,
 			});
-			if (resolved.backfilled) {
+			if (resolved.backfilled && persistIdentityBackfill) {
 				await mediaMetadataAdapter.set({
 					key: metadata.id,
 					value: { ...metadata, sourceIdentity: resolved.identity },

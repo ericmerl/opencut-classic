@@ -110,6 +110,89 @@ describe("canonical project content", () => {
 		});
 	});
 
+	test("matches the native full-project canonical golden byte for byte", async () => {
+		const fixtureUrl = new URL(
+			"../../../../rust/crates/edit-plan/tests/fixtures/full-project-content-v1.json",
+			import.meta.url,
+		);
+		const fixture = await Bun.file(fixtureUrl).json();
+		const canonical = canonicalSerialize(fixture);
+		const digest = Array.from(
+			new Uint8Array(
+				await crypto.subtle.digest(
+					"SHA-256",
+					new TextEncoder().encode(canonical),
+				),
+			),
+			(byte) => byte.toString(16).padStart(2, "0"),
+		).join("");
+
+		expect(new TextEncoder().encode(canonical).byteLength).toBe(6451);
+		expect(digest).toBe(
+			"3925eec0bcfda9c81c325e8436b3744f0794875189f8a508bf3d51f802a5424c",
+		);
+	});
+
+	test("spells integral media duration and fps as ECMAScript JSON numbers", () => {
+		const canonical = serializeProjectContent(fixture());
+		expect(canonical).toContain('"duration":2,"fps":30');
+		expect(canonical).not.toContain('"duration":2.0');
+		expect(canonical).not.toContain('"fps":30.0');
+	});
+
+	test("numbers transitions contiguously instead of by destination element", () => {
+		const input = fixture();
+		const current = input.project.scenes[0]!.tracks.main.elements[0]!;
+		const { transitionIn: _transitionIn, ...previous } = current;
+		input.project.scenes[0]!.tracks.main.elements.unshift({
+			...previous,
+			id: "previous-video",
+			name: "Previous video",
+		});
+		const projected = JSON.parse(serializeProjectContent(input)) as {
+			project: {
+				scenes: Array<{
+					tracks: Array<{ transitions: Array<{ order: number }> }>;
+				}>;
+			};
+		};
+		const transitions = projected.project.scenes[0]!.tracks[0]!.transitions;
+
+		expect(transitions.map(({ order }) => order)).toEqual([0]);
+	});
+
+	test("materializes absent imported-media optionals as canonical nulls", () => {
+		const input = fixture();
+		const asset = input.mediaAssets[0]!;
+		delete asset.role;
+		delete asset.sourceFingerprint;
+		delete asset.width;
+		delete asset.height;
+		const projected = JSON.parse(serializeProjectContent(input)) as {
+			mediaAssets: Array<Record<string, unknown>>;
+		};
+		const media = projected.mediaAssets.find(
+			(candidate) => candidate.id === asset.id,
+		);
+
+		expect(media).toMatchObject({
+			role: null,
+			sourceFingerprint: null,
+			width: null,
+			height: null,
+		});
+	});
+
+	test("pins the full imported-media shape with integral floating fields", async () => {
+		expect(
+			requireDigest(
+				await hashProjectContent(fixture(), { projectionVersion: 1 }),
+			),
+		).toBe(
+			"450842d530ad34357bd95cffe3df6ed9776f019916b872bdf7e08566f302aa43",
+		);
+	});
+
 	test("is independent of object key insertion and media enumeration order", async () => {
 		expect(canonicalSerialize({ z: 1, a: { y: 2, x: 3 } })).toBe(
 			canonicalSerialize({ a: { x: 3, y: 2 }, z: 1 }),
@@ -191,6 +274,13 @@ describe("canonical project content", () => {
 		]) {
 			expect(() => canonicalSerialize(value)).toThrow("non-finite number");
 		}
+	});
+
+	test("preserves explicit null as distinct from an omitted key", () => {
+		expect(canonicalSerialize({ value: null })).toBe('{"value":null}');
+		expect(canonicalSerialize({ value: null })).not.toBe(
+			canonicalSerialize({}),
+		);
 	});
 
 	test("enforces SHA-256 syntax and normalizes uppercase digests", async () => {

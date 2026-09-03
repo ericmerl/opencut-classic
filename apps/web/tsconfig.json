@@ -20,7 +20,8 @@
 		],
 		"paths": {
 			"@/*": ["./src/*"],
-			"content-collections": ["./.content-collections/generated"]
+			"content-collections": ["./.content-collections/generated"],
+			"opencut-wasm": ["../../rust/wasm/pkg"]
 		},
 		"forceConsistentCasingInFileNames": true
 	},

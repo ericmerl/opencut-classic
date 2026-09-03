@@ -19,6 +19,9 @@ import { SubjectTrackingService } from "./track-subject";
 import { OperationLedger } from "./operation-ledger";
 import { PreviewEvidenceStore } from "./preview-evidence-store";
 import { PreviewFrameService } from "./preview-frame-service";
+import { EditPlanPreflightStore } from "./edit-plan-preflight-store";
+import { EditPlanPreflightService } from "./edit-plan-preflight-service";
+import { EDIT_PLAN_PREFLIGHT_SCHEMA } from "./edit-plan-preflight-contract";
 import { parseJsonValue, type JsonValue } from "./operation-ledger-schema";
 import {
 	McpLedgerBoundary,
@@ -78,8 +81,11 @@ import {
 	saveProjectInputSchema,
 	getSaveReceiptInputSchema,
 	getPreviewFrameInputSchema,
+	getEditPlanPreflightInputSchema,
+	listEditPlanPreflightsInputSchema,
 	listPreviewFramesInputSchema,
 	renderPreviewFrameInputSchema,
+	preflightEditPlanInputSchema,
 	queueExportInputSchema,
 	queueExportBatchInputSchema,
 	recordExportInspectionInputSchema,
@@ -129,6 +135,17 @@ const bridge = new EditorBridge({ token, port, previewEvidence });
 let capabilitySnapshots: CapabilitySnapshotService;
 const previewFrames = new PreviewFrameService(bridge, previewEvidence, () =>
 	capabilitySnapshots.capture(),
+);
+const editPlanPreflightStore = new EditPlanPreflightStore(
+	process.env.OPENCUT_EDIT_PLAN_PREFLIGHT_DIR ??
+		join(exportReceipts.directory, "edit-plan-preflights"),
+);
+await editPlanPreflightStore.readiness();
+const editPlanPreflights = new EditPlanPreflightService(
+	bridge,
+	editPlanPreflightStore,
+	undefined,
+	{ captureCapabilitySnapshot: () => capabilitySnapshots.capture() },
 );
 const normalizeAudio = new NormalizeAudioOperation(bridge);
 const audioCleanup = new AudioCleanupService(
@@ -391,6 +408,55 @@ function createServer(): McpServer {
 	);
 
 	server.registerTool(
+		"opencut_preflight_edit_plan",
+		{
+			description:
+				"Validate and deterministically expand a complete edit plan against a verified saved project without changing editor, playback, history, or persistence state.",
+			inputSchema: preflightEditPlanInputSchema,
+		},
+		async (input) => toolResult(await editPlanPreflights.preflight(input)),
+	);
+
+	server.registerTool(
+		"opencut_get_edit_plan_preflight",
+		{
+			description:
+				"Read and integrity-verify one immutable edit-plan preflight receipt.",
+			inputSchema: getEditPlanPreflightInputSchema,
+		},
+		async ({ receiptId }) => {
+			const receipt = await editPlanPreflightStore.get(receiptId);
+			return toolResult(
+				receipt
+					? {
+							schemaVersion: EDIT_PLAN_PREFLIGHT_SCHEMA,
+							status: "found",
+							receipt,
+						}
+					: {
+							schemaVersion: EDIT_PLAN_PREFLIGHT_SCHEMA,
+							status: "not-found",
+							receiptId,
+						},
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_edit_plan_preflights",
+		{
+			description:
+				"List immutable edit-plan preflight receipts with stable cursor pagination.",
+			inputSchema: listEditPlanPreflightsInputSchema,
+		},
+		async (input) =>
+			toolResult({
+				schemaVersion: EDIT_PLAN_PREFLIGHT_SCHEMA,
+				...(await editPlanPreflightStore.list(input)),
+			}),
+	);
+
+	server.registerTool(
 		"opencut_list_operation_history",
 		{
 			description:
@@ -620,23 +686,85 @@ function createServer(): McpServer {
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Atomically update project settings; create or configure tracks; insert native graphics, stickers, adjustment layers, text, or timed captions; author or remove visual masks; create, break apart, or inspect persistent compound clips; create or clear persistent element groups and links; crop or reframe clips; separate and automatically link video source audio; enable or detach a cleaned source; apply dialogue ducking; set audio gain, mute, fades, or uniform mix gain; manage clip effects, keyframes, and transitions; duplicate, delete, or move relationship sets; or retime, parameterize, split, and trim elements with optional ripple behavior. Read the project first and use its current revision.",
+				"Apply a previously validated edit plan atomically. Bridge protocol v2 requires the immutable receipt returned by opencut_preflight_edit_plan; receipt-less v2 requests are rejected without mutation.",
 			inputSchema: withProjectMutationSafety(editPlanInputSchema),
 		},
-		async (plan) =>
-			toolResult(
+		async (plan) => {
+			const { preflight, ...browserPlan } = plan;
+			if (plan.bridgeProtocolVersion === 2 && !preflight) {
+				return toolResult({
+					status: "rejected",
+					code: "PREFLIGHT_REQUIRED",
+					retryable: false,
+					operationId: plan.operationId,
+					reason:
+						"Bridge protocol v2 edit plans require a verified preflight receipt",
+				});
+			}
+			return toolResult(
 				await ledgerBoundary.execute(
 					"opencut_apply_edit_plan",
 					plan,
-					(context) =>
-						requestLedgeredBrowserMutation(
+					async (context) => {
+						let browserRequest: Record<string, unknown> = browserPlan;
+						if (preflight) {
+							if (
+								plan.bridgeProtocolVersion !== 2 ||
+								!plan.expectedConnectionIdentity ||
+								!plan.expectedProjectContentHash
+							) {
+								throw new Error(
+									"a verified preflight requires bridge protocol v2, connection affinity, and a project content hash",
+								);
+							}
+							const verified = await editPlanPreflights.verifiedApplication({
+								projectId: plan.projectId,
+								expectedRevision: plan.expectedRevision,
+								expectedProjectContentHash: plan.expectedProjectContentHash,
+								expectedConnectionIdentity: plan.expectedConnectionIdentity,
+								description: plan.description,
+								operations: plan.operations,
+								preflight,
+							});
+							const source = verified.evaluation.source;
+							browserRequest = {
+								...browserPlan,
+								contractVersion: 2,
+								bridgeProtocolVersion: 2,
+								expectedConnectionIdentity: plan.expectedConnectionIdentity,
+								sceneId: source.sceneId,
+								expectedProjectContentHash: source.canonicalProjectHash,
+								expectedWriteVersion: source.durableWriteVersion,
+								saveReceiptOperationId: source.saveOperationId,
+								expectedSaveReceiptId: source.saveReceiptId,
+								operations: verified.evaluation.resolvedOperations,
+								preflight: {
+									preflightId: verified.receipt.preflightId,
+									receiptId: verified.receipt.receiptId,
+									evaluation: {
+										...verified.evaluation,
+										source: {
+											...source,
+											sessionRevision: plan.expectedRevision,
+											connectionIdentity: {
+												...plan.expectedConnectionIdentity,
+												bridgeProtocolVersion: 2 as const,
+											},
+										},
+									},
+								},
+							};
+						}
+						return requestLedgeredBrowserMutation(
 							context,
 							bridge,
 							"apply_edit_plan",
-							plan,
-						),
+							browserRequest,
+						);
+					},
 				),
-			),
+			);
+		},
 	);
 
 	server.registerTool(
@@ -1178,6 +1306,7 @@ function shutdown(): void {
 	bridge.stop();
 	operationLedger.close();
 	previewEvidence.close();
+	editPlanPreflightStore.close();
 	void handle.close();
 }
 

@@ -10,13 +10,13 @@ that process attached to the client while hiding its console window.
 Use Windows 10 or 11 and install these prerequisites. Run the version commands
 after installation so a failed upgrade never depends on an implicit executable.
 
-| Runtime | Supported version | Check |
-| --- | --- | --- |
-| Bun | 1.2.18 (the version pinned by `packageManager`) | `bun --version` |
-| Rust | 1.85 or newer with Cargo (edition 2024 support) | `rustc --version`; `cargo --version` |
-| wasm-pack | 0.13 or newer | `wasm-pack --version` |
-| Chrome or Edge | A current stable Windows release with WebGPU | `chrome.exe --version` or `msedge.exe --version` |
-| FFmpeg and FFprobe | Matching 6.x or newer builds | `ffmpeg -version`; `ffprobe -version` |
+| Runtime            | Supported version                               | Check                                            |
+| ------------------ | ----------------------------------------------- | ------------------------------------------------ |
+| Bun                | 1.2.18 (the version pinned by `packageManager`) | `bun --version`                                  |
+| Rust               | 1.85 or newer with Cargo (edition 2024 support) | `rustc --version`; `cargo --version`             |
+| wasm-pack          | 0.13 or newer                                   | `wasm-pack --version`                            |
+| Chrome or Edge     | A current stable Windows release with WebGPU    | `chrome.exe --version` or `msedge.exe --version` |
+| FFmpeg and FFprobe | Matching 6.x or newer builds                    | `ffmpeg -version`; `ffprobe -version`            |
 
 Install the locked JavaScript dependencies from a tracked clone. The verified
 build runs after the instance and secret are configured below.
@@ -91,23 +91,23 @@ non-interactive while preserving MCP stdin/stdout.
 
 ```json
 {
-  "mcpServers": {
-    "opencut-1": {
-      "command": "powershell.exe",
-      "args": [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-WindowStyle",
-        "Hidden",
-        "-File",
-        "C:\\source\\opencut-classic\\packages\\mcp-server\\scripts\\Start-OpenCutMcp.ps1",
-        "-Config",
-        "%LOCALAPPDATA%\\OpenCut\\mcp\\config\\instance-1.json"
-      ],
-      "windowsHide": true
-    }
-  }
+	"mcpServers": {
+		"opencut-1": {
+			"command": "powershell.exe",
+			"args": [
+				"-NoLogo",
+				"-NoProfile",
+				"-NonInteractive",
+				"-WindowStyle",
+				"Hidden",
+				"-File",
+				"C:\\source\\opencut-classic\\packages\\mcp-server\\scripts\\Start-OpenCutMcp.ps1",
+				"-Config",
+				"%LOCALAPPDATA%\\OpenCut\\mcp\\config\\instance-1.json"
+			],
+			"windowsHide": true
+		}
+	}
 }
 ```
 
@@ -150,20 +150,20 @@ The runtime uses the variables below. The instance JSON accepts the non-secret,
 MCP-side settings from this table; the token and web-side `NEXT_PUBLIC_` values
 are inherited or set in the web shell instead.
 
-| Variable | Purpose |
-| --- | --- |
-| `OPENCUT_BRIDGE_TOKEN` / `NEXT_PUBLIC_OPENCUT_BRIDGE_TOKEN` | Required shared secret (32+ characters); MCP/web names respectively. |
-| `OPENCUT_BRIDGE_PORT` / `NEXT_PUBLIC_OPENCUT_BRIDGE_PORT` | Required matching loopback port for each MCP/web pair. |
-| `OPENCUT_RECEIPT_DIR` | Instance state root. Jobs, receipts, ledgers, preview evidence, provider records, and the default browser profile live below it. |
-| `OPENCUT_HEADLESS_PROFILE_DIR` | Dedicated Chrome/Edge profile and project library; defaults below the state root. |
-| `OPENCUT_HEADLESS_EDITOR_URL` | Web editor base URL; enables the managed browser worker. |
-| `OPENCUT_HEADLESS_BROWSER_PATH` | Optional absolute Chrome/Edge path; empty means automatic discovery. |
-| `OPENCUT_HEADLESS_CONNECTION_TIMEOUT_MS` | Optional managed-editor connection timeout. |
-| `OPENCUT_FFMPEG_PATH`, `OPENCUT_FFPROBE_PATH` | Executable name on `PATH` or absolute path. |
-| `OPENCUT_RENDERER_CLASS` | `software` (the deterministic default) or explicitly declared `hardware`. |
-| `OPENCUT_PREVIEW_EVIDENCE_DIR`, `OPENCUT_OPERATION_LEDGER_DIR` | Optional overrides; normally leave both under the state root. |
-| `OPENCUT_WASM_ARTIFACT_PATH`, `OPENCUT_WASM_PACKAGE_VERSION` | Optional WASM identity overrides for a custom deployment. |
-| `OPENCUT_AUDIO_CLEANER_*`, `OPENCUT_MATTE_PRODUCER_*`, `OPENCUT_SUBJECT_TRACKER_*` | Optional external-provider command and JSON-array arguments. |
+| Variable                                                                           | Purpose                                                                                                                          |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENCUT_BRIDGE_TOKEN` / `NEXT_PUBLIC_OPENCUT_BRIDGE_TOKEN`                        | Required shared secret (32+ characters); MCP/web names respectively.                                                             |
+| `OPENCUT_BRIDGE_PORT` / `NEXT_PUBLIC_OPENCUT_BRIDGE_PORT`                          | Required matching loopback port for each MCP/web pair.                                                                           |
+| `OPENCUT_RECEIPT_DIR`                                                              | Instance state root. Jobs, receipts, ledgers, preview evidence, provider records, and the default browser profile live below it. |
+| `OPENCUT_HEADLESS_PROFILE_DIR`                                                     | Dedicated Chrome/Edge profile and project library; defaults below the state root.                                                |
+| `OPENCUT_HEADLESS_EDITOR_URL`                                                      | Web editor base URL; enables the managed browser worker.                                                                         |
+| `OPENCUT_HEADLESS_BROWSER_PATH`                                                    | Optional absolute Chrome/Edge path; empty means automatic discovery.                                                             |
+| `OPENCUT_HEADLESS_CONNECTION_TIMEOUT_MS`                                           | Optional managed-editor connection timeout.                                                                                      |
+| `OPENCUT_FFMPEG_PATH`, `OPENCUT_FFPROBE_PATH`                                      | Executable name on `PATH` or absolute path.                                                                                      |
+| `OPENCUT_RENDERER_CLASS`                                                           | `software` (the deterministic default) or explicitly declared `hardware`.                                                        |
+| `OPENCUT_PREVIEW_EVIDENCE_DIR`, `OPENCUT_OPERATION_LEDGER_DIR`                     | Optional overrides; normally leave both under the state root.                                                                    |
+| `OPENCUT_WASM_ARTIFACT_PATH`, `OPENCUT_WASM_PACKAGE_VERSION`                       | Optional WASM identity overrides for a custom deployment.                                                                        |
+| `OPENCUT_AUDIO_CLEANER_*`, `OPENCUT_MATTE_PRODUCER_*`, `OPENCUT_SUBJECT_TRACKER_*` | Optional external-provider command and JSON-array arguments.                                                                     |
 
 Protocol-v1 mutation remains disabled unless
 `OPENCUT_ENABLE_PROTOCOL_V1_MUTATION=1`; do not enable it in a production
@@ -281,6 +281,8 @@ Available tools:
 - `opencut_create_project`, creating and activating a named project with an idempotent operation ID
 - `opencut_open_project`, opening a saved project with an idempotent operation ID
 - `opencut_get_project`, including project and canvas settings, track roles, media assets, and element parameters
+- `opencut_preflight_edit_plan`, evaluating a complete v2 plan against a verified saved project without mutation and returning an immutable receipt
+- `opencut_get_edit_plan_preflight` and `opencut_list_edit_plan_preflights`, reading durable preflight evidence across MCP and editor restarts
 - `opencut_query_timeline`, returning compact ordered elements, uncovered gaps, pairwise overlaps, and cut, gap, or overlap relationships for a revision-stable time range
 - `opencut_list_effects`, returning the connected editor's supported effect catalog and validated parameter metadata
 - `opencut_analyze_audio`, measuring integrated LUFS, sample peak, estimated true peak, and available uniform mix-gain range before export mastering
@@ -303,6 +305,8 @@ Available tools:
 The editor must be open with a project loaded. Creating or opening a project automatically updates the connected editor route. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.
 
 OpenCut removes empty overlay and audio tracks. To create a durable track through MCP, include `add_track` with a caller-selected `trackId` and a later `move` targeting that ID in the same edit plan.
+
+Protocol-v2 edit plans must be preflighted before `opencut_apply_edit_plan`; receipt-less applies fail with `PREFLIGHT_REQUIRED`. Preflight capability requirements are derived from the same snapshot returned by `opencut_capabilities`. Provider execution is forbidden during edit-plan evaluation, so its cost is currently always `not-applicable`. The `costPolicy` request field is reserved and intentionally inert until paid operations are admitted to edit plans.
 
 Keyframe times are relative to the element start and use canonical media ticks. Stable caller-selected IDs make later updates deterministic. Built-in keyframe paths include position, scale, rotation, opacity, normalized crop, focal-point and target rectangles, volume, text color, and text-background geometry and color. Keyframable graphic and effect parameters use their registered parameter paths.
 

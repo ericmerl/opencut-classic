@@ -21,6 +21,14 @@ export function createElementSelectionResult(
 export abstract class Command {
 	abstract execute(): CommandResult | undefined;
 
+	preparePersistence(): Promise<void> {
+		return Promise.resolve();
+	}
+
+	rollbackPersistence(): Promise<void> {
+		return Promise.resolve();
+	}
+
 	undo(): void {
 		throw new Error("Undo not implemented for this command");
 	}

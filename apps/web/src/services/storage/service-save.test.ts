@@ -7,6 +7,7 @@ import type { TScene } from "@/timeline";
 const databases = new Map<string, Map<string, unknown>>();
 const fileDirectories = new Map<string, Map<string, File>>();
 let nextProjectSetFailure: Error | null = null;
+let mediaMetadataSetCalls = 0;
 
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
@@ -47,6 +48,9 @@ mock.module("./indexeddb-adapter", () => ({
 				const failure = nextProjectSetFailure;
 				nextProjectSetFailure = null;
 				throw failure;
+			}
+			if (this.dbName.startsWith("video-editor-media-")) {
+				mediaMetadataSetCalls += 1;
 			}
 			this.values.set(key, structuredClone(value));
 		}
@@ -102,6 +106,7 @@ afterEach(() => {
 	databases.clear();
 	fileDirectories.clear();
 	nextProjectSetFailure = null;
+	mediaMetadataSetCalls = 0;
 });
 
 describe("StorageService save envelope", () => {
@@ -218,6 +223,51 @@ describe("StorageService save envelope", () => {
 			contentHash: { algorithm: "SHA-256" },
 		});
 		expect("url" in (readback?.mediaAssets[0] ?? {})).toBe(false);
+	});
+
+	test("fresh read-only project loading never persists media identity backfill", async () => {
+		const service = new StorageService();
+		await service.saveProject({ project: buildProject("Read only") });
+		await service.saveMediaAsset({
+			projectId: "project-1",
+			mediaAsset: {
+				id: "media-1",
+				name: "clip.mp4",
+				type: "video",
+				file: new File(["media bytes"], "clip.mp4", {
+					type: "video/mp4",
+				}),
+				url: "blob:ephemeral",
+			},
+		});
+		const metadata = databases
+			.get("video-editor-media-project-1/media-metadata")
+			?.get("media-1");
+		if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+			throw new Error("media metadata fixture is missing");
+		}
+		Reflect.deleteProperty(metadata, "sourceIdentity");
+		mediaMetadataSetCalls = 0;
+
+		const readback = await new StorageService().loadProjectFreshReadOnly({
+			id: "project-1",
+		});
+
+		expect(readback?.mediaAssets[0]?.sourceIdentity).toMatchObject({
+			kind: "local",
+			contentHash: { algorithm: "SHA-256" },
+		});
+		expect(mediaMetadataSetCalls).toBe(0);
+		expect(Reflect.get(metadata, "sourceIdentity")).toBeUndefined();
+
+		await new StorageService().loadProjectFresh({ id: "project-1" });
+		expect(mediaMetadataSetCalls).toBe(1);
+		expect(Reflect.get(metadata, "sourceIdentity")).toBeUndefined();
+		expect(
+			databases
+				.get("video-editor-media-project-1/media-metadata")
+				?.get("media-1"),
+		).toHaveProperty("sourceIdentity");
 	});
 
 	test("retains the prior complete snapshot when a replacement commit fails", async () => {

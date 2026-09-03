@@ -28,6 +28,8 @@ export interface InsertElementParams {
 	element: CreateTimelineElement;
 	placement: InsertElementPlacement;
 	adoptMediaSettings?: boolean;
+	elementId?: string;
+	newTrackId?: string;
 }
 
 export class InsertElementCommand extends Command {
@@ -39,17 +41,21 @@ export class InsertElementCommand extends Command {
 		element,
 		placement,
 		adoptMediaSettings = true,
+		elementId,
+		newTrackId,
 	}: InsertElementParams) {
 		super();
-		this.elementId = generateUUID();
+		this.elementId = elementId ?? generateUUID();
 		this.element = element;
 		this.placement = placement;
 		this.adoptMediaSettings = adoptMediaSettings;
+		this.newTrackId = newTrackId;
 	}
 
 	private element: CreateTimelineElement;
 	private placement: InsertElementPlacement;
 	private adoptMediaSettings: boolean;
+	private readonly newTrackId: string | undefined;
 
 	execute(): CommandResult | undefined {
 		const editor = EditorCore.getInstance();
@@ -291,6 +297,7 @@ export class InsertElementCommand extends Command {
 				placement.mode === "auto" && typeof placement.insertIndex === "number"
 					? placement.insertIndex
 					: undefined,
+			newTrackId: this.newTrackId,
 		});
 		if (!appliedPlacement) {
 			return null;

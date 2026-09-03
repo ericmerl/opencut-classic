@@ -256,12 +256,17 @@ export function buildSubtitleTextElement({
 	index,
 	caption,
 	canvasSize,
+	requireMeasurement = false,
 }: {
 	index: number;
 	caption: SubtitleCue;
 	canvasSize: { width: number; height: number };
+	requireMeasurement?: boolean;
 }): CreateTextElement {
 	const ctx = createMeasurementContext();
+	if (requireMeasurement && !ctx) {
+		throw new Error("caption layout requires a Canvas 2D measurement context");
+	}
 	const style = resolveSubtitleStyle({
 		style: caption.style,
 	});

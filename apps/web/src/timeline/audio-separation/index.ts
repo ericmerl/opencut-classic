@@ -74,8 +74,10 @@ export function doesElementHaveEnabledAudio({
 
 export function buildSeparatedAudioElement({
 	sourceElement,
+	resolveKeyframeId,
 }: {
 	sourceElement: VideoElement;
+	resolveKeyframeId?: (sourceId: string) => string;
 }): CreateUploadAudioElement {
 	return {
 		type: "audio",
@@ -105,6 +107,7 @@ export function buildSeparatedAudioElement({
 			: undefined,
 		animations: cloneAudioGainAnimations({
 			animations: sourceElement.animations,
+			resolveKeyframeId,
 		}),
 	};
 }
@@ -121,8 +124,10 @@ export function getSourceAudioActionLabel({
 
 function cloneAudioGainAnimations({
 	animations,
+	resolveKeyframeId,
 }: {
 	animations: ElementAnimations | undefined;
+	resolveKeyframeId?: (sourceId: string) => string;
 }): ElementAnimations | undefined {
 	const selected = Object.fromEntries(
 		["volume", "ducking"].flatMap((path) => {
@@ -137,5 +142,6 @@ function cloneAudioGainAnimations({
 	return cloneAnimations({
 		animations: selected,
 		shouldRegenerateKeyframeIds: true,
+		resolveKeyframeId,
 	});
 }

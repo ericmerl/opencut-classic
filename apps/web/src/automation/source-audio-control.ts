@@ -7,15 +7,23 @@ import {
 	isSourceAudioSeparated,
 } from "@/timeline/audio-separation";
 import type { TimelineElement } from "@/timeline";
+import type { ObjectIdAllocation } from "opencut-wasm";
 
 export function buildSourceAudioSeparationCommand({
 	element,
 	trackId,
 	mediaAsset,
+	resolvedIds,
 }: {
 	element: TimelineElement;
 	trackId: string;
 	mediaAsset: MediaAsset | null;
+	resolvedIds?: {
+		audioTrackId: string;
+		audioElementId: string;
+		linkId: string;
+		resolvedAllocations?: ObjectIdAllocation[];
+	};
 }): Command {
 	if (element.type !== "video") {
 		throw new Error("source audio can only be separated from video elements");
@@ -32,5 +40,6 @@ export function buildSourceAudioSeparationCommand({
 	return new ToggleSourceAudioSeparationCommand({
 		trackId,
 		elementId: element.id,
+		...resolvedIds,
 	});
 }

@@ -10,6 +10,18 @@ import {
 	canonicalSerialize as serializeCanonicalJson,
 	findCanonicalJsonDomainBlockers,
 } from "@opencut/canonical-json";
+import type {
+	CanonicalAttachment,
+	CanonicalEffect,
+	CanonicalElement,
+	CanonicalElementCommon,
+	CanonicalMask,
+	CanonicalMediaAsset,
+	CanonicalTrack,
+	CanonicalValue,
+	ImmutableHash as NativeImmutableHash,
+	ProjectSnapshot as NativeProjectSnapshot,
+} from "opencut-wasm";
 
 export const PROJECT_CONTENT_PROJECTION = "opencut-project-content" as const;
 export const PROJECT_CONTENT_PROJECTION_VERSION = 2 as const;
@@ -103,7 +115,7 @@ export type ProjectContentHashResult =
 export function buildCanonicalProjectState(
 	{ project, mediaAssets }: ProjectContentInput,
 	options: ProjectContentProjectionOptions = {},
-): Record<string, unknown> {
+): NativeProjectSnapshot {
 	const projectionVersion =
 		options.projectionVersion ?? PROJECT_CONTENT_PROJECTION_VERSION;
 	if (projectionVersion !== 1 && projectionVersion !== 2) {
@@ -215,7 +227,7 @@ function findCanonicalDomainBlockers(value: unknown): CanonicalDomainBlocker[] {
 	return findCanonicalJsonDomainBlockers(value);
 }
 
-function projectTracks(tracks: SceneTracks): Array<Record<string, unknown>> {
+function projectTracks(tracks: SceneTracks): CanonicalTrack[] {
 	return [
 		projectTrack({ track: tracks.main, role: "main", order: 0 }),
 		...tracks.overlay.map((track, order) =>
@@ -235,7 +247,8 @@ function projectTrack({
 	track: TimelineTrack;
 	role: "main" | "overlay" | "audio";
 	order: number;
-}): Record<string, unknown> {
+}): CanonicalTrack {
+	let transitionOrder = 0;
 	return {
 		role,
 		order,
@@ -244,20 +257,20 @@ function projectTrack({
 		type: track.type,
 		muted: "muted" in track ? track.muted : null,
 		hidden: "hidden" in track ? track.hidden : null,
-		transitions: track.elements.flatMap((element, transitionOrder) =>
-			element.transitionIn
-				? [
-						{
-							order: transitionOrder,
-							id: element.transitionIn.id,
-							fromElementId: element.transitionIn.fromElementId,
-							toElementId: element.id,
-							type: element.transitionIn.type,
-							duration: element.transitionIn.duration,
-						},
-					]
-				: [],
-		),
+		transitions: track.elements.flatMap((element) => {
+			const transition = element.transitionIn;
+			if (!transition) return [];
+			return [
+				{
+					order: transitionOrder++,
+					id: transition.id,
+					fromElementId: transition.fromElementId,
+					toElementId: element.id,
+					type: transition.type,
+					duration: transition.duration,
+				},
+			];
+		}),
 		elements: track.elements.map((element, elementOrder) =>
 			projectElement({ element, order: elementOrder }),
 		),
@@ -270,12 +283,11 @@ function projectElement({
 }: {
 	element: TimelineElement;
 	order: number;
-}): Record<string, unknown> {
-	const common: Record<string, unknown> = {
+}): CanonicalElement {
+	const common: CanonicalElementCommon = {
 		order,
 		id: element.id,
 		name: element.name,
-		type: element.type,
 		groupId: element.groupId ?? null,
 		linkId: element.linkId ?? null,
 		startTime: element.startTime,
@@ -291,6 +303,7 @@ function projectElement({
 		case "audio":
 			return {
 				...common,
+				type: element.type,
 				sourceType: element.sourceType,
 				mediaId: element.sourceType === "upload" ? element.mediaId : null,
 				sourceUrl: element.sourceType === "library" ? element.sourceUrl : null,
@@ -300,6 +313,7 @@ function projectElement({
 		case "video":
 			return {
 				...common,
+				type: element.type,
 				mediaId: element.mediaId,
 				hidden: element.hidden ?? null,
 				isSourceAudioEnabled: element.isSourceAudioEnabled ?? null,
@@ -312,6 +326,7 @@ function projectElement({
 		case "image":
 			return {
 				...common,
+				type: element.type,
 				mediaId: element.mediaId,
 				hidden: element.hidden ?? null,
 				effects: projectEffects(element.effects),
@@ -320,12 +335,14 @@ function projectElement({
 		case "text":
 			return {
 				...common,
+				type: element.type,
 				hidden: element.hidden ?? null,
 				effects: projectEffects(element.effects),
 			};
 		case "sticker":
 			return {
 				...common,
+				type: element.type,
 				stickerId: element.stickerId,
 				intrinsicWidth: element.intrinsicWidth ?? null,
 				intrinsicHeight: element.intrinsicHeight ?? null,
@@ -335,16 +352,18 @@ function projectElement({
 		case "graphic":
 			return {
 				...common,
+				type: element.type,
 				definitionId: element.definitionId,
 				hidden: element.hidden ?? null,
 				effects: projectEffects(element.effects),
 				masks: projectMasks(element.masks),
 			};
 		case "effect":
-			return { ...common, effectType: element.effectType };
+			return { ...common, type: element.type, effectType: element.effectType };
 		case "compound":
 			return {
 				...common,
+				type: element.type,
 				hidden: element.hidden ?? null,
 				tracks: projectTracks(element.tracks),
 			};
@@ -353,7 +372,7 @@ function projectElement({
 
 function projectEffects(
 	effects: Extract<TimelineElement, { type: "video" }>["effects"],
-): Array<Record<string, unknown>> {
+): CanonicalEffect[] {
 	return (effects ?? []).map((effect, order) => ({
 		order,
 		id: effect.id,
@@ -365,7 +384,7 @@ function projectEffects(
 
 function projectMasks(
 	masks: Extract<TimelineElement, { type: "video" }>["masks"],
-): Array<Record<string, unknown>> {
+): CanonicalMask[] {
 	return (masks ?? []).map((mask, order) => ({
 		order,
 		id: mask.id,
@@ -376,23 +395,23 @@ function projectMasks(
 
 function projectMatte(
 	matte: ClipMatteAttachment | undefined,
-): Record<string, unknown> | null {
+): CanonicalAttachment | null {
 	return matte ? projectAttachment(matte) : null;
 }
 
 function projectAudioReplacement(
 	replacement: ClipAudioReplacementAttachment | undefined,
-): Record<string, unknown> | null {
+): CanonicalAttachment | null {
 	return replacement ? projectAttachment(replacement) : null;
 }
 
 function projectAttachment(
 	attachment: ClipMatteAttachment | ClipAudioReplacementAttachment,
-): Record<string, unknown> {
+): CanonicalAttachment {
 	return {
 		assetId: attachment.assetId,
 		sourceMediaId: attachment.sourceMediaId,
-		sourceFingerprint: attachment.sourceFingerprint,
+		sourceFingerprint: attachment.sourceFingerprint ?? null,
 		artifactHash: attachment.artifactHash,
 		artifactFingerprint: attachment.artifactFingerprint,
 		modelId: attachment.modelId,
@@ -404,7 +423,7 @@ function projectAttachment(
 
 function projectMediaIdentity(
 	asset: ProjectContentMediaAsset,
-): Record<string, unknown> {
+): CanonicalMediaAsset {
 	return {
 		id: asset.id,
 		name: asset.name,
@@ -435,7 +454,7 @@ function projectMediaIdentity(
 
 function projectImmutableHash(
 	hash: ImmutableContentHash | undefined,
-): Record<string, string> | null {
+): NativeImmutableHash | null {
 	return hash
 		? { algorithm: hash.algorithm, digest: hash.digest.toLowerCase() }
 		: null;
@@ -568,7 +587,7 @@ function assertUniqueMediaIds(
 	}
 }
 
-function toCanonicalValue(value: unknown): unknown {
+function toCanonicalValue(value: unknown): CanonicalValue {
 	if (
 		value === null ||
 		["string", "boolean", "number"].includes(typeof value)

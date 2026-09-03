@@ -74,9 +74,11 @@ function withoutVolumeAnimation({
 export function buildAudioControlPatch({
 	element,
 	control,
+	resolveKeyframeId,
 }: {
 	element: TimelineElement;
 	control: AudioControl;
+	resolveKeyframeId?: (localTime: MediaTime) => string;
 }): Partial<TimelineElement> {
 	const audioElement = requireAudioElement({ element });
 	const targetVolumeDb =
@@ -132,6 +134,7 @@ export function buildAudioControlPatch({
 			time: keyframe.time,
 			value: keyframe.value,
 			interpolation: "linear",
+			keyframeId: resolveKeyframeId?.(keyframe.time),
 			channelLayout: target.channelLayout,
 			coerceValue: target.coerceValue,
 		});

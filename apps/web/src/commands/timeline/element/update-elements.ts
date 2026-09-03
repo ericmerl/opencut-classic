@@ -7,22 +7,27 @@ import {
 } from "@/timeline";
 import { applyElementUpdate } from "@/timeline/update-pipeline";
 
+export interface DurationClampBoundaryIds {
+	resolveLeft: (propertyPath: string) => string;
+	resolveRight: (propertyPath: string) => string;
+	assertExhausted: () => void;
+}
+
+interface ElementUpdate {
+	trackId: string;
+	elementId: string;
+	patch: Partial<TimelineElement>;
+	durationClampBoundaryIds?: DurationClampBoundaryIds;
+}
+
 export class UpdateElementsCommand extends Command {
 	private savedState: SceneTracks | null = null;
-	private readonly updates: Array<{
-		trackId: string;
-		elementId: string;
-		patch: Partial<TimelineElement>;
-	}>;
+	private readonly updates: ElementUpdate[];
 
 	constructor({
 		updates,
 	}: {
-		updates: Array<{
-			trackId: string;
-			elementId: string;
-			patch: Partial<TimelineElement>;
-		}>;
+		updates: ElementUpdate[];
 	}) {
 		super();
 		this.updates = updates;
@@ -51,8 +56,13 @@ export class UpdateElementsCommand extends Command {
 				context: {
 					tracks: updatedTracks,
 					trackId: updateEntry.trackId,
+					resolveDurationClampLeftBoundaryId:
+						updateEntry.durationClampBoundaryIds?.resolveLeft,
+					resolveDurationClampRightBoundaryId:
+						updateEntry.durationClampBoundaryIds?.resolveRight,
 				},
 			});
+			updateEntry.durationClampBoundaryIds?.assertExhausted();
 
 			updatedTracks = updateElementInSceneTracks({
 				tracks: updatedTracks,

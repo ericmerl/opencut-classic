@@ -14,14 +14,27 @@ export class RemoveMediaAssetCommand extends Command {
 	private savedTracks: SceneTracks | null = null;
 	private removedAssets: MediaAsset[] = [];
 
-	constructor({ projectId, assetId }: { projectId: string; assetId: string }) {
+	constructor({
+		projectId,
+		assetId,
+		deferPersistence = false,
+	}: {
+		projectId: string;
+		assetId: string;
+		deferPersistence?: boolean;
+	}) {
 		super();
 		this.projectId = projectId;
 		this.assetId = assetId;
+		this.deferPersistence = deferPersistence;
 	}
 
 	private projectId: string;
 	private assetId: string;
+	private readonly deferPersistence: boolean;
+	private persistencePrepared = false;
+	private readonly persistedRemovedIds = new Set<string>();
+	private persistenceQueue = Promise.resolve();
 
 	execute(): CommandResult | undefined {
 		const editor = EditorCore.getInstance();
@@ -101,14 +114,6 @@ export class RemoveMediaAssetCommand extends Command {
 		this.removedAssets = assets.filter((asset) =>
 			assetIdsToRemove.has(asset.id),
 		);
-		for (const asset of this.removedAssets) {
-			if (asset.url) URL.revokeObjectURL(asset.url);
-			if (asset.thumbnailUrl) URL.revokeObjectURL(asset.thumbnailUrl);
-			videoCache.clearVideo({ mediaId: asset.id });
-			waveformCache.clearSource({
-				sourceKey: buildWaveformSourceKey({ kind: "media", id: asset.id }),
-			});
-		}
 		editor.media.setAssets({
 			assets: assets.filter((media) => !assetIdsToRemove.has(media.id)),
 		});
@@ -148,13 +153,46 @@ export class RemoveMediaAssetCommand extends Command {
 			new UpdateElementsCommand({ updates: attachmentDetachUpdates }).execute();
 		}
 
-		for (const assetId of assetIdsToRemove) {
-			storageService
-				.deleteMediaAsset({ projectId: this.projectId, id: assetId })
-				.catch((error) => {
-					console.error("Failed to delete media item:", error);
-				});
+		if (!this.deferPersistence || this.persistencePrepared) {
+			void this.preparePersistence().catch((error) => {
+				console.error("Failed to delete media item:", error);
+			});
 		}
+	}
+
+	preparePersistence(): Promise<void> {
+		this.persistencePrepared = true;
+		this.persistenceQueue = this.persistenceQueue.then(async () => {
+			for (const asset of this.removedAssets) {
+				if (this.persistedRemovedIds.has(asset.id)) continue;
+				await storageService.deleteMediaAsset({
+					projectId: this.projectId,
+					id: asset.id,
+				});
+				this.persistedRemovedIds.add(asset.id);
+				if (asset.url) URL.revokeObjectURL(asset.url);
+				if (asset.thumbnailUrl) URL.revokeObjectURL(asset.thumbnailUrl);
+				videoCache.clearVideo({ mediaId: asset.id });
+				waveformCache.clearSource({
+					sourceKey: buildWaveformSourceKey({ kind: "media", id: asset.id }),
+				});
+			}
+		});
+		return this.persistenceQueue;
+	}
+
+	rollbackPersistence(): Promise<void> {
+		this.persistenceQueue = this.persistenceQueue.catch(() => undefined).then(async () => {
+			for (const asset of this.removedAssets) {
+				if (!this.persistedRemovedIds.has(asset.id)) continue;
+				await storageService.saveMediaAsset({
+					projectId: this.projectId,
+					mediaAsset: asset,
+				});
+				this.persistedRemovedIds.delete(asset.id);
+			}
+		});
+		return this.persistenceQueue;
 	}
 
 	undo(): void {
@@ -174,20 +212,13 @@ export class RemoveMediaAssetCommand extends Command {
 				),
 			});
 
-			for (const restoredAsset of restoredById.values()) {
-				storageService
-					.saveMediaAsset({
-						projectId: this.projectId,
-						mediaAsset: restoredAsset,
-					})
-					.catch((error) => {
-						console.error("Failed to restore media item on undo:", error);
-					});
-			}
 		}
 
 		if (this.savedTracks) {
 			editor.timeline.updateTracks(this.savedTracks);
 		}
+		void this.rollbackPersistence().catch((error) => {
+			console.error("Failed to restore media item on undo:", error);
+		});
 	}
 }

@@ -1,0 +1,112 @@
+{
+  "projection": "opencut-project-content",
+  "projectionVersion": 1,
+  "project": {
+    "name": "Golden Project",
+    "activeSceneId": "scene-main",
+    "mainSceneId": "scene-main",
+    "settings": {
+      "fps": { "numerator": 30000, "denominator": 1001 },
+      "canvasSize": { "width": 1080, "height": 1920 },
+      "canvasSizeMode": "custom",
+      "lastCustomCanvasSize": { "width": 1080, "height": 1920 },
+      "originalCanvasSize": null,
+      "background": { "type": "blur", "blurIntensity": 12 }
+    },
+    "scenes": [
+      {
+        "order": 0,
+        "id": "scene-main",
+        "name": "Main",
+        "isMain": true,
+        "bookmarks": [
+          { "order": 0, "time": 4004, "duration": null, "note": "cut", "color": null }
+        ],
+        "tracks": [
+          {
+            "role": "main",
+            "order": 0,
+            "id": "track-main",
+            "name": "Main video",
+            "type": "video",
+            "muted": false,
+            "hidden": false,
+            "transitions": [
+              { "order": 0, "id": "transition-1", "fromElementId": "video-1", "toElementId": "compound-1", "type": "crossfade", "duration": 4004 }
+            ],
+            "elements": [
+              {
+                "order": 0, "id": "video-1", "name": "Video", "type": "video",
+                "groupId": "group-1", "linkId": "link-1", "startTime": 0, "duration": 120120,
+                "trimStart": 0, "trimEnd": 0, "sourceDuration": 120120,
+                "params": { "opacity": 1, "negativeZero": 0 },
+                "animations": { "opacity": { "keys": [{ "id": "keyframe-1", "time": 0, "value": 1, "segmentToNext": "linear", "tangentMode": "auto" }] } },
+                "mediaId": "media-video", "hidden": false, "isSourceAudioEnabled": true,
+                "retime": { "rate": 1, "maintainPitch": true },
+                "effects": [{ "order": 0, "id": "effect-1", "type": "brightness", "enabled": true, "params": { "amount": 0.25 } }],
+                "masks": [{ "order": 0, "id": "mask-1", "type": "rectangle", "params": { "x": 0.1, "points": [{ "id": "point-1", "x": 0.2 }] } }],
+                "matte": { "assetId": "media-matte", "sourceMediaId": "media-video", "sourceFingerprint": null, "artifactHash": "abc", "artifactFingerprint": "matte-v1", "modelId": "matte", "modelVersion": "1", "enabled": true, "channel": "alpha" },
+                "audioReplacement": null
+              },
+              {
+                "order": 1, "id": "compound-1", "name": "Compound", "type": "compound",
+                "groupId": null, "linkId": null, "startTime": 120120, "duration": 60060,
+                "trimStart": 0, "trimEnd": 0, "sourceDuration": 60060,
+                "params": {}, "animations": {}, "hidden": false,
+                "tracks": [
+                  {
+                    "role": "main", "order": 0, "id": "nested-main", "name": "Nested", "type": "video", "muted": false, "hidden": false,
+                    "transitions": [],
+                    "elements": [
+                      {
+                        "order": 0, "id": "nested-image", "name": "Image", "type": "image", "groupId": null, "linkId": null,
+                        "startTime": 0, "duration": 60060, "trimStart": 0, "trimEnd": 0, "sourceDuration": 60060,
+                        "params": {}, "animations": {}, "mediaId": "media-image", "hidden": false, "effects": [], "masks": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "role": "overlay", "order": 0, "id": "track-text", "name": "Text", "type": "text", "muted": null, "hidden": false, "transitions": [],
+            "elements": [
+              { "order": 0, "id": "text-1", "name": "Caption", "type": "text", "groupId": "group-1", "linkId": "link-1", "startTime": 0, "duration": 60060, "trimStart": 0, "trimEnd": 0, "sourceDuration": null, "params": { "content": "Hello", "background": { "enabled": true, "color": "#000000" } }, "animations": {}, "hidden": false, "effects": [] }
+            ]
+          },
+          {
+            "role": "overlay", "order": 1, "id": "track-graphic", "name": "Graphics", "type": "graphic", "muted": null, "hidden": false, "transitions": [],
+            "elements": [
+              { "order": 0, "id": "sticker-1", "name": "Sticker", "type": "sticker", "groupId": null, "linkId": null, "startTime": 0, "duration": 4004, "trimStart": 0, "trimEnd": 0, "sourceDuration": null, "params": {}, "animations": {}, "stickerId": "star", "intrinsicWidth": 256, "intrinsicHeight": 256, "hidden": false, "effects": [] },
+              { "order": 1, "id": "graphic-1", "name": "Graphic", "type": "graphic", "groupId": null, "linkId": null, "startTime": 4004, "duration": 4004, "trimStart": 0, "trimEnd": 0, "sourceDuration": null, "params": {}, "animations": {}, "definitionId": "lower-third", "hidden": false, "effects": [], "masks": [] }
+            ]
+          },
+          {
+            "role": "overlay", "order": 2, "id": "track-effect", "name": "Effects", "type": "effect", "muted": null, "hidden": false, "transitions": [],
+            "elements": [
+              { "order": 0, "id": "adjustment-1", "name": "Grade", "type": "effect", "groupId": null, "linkId": null, "startTime": 0, "duration": 180180, "trimStart": 0, "trimEnd": 0, "sourceDuration": null, "params": { "contrast": 12 }, "animations": {}, "effectType": "adjustment" }
+            ]
+          },
+          {
+            "role": "audio", "order": 0, "id": "track-audio", "name": "Audio", "type": "audio", "muted": false, "hidden": null, "transitions": [],
+            "elements": [
+              { "order": 0, "id": "audio-1", "name": "Voice", "type": "audio", "groupId": null, "linkId": "link-1", "startTime": 0, "duration": 180180, "trimStart": 0, "trimEnd": 0, "sourceDuration": 180180, "params": { "volumeDb": -3 }, "animations": {}, "sourceType": "upload", "mediaId": "media-audio", "sourceUrl": null, "retime": null, "audioReplacement": { "assetId": "media-clean", "sourceMediaId": "media-audio", "sourceFingerprint": "voice", "artifactHash": "def", "artifactFingerprint": "clean-v1", "modelId": "clean", "modelVersion": "1", "enabled": true } }
+            ]
+          }
+        ]
+      },
+      {
+        "order": 1, "id": "scene-alt", "name": "Alternate", "isMain": false, "bookmarks": [],
+        "tracks": [{ "role": "main", "order": 0, "id": "alt-main", "name": "Main", "type": "video", "muted": false, "hidden": false, "transitions": [], "elements": [] }]
+      }
+    ]
+  },
+  "mediaAssets": [
+    { "id": "media-audio", "name": "voice.wav", "type": "audio", "size": 200, "width": null, "height": null, "duration": 1.5015, "fps": null, "hasAudio": true, "sourceFingerprint": "voice", "source": { "kind": "local", "contentHash": { "algorithm": "SHA-256", "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }, "role": "timeline" },
+    { "id": "media-clean", "name": "clean.wav", "type": "audio", "size": 180, "width": null, "height": null, "duration": 1.5015, "fps": null, "hasAudio": true, "sourceFingerprint": "clean", "source": { "kind": "local", "contentHash": { "algorithm": "SHA-256", "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }, "role": "audio-replacement" },
+    { "id": "media-image", "name": "image.png", "type": "image", "size": 100, "width": 1080, "height": 1920, "duration": null, "fps": null, "hasAudio": null, "sourceFingerprint": "image", "source": { "kind": "local", "contentHash": { "algorithm": "SHA-256", "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } }, "role": "timeline" },
+    { "id": "media-matte", "name": "matte.png", "type": "image", "size": 90, "width": 1080, "height": 1920, "duration": null, "fps": null, "hasAudio": null, "sourceFingerprint": "matte", "source": { "kind": "local", "contentHash": { "algorithm": "SHA-256", "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" } }, "role": "matte" },
+    { "id": "media-video", "name": "video.mp4", "type": "video", "size": 1000, "width": 1080, "height": 1920, "duration": 1.001, "fps": 29.97002997002997, "hasAudio": true, "sourceFingerprint": "video", "source": { "kind": "provider", "sourceUrl": "https://example.invalid/video.mp4", "provider": "fixture", "providerVersion": "1", "contentHash": { "algorithm": "SHA-256", "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" } }, "role": "timeline" }
+  ]
+}

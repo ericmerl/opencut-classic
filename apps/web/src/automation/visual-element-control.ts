@@ -17,6 +17,7 @@ import {
 	buildStickerElement,
 } from "@/timeline/element-utils";
 import type { AutomationEditOperation } from "./types";
+import { resolveElementAutoTrackId } from "./resolved-object-ids";
 
 type VisualInsertionOperation = Extract<
 	AutomationEditOperation,
@@ -63,6 +64,11 @@ export function buildVisualInsertionCommand({
 	if (!Number.isSafeInteger(operation.duration) || operation.duration <= 0) {
 		throw new Error("duration must be a positive integer tick value");
 	}
+	const newTrackId = resolveElementAutoTrackId({
+		elementId: operation.elementId,
+		autoTrackId: operation.autoTrackId,
+		resolvedAllocations: operation.resolvedAllocations,
+	});
 
 	if (operation.kind === "insert_graphic") {
 		const graphic = getGraphicDefinition({
@@ -77,6 +83,8 @@ export function buildVisualInsertionCommand({
 		});
 		return new InsertElementCommand({
 			placement: placement(operation),
+			elementId: operation.elementId,
+			newTrackId,
 			element: {
 				...buildGraphicElement({
 					definitionId: operation.definitionId,
@@ -104,6 +112,8 @@ export function buildVisualInsertionCommand({
 			});
 			return new InsertElementCommand({
 				placement: placement(operation),
+				elementId: operation.elementId,
+				newTrackId,
 				element: {
 					...buildGraphicElement({
 						definitionId: shape.definitionId,
@@ -128,6 +138,8 @@ export function buildVisualInsertionCommand({
 		});
 		return new InsertElementCommand({
 			placement: placement(operation),
+			elementId: operation.elementId,
+			newTrackId,
 			element: {
 				...element,
 				duration: operation.duration,
@@ -149,6 +161,8 @@ export function buildVisualInsertionCommand({
 	});
 	return new InsertElementCommand({
 		placement: placement(operation),
+		elementId: operation.elementId,
+		newTrackId,
 		element: {
 			...element,
 			name: operation.name ?? element.name,

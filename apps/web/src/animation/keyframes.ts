@@ -241,8 +241,12 @@ function createScalarKey({
 		id,
 		time,
 		value,
-		leftHandle: previousKey?.leftHandle,
-		rightHandle: previousKey?.rightHandle,
+		...(previousKey?.leftHandle
+			? { leftHandle: previousKey.leftHandle }
+			: {}),
+		...(previousKey?.rightHandle
+			? { rightHandle: previousKey.rightHandle }
+			: {}),
 		segmentToNext:
 			previousKey?.segmentToNext ??
 			getScalarSegmentType({ interpolation: interpolation ?? "linear" }),
@@ -836,9 +840,11 @@ function cloneChannelWithKeyIds({
 export function cloneAnimations({
 	animations,
 	shouldRegenerateKeyframeIds = false,
+	resolveKeyframeId,
 }: {
 	animations: ElementAnimations | undefined;
 	shouldRegenerateKeyframeIds?: boolean;
+	resolveKeyframeId?: (sourceId: string) => string;
 }): ElementAnimations | undefined {
 	if (!animations) {
 		return undefined;
@@ -855,7 +861,11 @@ export function cloneAnimations({
 			for (const key of primaryChannel.keys) {
 				keyIdMap.set(
 					key.id,
-					shouldRegenerateKeyframeIds ? generateUUID() : key.id,
+					resolveKeyframeId
+						? resolveKeyframeId(key.id)
+						: shouldRegenerateKeyframeIds
+							? generateUUID()
+							: key.id,
 				);
 			}
 		}
@@ -887,9 +897,13 @@ export function cloneAnimations({
 export function clampAnimationsToDuration({
 	animations,
 	duration,
+	resolveLeftBoundaryId,
+	resolveRightBoundaryId,
 }: {
 	animations: ElementAnimations | undefined;
 	duration: MediaTime;
+	resolveLeftBoundaryId?: (propertyPath: string) => string;
+	resolveRightBoundaryId?: (propertyPath: string) => string;
 }): ElementAnimations | undefined {
 	if (!animations || duration <= 0) {
 		return undefined;
@@ -899,6 +913,8 @@ export function clampAnimationsToDuration({
 		animations,
 		splitTime: duration,
 		shouldIncludeSplitBoundary: true,
+		resolveLeftBoundaryId,
+		resolveRightBoundaryId,
 	}).leftAnimations;
 }
 
@@ -1232,10 +1248,14 @@ export function splitAnimationsAtTime({
 	animations,
 	splitTime,
 	shouldIncludeSplitBoundary = true,
+	resolveLeftBoundaryId,
+	resolveRightBoundaryId,
 }: {
 	animations: ElementAnimations | undefined;
 	splitTime: MediaTime;
 	shouldIncludeSplitBoundary?: boolean;
+	resolveLeftBoundaryId?: (propertyPath: string) => string;
+	resolveRightBoundaryId?: (propertyPath: string) => string;
 }): {
 	leftAnimations: ElementAnimations | undefined;
 	rightAnimations: ElementAnimations | undefined;
@@ -1247,15 +1267,17 @@ export function splitAnimationsAtTime({
 	const leftAnimations = cloneAnimationsState({ animations: undefined });
 	const rightAnimations = cloneAnimationsState({ animations: undefined });
 
-	for (const [propertyPath, data] of Object.entries(animations).filter(([key]) =>
-		isAnimationStorageKey({ key }),
-	)) {
+	const storageEntries = Object.entries(animations)
+		.filter(([key]) => isAnimationStorageKey({ key }))
+		.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+	for (const [propertyPath, data] of storageEntries) {
 		if (!data) {
 			continue;
 		}
 
-		const leftBoundaryId = generateUUID();
-		const rightBoundaryId = generateUUID();
+		const leftBoundaryId = resolveLeftBoundaryId?.(propertyPath) ?? generateUUID();
+		const rightBoundaryId =
+			resolveRightBoundaryId?.(propertyPath) ?? generateUUID();
 
 		for (const [componentKey, channel] of getChannelDataEntries({ data })) {
 			const splitResult = splitChannelAtTime({

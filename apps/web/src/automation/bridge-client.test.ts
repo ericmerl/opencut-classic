@@ -172,6 +172,70 @@ describe("automation editor instance identity", () => {
 		});
 	});
 
+	test("rejects stale edit-plan affinity before browser dispatch", async () => {
+		const protocol = createProtocolServer("v2");
+		const client = createClient(protocol.url);
+		client.start();
+		const socket = await protocol.connected;
+		const identity: AutomationConnectionIdentity = {
+			serverInstanceId: "server-browser",
+			editorInstanceId: "editor-browser-1",
+			editorSessionId: "session-browser-1",
+			connectionGeneration: 1,
+		};
+		socket.send(
+			JSON.stringify({ kind: "authenticated", protocolVersion: 2, identity }),
+		);
+		await waitFor(() => client.getStatus().protocolVersion === 2);
+		socket.send(
+			JSON.stringify({
+				kind: "request",
+				id: "stale-preflight-source",
+				method: "preflight_edit_plan",
+				params: {
+					bridgeProtocolVersion: 2,
+					expectedConnectionIdentity: {
+						...identity,
+						connectionGeneration: 2,
+					},
+				},
+				target: identity,
+			}),
+		);
+		const response = await protocol.nextClientMessage();
+		expect(response).toMatchObject({
+			kind: "response",
+			id: "stale-preflight-source",
+			ok: false,
+			error: { code: "STALE_CONNECTION" },
+			identity,
+		});
+
+		socket.send(
+			JSON.stringify({
+				kind: "request",
+				id: "wrong-editor-preflight-source",
+				method: "preflight_edit_plan",
+				params: {
+					bridgeProtocolVersion: 2,
+					expectedConnectionIdentity: {
+						...identity,
+						editorInstanceId: "editor-browser-other",
+					},
+				},
+				target: identity,
+			}),
+		);
+		const wrongEditorResponse = await protocol.nextClientMessage();
+		expect(wrongEditorResponse).toMatchObject({
+			kind: "response",
+			id: "wrong-editor-preflight-source",
+			ok: false,
+			error: { code: "STALE_CONNECTION" },
+			identity,
+		});
+	});
+
 	test("closes the browser socket after receipt commit and before response delivery", async () => {
 		const bridge = createBridge();
 		let receiptCommitted = false;
@@ -207,6 +271,7 @@ describe("automation editor instance identity", () => {
 			transportFailure = error;
 		}
 		expect(transportFailure).toBeInstanceOf(Error);
+		if (!receiptCommitted) throw transportFailure;
 		expect(receiptCommitted).toBeTrue();
 		expect(client.getStatus()).toEqual({
 			protocolVersion: null,
@@ -217,6 +282,87 @@ describe("automation editor instance identity", () => {
 			request: expect.objectContaining({ operationId: "drop-after-receipt" }),
 			result: expect.objectContaining({ status: "saved" }),
 		});
+	});
+
+	test("drops a preflight response only after the durable read-only receipt commits", async () => {
+		const bridge = createBridge();
+		let receiptCommitted = false;
+		const client = createClient(
+			`ws://127.0.0.1:${bridge.getStatus().port}/editor`,
+			({ method }) => method === "preflight_edit_plan" && receiptCommitted,
+			{
+				preflightEditPlan: async (request: { preflightId: string }) => {
+					receiptCommitted = true;
+					return {
+						status: "rejected",
+						preflightId: request.preflightId,
+						code: "PERSISTED_SOURCE_UNAVAILABLE",
+						reason: "fixture terminal receipt",
+					};
+				},
+			},
+		);
+		client.start();
+		await bridge.waitForConnection(1_000);
+		const identity = bridge.getStatus().connectionIdentity;
+		if (!identity) throw new Error("v2 connection identity is missing");
+		await bridge.request(
+			"read_project",
+			{
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: identity,
+			},
+			1_000,
+			identity,
+		);
+		const lookup = await bridge.request(
+			"get_edit_plan_preflight_receipt",
+			{
+				preflightId: "preflight-response-loss",
+				requestFingerprint: "a".repeat(64),
+			},
+			1_000,
+			identity,
+		);
+		expect(lookup).toMatchObject({ status: "not-found" });
+		expect(receiptCommitted).toBeFalse();
+		expect(client.getStatus().connectionIdentity).toEqual(identity);
+
+		let transportFailure: unknown;
+		try {
+			await bridge.request(
+				"preflight_edit_plan",
+				{
+					contractVersion: 2,
+					bridgeProtocolVersion: 2,
+					expectedConnectionIdentity: identity,
+					preflightId: "preflight-response-loss",
+					projectId: "project-1",
+					sceneId: "scene-1",
+					expectedRevision: 0,
+					expectedProjectContentHash: "a".repeat(64),
+					expectedWriteVersion: 1,
+					saveReceiptOperationId: "save-1",
+					expectedSaveReceiptId: "receipt-1",
+					description: "fixture",
+					operations: [],
+					policy: {
+						warningPolicy: "allow",
+						providerExecution: "forbidden",
+						costPolicy: "require-exact",
+					},
+				},
+				1_000,
+				identity,
+			);
+		} catch (error) {
+			transportFailure = error;
+		}
+
+		if (!receiptCommitted) throw transportFailure;
+		expect(receiptCommitted).toBeTrue();
+		expect(transportFailure).toBeInstanceOf(Error);
+		expect(client.getStatus().connectionIdentity).toBeNull();
 	});
 
 	test("degrades cleanly against an old server using target-free v1", async () => {
@@ -247,7 +393,12 @@ describe("automation editor instance identity", () => {
 
 function createClient(
 	url: string,
-	afterOperationReceipt?: () => Promise<boolean> | boolean,
+	afterOperationReceipt?: (details: {
+		method: string;
+		request: unknown;
+		result: unknown;
+	}) => Promise<boolean> | boolean,
+	overrides: Partial<EditorAutomation> = {},
 ): AutomationBridgeClient {
 	const ids = ["editor-browser-1", "session-browser-1"];
 	const storageValues = new Map<string, string>();
@@ -292,6 +443,11 @@ function createClient(
 					}
 				: { status: "not-found", operationId: request.operationId };
 		},
+		getEditPlanPreflightReceipt: () => ({
+			status: "not-found",
+			preflightId: "missing",
+		}),
+		...overrides,
 	} as unknown as EditorAutomation;
 	const client = new AutomationBridgeClient(automation, {
 		url,

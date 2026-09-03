@@ -13,6 +13,8 @@ import type {
 	VideoElement,
 } from "@/timeline/types";
 import { generateUUID } from "@/utils/id";
+import type { ObjectIdAllocation } from "opencut-wasm";
+import { ResolvedObjectIds } from "@/automation/resolved-object-ids";
 
 export class ToggleSourceAudioSeparationCommand extends Command {
 	private savedState: SceneTracks | null = null;
@@ -21,6 +23,10 @@ export class ToggleSourceAudioSeparationCommand extends Command {
 		private readonly params: {
 			trackId: string;
 			elementId: string;
+			audioTrackId?: string;
+			audioElementId?: string;
+			linkId?: string;
+			resolvedAllocations?: ObjectIdAllocation[];
 		},
 	) {
 		super();
@@ -68,14 +74,28 @@ export class ToggleSourceAudioSeparationCommand extends Command {
 			return;
 		}
 
-		const linkId = videoElement.linkId ?? generateUUID();
+		const linkId = this.params.linkId ?? videoElement.linkId ?? generateUUID();
+		const resolvedIds = new ResolvedObjectIds(
+			this.params.resolvedAllocations,
+		);
 		const separatedAudioElement = {
 			...buildSeparatedAudioElement({
 				sourceElement: videoElement,
+				resolveKeyframeId: (sourceId) =>
+					resolvedIds.take({
+						role: "keyframe",
+						sourceId,
+						fallback: generateUUID,
+					}),
 			}),
-			id: generateUUID(),
+			id: this.params.audioElementId ?? generateUUID(),
 			linkId,
 		};
+		const existingAudioTrack = this.params.audioTrackId
+			? this.savedState.audio.find(
+					(track) => track.id === this.params.audioTrackId,
+				)
+			: null;
 		const placementResult = resolveTrackPlacement({
 			tracks: this.savedState,
 			trackType: "audio",
@@ -85,7 +105,11 @@ export class ToggleSourceAudioSeparationCommand extends Command {
 					duration: separatedAudioElement.duration,
 				},
 			],
-			strategy: { type: "firstAvailable" },
+			strategy: existingAudioTrack
+				? { type: "explicit", trackId: existingAudioTrack.id }
+				: this.params.audioTrackId
+					? { type: "alwaysNew", position: "highest" }
+					: { type: "firstAvailable" },
 		});
 		if (!placementResult) {
 			return;
@@ -94,10 +118,12 @@ export class ToggleSourceAudioSeparationCommand extends Command {
 			tracks: this.savedState,
 			placementResult,
 			elements: [separatedAudioElement],
+			newTrackId: existingAudioTrack ? undefined : this.params.audioTrackId,
 		});
 		if (!appliedPlacement) {
 			return;
 		}
+		resolvedIds.assertExhausted();
 
 		editor.timeline.updateTracks(
 			updateSourceAudioEnabled({

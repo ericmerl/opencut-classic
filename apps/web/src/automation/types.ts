@@ -13,7 +13,14 @@ import type {
 	RetimeConfig,
 	TrackType,
 } from "@/timeline";
-import type { FrameRate } from "opencut-wasm";
+import type {
+	CapabilitySnapshot,
+	EditPlanError,
+	EditPlanEvaluation,
+	ResolvedEditOperation,
+	FrameRate,
+	ObjectIdAllocation,
+} from "opencut-wasm";
 import type {
 	AnimationInterpolation,
 	ElementKeyframe,
@@ -569,36 +576,48 @@ export type AutomationOpenProjectResult =
 export type AutomationEditOperation =
 	| {
 			kind: "insert_text";
+			elementId?: string | undefined;
 			content: string;
 			startTime: MediaTime;
 			duration: MediaTime;
+			autoTrackId?: string | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "insert_graphic";
+			elementId?: string | undefined;
 			definitionId: string;
-			name?: string;
+			name?: string | undefined;
 			startTime: MediaTime;
 			duration: MediaTime;
-			trackId?: string;
-			params?: Record<string, string | number | boolean>;
+			trackId?: string | undefined;
+			params?: Record<string, string | number | boolean> | undefined;
+			autoTrackId?: string | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "insert_sticker";
+			elementId?: string | undefined;
 			stickerId: string;
-			name?: string;
+			name?: string | undefined;
 			startTime: MediaTime;
 			duration: MediaTime;
-			trackId?: string;
-			params?: Record<string, string | number | boolean>;
+			trackId?: string | undefined;
+			params?: Record<string, string | number | boolean> | undefined;
+			autoTrackId?: string | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "insert_adjustment_layer";
+			elementId?: string | undefined;
 			effectType: string;
-			name?: string;
+			name?: string | undefined;
 			startTime: MediaTime;
 			duration: MediaTime;
-			trackId?: string;
-			params?: Record<string, string | number | boolean>;
+			trackId?: string | undefined;
+			params?: Record<string, string | number | boolean> | undefined;
+			autoTrackId?: string | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "add_track";
@@ -608,56 +627,72 @@ export type AutomationEditOperation =
 	| {
 			kind: "set_track_state";
 			trackId: string;
-			muted?: boolean;
-			hidden?: boolean;
+			muted?: boolean | undefined;
+			hidden?: boolean | undefined;
 	  }
 	| {
 			kind: "set_project_settings";
-			fps?: FrameRate;
-			canvasSize?: TCanvasSize;
-			background?: TBackground;
+			fps?: FrameRate | undefined;
+			canvasSize?: TCanvasSize | undefined;
+			background?: TBackground | undefined;
 	  }
 	| {
 			kind: "insert_captions";
+			trackId?: string | undefined;
 			captions: Array<{
+				elementId?: string | undefined;
 				text: string;
 				startTime: MediaTime;
 				duration: MediaTime;
+				/** Internal browser-resolved layout, pinned by the V2 preflight receipt. */
+				resolvedName?: string | undefined;
+				resolvedContent?: string | undefined;
+				resolvedParams?: Record<string, string | number | boolean> | undefined;
+				resolvedLayoutVersion?: string | undefined;
+				resolvedLayoutEngine?: string | undefined;
 			}>;
-			style?: SubtitleStyleOverrides;
+			style?: SubtitleStyleOverrides | undefined;
 	  }
 	| {
 			kind: "update_caption";
 			trackId: string;
 			elementId: string;
-			text?: string;
-			startTime?: MediaTime;
-			duration?: MediaTime;
+			text?: string | undefined;
+			startTime?: MediaTime | undefined;
+			duration?: MediaTime | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "delete";
 			trackId: string;
 			elementId: string;
-			ripple?: boolean;
-			relationshipScope?: AutomationRelationshipScope;
+			ripple?: boolean | undefined;
+			relationshipScope?: AutomationRelationshipScope | undefined;
 	  }
 	| {
 			kind: "duplicate_elements";
 			elements: Array<{ trackId: string; elementId: string }>;
-			relationshipScope?: AutomationRelationshipScope;
+			duplicateIds?: string[] | undefined;
+			relationshipScope?: AutomationRelationshipScope | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "create_compound";
 			compoundId: string;
-			name?: string;
+			name?: string | undefined;
 			elements: Array<{ trackId: string; elementId: string }>;
-			relationshipScope?: AutomationRelationshipScope;
-			targetTrackId?: string;
+			relationshipScope?: AutomationRelationshipScope | undefined;
+			targetTrackId?: string | undefined;
+			autoTrackId?: string | undefined;
+			emptyMainTrackId?: string | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "break_apart_compound";
 			trackId: string;
 			elementId: string;
+			restoredElementIds?: string[] | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "set_group";
@@ -680,10 +715,10 @@ export type AutomationEditOperation =
 	| {
 			kind: "move";
 			trackId: string;
-			targetTrackId?: string;
+			targetTrackId?: string | undefined;
 			elementId: string;
 			startTime: MediaTime;
-			relationshipScope?: AutomationRelationshipScope;
+			relationshipScope?: AutomationRelationshipScope | undefined;
 	  }
 	| {
 			kind: "set_params";
@@ -695,28 +730,35 @@ export type AutomationEditOperation =
 			kind: "set_reframe";
 			trackId: string;
 			elementId: string;
-			mode?: "fit" | "fill" | "contain" | "cover" | "stretch";
-			crop?: AutomationNormalizedRect;
-			focalPoint?: { x: number; y: number };
-			targetRect?: AutomationNormalizedRect;
-			layout?: AutomationReframeLayout;
+			mode?: "fit" | "fill" | "contain" | "cover" | "stretch" | undefined;
+			crop?: AutomationNormalizedRect | undefined;
+			focalPoint?: { x: number; y: number } | undefined;
+			targetRect?: AutomationNormalizedRect | undefined;
+			layout?: AutomationReframeLayout | undefined;
 	  }
 	| {
 			kind: "set_audio";
 			trackId: string;
 			elementId: string;
-			volumeDb?: number;
-			muted?: boolean;
-			fade?: {
-				inDuration: MediaTime;
-				outDuration: MediaTime;
-				floorDb: number;
-			};
+			volumeDb?: number | undefined;
+			muted?: boolean | undefined;
+			fade?:
+				| {
+						inDuration: MediaTime;
+						outDuration: MediaTime;
+						floorDb: number;
+				  }
+				| undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "separate_source_audio";
 			trackId: string;
 			elementId: string;
+			audioTrackId?: string | undefined;
+			audioElementId?: string | undefined;
+			linkId?: string | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "duck_audio";
@@ -726,6 +768,7 @@ export type AutomationEditOperation =
 			reductionDb: number;
 			attackDuration: MediaTime;
 			releaseDuration: MediaTime;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "adjust_mix_gain";
@@ -737,8 +780,8 @@ export type AutomationEditOperation =
 			elementId: string;
 			effectId: string;
 			effectType: string;
-			params?: Record<string, string | number | boolean>;
-			enabled?: boolean;
+			params?: Record<string, string | number | boolean> | undefined;
+			enabled?: boolean | undefined;
 	  }
 	| {
 			kind: "remove_effect";
@@ -759,8 +802,8 @@ export type AutomationEditOperation =
 			propertyPath: string;
 			time: MediaTime;
 			value: string | number | boolean;
-			interpolation?: AnimationInterpolation;
-			keyframeId?: string;
+			interpolation?: AnimationInterpolation | undefined;
+			keyframeId?: string | undefined;
 	  }
 	| {
 			kind: "remove_keyframe";
@@ -796,25 +839,29 @@ export type AutomationEditOperation =
 			trackId: string;
 			elementId: string;
 			rate: number;
-			maintainPitch?: boolean;
+			maintainPitch?: boolean | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "trim";
 			trackId: string;
 			elementId: string;
-			startTime?: MediaTime;
-			duration?: MediaTime;
+			startTime?: MediaTime | undefined;
+			duration?: MediaTime | undefined;
 			trimStart: MediaTime;
 			trimEnd: MediaTime;
-			ripple?: boolean;
+			ripple?: boolean | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "split";
 			trackId: string;
 			elementId: string;
 			splitTime: MediaTime;
-			retainSide?: "both" | "left" | "right";
-			ripple?: boolean;
+			rightElementId?: string | undefined;
+			retainSide?: "both" | "left" | "right" | undefined;
+			ripple?: boolean | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "set_matte_state";
@@ -842,7 +889,7 @@ export type AutomationEditOperation =
 				| "star"
 				| "text"
 				| "freeform";
-			params?: Record<string, AutomationMaskParamValue>;
+			params?: Record<string, AutomationMaskParamValue> | undefined;
 	  }
 	| {
 			kind: "remove_mask";
@@ -862,15 +909,156 @@ export type AutomationEditOperation =
 			elementId: string;
 	  };
 
-export interface AutomationEditPlan {
+export interface AutomationConnectionIdentityV2 {
+	serverInstanceId: string;
+	editorInstanceId: string;
+	editorSessionId: string;
+	connectionGeneration: number;
+}
+
+interface AutomationEditPlanBase<TOperation> {
 	projectId: string;
 	operationId: string;
 	expectedRevision: number;
 	expectedProjectContentHash?: string;
 	bridgeProtocolVersion?: 1 | 2;
 	description: string;
-	operations: AutomationEditOperation[];
+	operations: TOperation[];
 }
+
+export type AutomationEditPlanV1 =
+	AutomationEditPlanBase<AutomationEditOperation> & {
+		contractVersion?: 1;
+		bridgeProtocolVersion?: 1;
+	};
+
+export type AutomationEditPlanV2 =
+	AutomationEditPlanBase<ResolvedEditOperation> & {
+		contractVersion: 2;
+		bridgeProtocolVersion: 2;
+		expectedConnectionIdentity: AutomationConnectionIdentityV2;
+		sceneId: string;
+		expectedProjectContentHash: string;
+		expectedWriteVersion: number;
+		saveReceiptOperationId: string;
+		expectedSaveReceiptId: string;
+		preflight?: {
+			preflightId: string;
+			receiptId: string;
+			evaluation: EditPlanEvaluation;
+		};
+	};
+
+export type AutomationEditPlan = AutomationEditPlanV1 | AutomationEditPlanV2;
+
+export interface AutomationEditPlanPreflightRequest {
+	contractVersion: 2;
+	bridgeProtocolVersion: 2;
+	expectedConnectionIdentity: AutomationConnectionIdentityV2;
+	preflightId: string;
+	projectId: string;
+	sceneId: string;
+	expectedRevision: number;
+	expectedProjectContentHash: string;
+	expectedWriteVersion: number;
+	saveReceiptOperationId: string;
+	expectedSaveReceiptId: string;
+	description: string;
+	operations: AutomationEditOperation[];
+	policy: {
+		warningPolicy: "allow" | "reject-any";
+		providerExecution: "forbidden";
+		costPolicy: "require-exact" | "allow-bounded" | "allow-unavailable";
+	};
+	capabilitySnapshot: CapabilitySnapshot;
+}
+
+export type AutomationVerifyEditPlanPreflightSourceRequest = Pick<
+	AutomationEditPlanPreflightRequest,
+	| "bridgeProtocolVersion"
+	| "expectedConnectionIdentity"
+	| "projectId"
+	| "sceneId"
+	| "expectedRevision"
+	| "expectedProjectContentHash"
+	| "expectedWriteVersion"
+	| "saveReceiptOperationId"
+	| "expectedSaveReceiptId"
+>;
+
+export type AutomationVerifyEditPlanPreflightSourceResult =
+	| { status: "verified"; observation: AutomationNoMutationObservation }
+	| import("./edit-plan-preflight-source").PreflightSourceFailure;
+
+export interface AutomationGetEditPlanPreflightReceiptRequest {
+	preflightId: string;
+	requestFingerprint: string;
+}
+
+export type AutomationGetEditPlanPreflightReceiptResult =
+	| {
+			status: "found";
+			receipt: import("./edit-plan-preflight-receipt").PersistedEditPlanPreflightReceipt;
+	  }
+	| { status: "not-found" | "mismatched"; preflightId: string };
+
+export interface AutomationNoMutationObservation {
+	projectId: string;
+	sceneId: string;
+	sessionRevision: number;
+	canonicalProjectHash: string;
+	durableWriteVersion: number;
+	saveReceiptId: string;
+	saveOperationId: string;
+	connectionIdentity: AutomationEditPlanPreflightRequest["expectedConnectionIdentity"] & {
+		bridgeProtocolVersion: 2;
+	};
+	activeProjectId: string;
+	activeSceneId: string;
+	playheadTicks: MediaTime;
+	isPlaying: boolean;
+	selectionFingerprint: string;
+	historyFingerprint: string;
+	persistenceFingerprint: string;
+}
+
+export type AutomationEditPlanPreflightResult =
+	| {
+			status: "validated";
+			preflightId: string;
+			evaluation: EditPlanEvaluation;
+			sourceObservation: AutomationNoMutationObservation;
+			noMutationProof: {
+				unchanged: true;
+				before: AutomationNoMutationObservation;
+				after: AutomationNoMutationObservation;
+			};
+	  }
+	| {
+			status: "conflict";
+			preflightId: string;
+			code: "SOURCE_STATE_CONFLICT" | "STATE_CHANGED_DURING_PREFLIGHT";
+			reason: string;
+	  }
+	| {
+			status: "rejected";
+			preflightId: string;
+			code:
+				| "PERSISTED_SOURCE_UNAVAILABLE"
+				| "PERSISTED_SOURCE_MISMATCH"
+				| "SAVE_RECEIPT_MISMATCH"
+				| "PREFLIGHT_ID_REUSED";
+			reason: string;
+	  }
+	| {
+			status: "rejected";
+			preflightId: string;
+			code: "NATIVE_EVALUATION_REJECTED";
+			reason: string;
+			error: EditPlanError;
+	  };
+
+export type AutomationResolvedEditOperation = ResolvedEditOperation;
 
 export interface AutomationAppliedResult {
 	status: "applied";
