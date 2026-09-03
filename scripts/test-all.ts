@@ -25,6 +25,18 @@ if (!cargo) {
 		"Rust tests: cargo was not found on PATH or in the standard rustup home",
 	);
 }
+const wasmPack = findExecutable({
+	name: process.platform === "win32" ? "wasm-pack.exe" : "wasm-pack",
+	fallbacks:
+		process.platform === "win32"
+			? [join(homedir(), ".cargo", "bin", "wasm-pack.exe")]
+			: [join(homedir(), ".cargo", "bin", "wasm-pack")],
+});
+if (!wasmPack) {
+	fail(
+		"Web tests: wasm-pack was not found on PATH or in the standard Cargo bin directory",
+	);
+}
 const webTestEnvironment = {
 	...process.env,
 	OPENCUT_TEST_CARGO_PATH: cargo,
@@ -35,6 +47,12 @@ run({
 	label: "MCP server tests",
 	command: process.execPath,
 	args: ["test", mcpRoot],
+});
+
+run({
+	label: "Project-state WASM test runtime",
+	command: wasmPack,
+	args: ["build", "rust/wasm", "--target", "nodejs", "--out-dir", "pkg-node"],
 });
 
 const webTests = Array.from(

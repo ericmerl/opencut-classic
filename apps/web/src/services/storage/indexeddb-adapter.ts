@@ -72,6 +72,30 @@ export class IndexedDBAdapter<T> implements StorageAdapter<T> {
 		});
 	}
 
+	async update({
+		key,
+		update,
+	}: {
+		key: string;
+		update: (current: T | null) => T | null;
+	}): Promise<T | null> {
+		return this.runTransaction({
+			mode: "readwrite",
+			operation: async (store) => {
+				const stored = await this.readRequest(
+					store.get(key) as IDBRequest<T | undefined>,
+				);
+				const value = update(stored ?? null);
+				if (value === null) {
+					await this.readRequest(store.delete(key));
+				} else {
+					await this.readRequest(store.put({ id: key, ...value }));
+				}
+				return value;
+			},
+		});
+	}
+
 	async remove(key: string): Promise<void> {
 		await this.runTransaction({
 			mode: "readwrite",

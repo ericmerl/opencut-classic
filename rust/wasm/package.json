@@ -1,0 +1,17 @@
+{
+  "name": "opencut-wasm",
+  "version": "0.2.10",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wasm-pack build . --target bundler --out-dir pkg"
+  },
+  "main": "pkg/opencut_wasm.js",
+  "types": "pkg/opencut_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg/opencut_wasm.d.ts",
+      "import": "./pkg/opencut_wasm.js"
+    }
+  }
+}

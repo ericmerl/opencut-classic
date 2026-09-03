@@ -44,6 +44,12 @@ import {
 	buildProjectSaveReceiptIdentity,
 	readProjectSaveReceiptProjectionVersion,
 } from "./save-receipt-identity";
+import {
+	ProjectSnapshotStore,
+	type LoadProjectSnapshotInput,
+	type RetainVerifiedProjectSnapshotInput,
+	type RetainedProjectSnapshot,
+} from "./project-snapshot-storage";
 
 function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 	if (!Array.isArray(raw)) return [];
@@ -77,6 +83,7 @@ class StorageService {
 	private savedSoundsAdapter: IndexedDBAdapter<SavedSoundsData>;
 	private saveReceiptsAdapter: IndexedDBAdapter<unknown>;
 	private operationReceipts: OperationReceiptStore;
+	private projectSnapshots: ProjectSnapshotStore;
 	private config: StorageConfig;
 	private migrationsPromise: Promise<void> | null = null;
 	private projectWriteTails = new Map<string, Promise<void>>();
@@ -102,6 +109,7 @@ class StorageService {
 			version: 1,
 		});
 		this.operationReceipts = new OperationReceiptStore();
+		this.projectSnapshots = new ProjectSnapshotStore();
 	}
 
 	private createProjectsAdapter(): IndexedDBAdapter<StoredProjectRecord> {
@@ -365,6 +373,25 @@ class StorageService {
 		binding: OperationReceiptBinding,
 	): Promise<PersistedOperationReceipt | null> {
 		return this.operationReceipts.load(binding);
+	}
+
+	async retainVerifiedProjectSnapshot(
+		input: RetainVerifiedProjectSnapshotInput,
+	): Promise<void> {
+		await this.projectSnapshots.saveVerified(input);
+	}
+
+	async loadProjectSnapshot(
+		input: LoadProjectSnapshotInput,
+	): Promise<RetainedProjectSnapshot> {
+		return this.projectSnapshots.load(input);
+	}
+
+	async cleanupExpiredProjectSnapshots(): Promise<{
+		removed: number;
+		retained: number;
+	}> {
+		return this.projectSnapshots.cleanupExpired();
 	}
 
 	async loadProject({
@@ -737,7 +764,10 @@ class StorageService {
 	}
 
 	async clearAllData(): Promise<void> {
-		await this.projectsAdapter.clear();
+		await Promise.all([
+			this.projectsAdapter.clear(),
+			this.projectSnapshots.clear(),
+		]);
 		// project-specific media and timelines cleaned up when projects are deleted
 	}
 

@@ -1,5 +1,17 @@
 import { mock } from "bun:test";
 import { createCanvas, type Canvas } from "@napi-rs/canvas";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const projectState = require("../../../rust/wasm/pkg-node/opencut_wasm.js") as {
+	evaluateAutomationOperationPolicy: (options: {
+		method: string;
+		status: string;
+	}) => { durableSuccess: boolean; retainSnapshot: boolean };
+	evaluateProjectSnapshotRetention: (
+		options: EvaluateSnapshotRetentionOptions,
+	) => SnapshotRetentionEvaluation;
+};
 
 const TICKS_PER_SECOND = 120_000;
 
@@ -40,10 +52,14 @@ function frameTicks({
  */
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => TICKS_PER_SECOND,
+	evaluateAutomationOperationPolicy:
+		projectState.evaluateAutomationOperationPolicy,
 	floorToFrame: ({ time, rate }: NativeFrameTime) =>
 		Math.floor(time / frameTicks({ rate })) * frameTicks({ rate }),
 	formatTimecode: ({ time }: { time: number }) =>
 		new Date((time / TICKS_PER_SECOND) * 1_000).toISOString().slice(11, 19),
+	evaluateProjectSnapshotRetention:
+		projectState.evaluateProjectSnapshotRetention,
 	guessTimecodeFormat: () => "HH:MM:SS",
 	isFrameAligned: ({ time, rate }: NativeFrameTime) =>
 		Number.isInteger(time / frameTicks({ rate })),
@@ -103,3 +119,26 @@ interface NativeFrameTime {
 interface NativeDurationTime extends NativeFrameTime {
 	duration: number;
 }
+
+interface SnapshotVerification {
+	writeVersion: number;
+	receiptId: string;
+	operationId: string;
+	verifiedAtMs: number;
+}
+
+interface SnapshotRetentionState {
+	firstVerifiedAtMs: number;
+	lastVerifiedAtMs: number;
+	expiresAtMs: number;
+	latestVerification: SnapshotVerification;
+}
+
+interface EvaluateSnapshotRetentionOptions {
+	prior?: SnapshotRetentionState;
+	verification: SnapshotVerification;
+}
+
+type SnapshotRetentionEvaluation =
+	| { status: "retained"; state: SnapshotRetentionState }
+	| { status: "rejected"; reason: string };

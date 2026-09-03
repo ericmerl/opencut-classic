@@ -43,6 +43,33 @@ describe("IndexedDBAdapter transaction durability", () => {
 		expect(fake.closeCount).toBe(2);
 	});
 
+	test("atomically updates from the value read in one transaction", async () => {
+		const fake = new FakeIndexedDB();
+		installIndexedDB(fake);
+		const adapter = new IndexedDBAdapter<{ id: string; count: number }>({
+			dbName: "counters",
+			storeName: "counters",
+		});
+		await adapter.set({
+			key: "counter-1",
+			value: { id: "counter-1", count: 1 },
+		});
+
+		const updated = await adapter.update({
+			key: "counter-1",
+			update: (current) => ({
+				id: "counter-1",
+				count: (current?.count ?? 0) + 1,
+			}),
+		});
+
+		expect(updated).toEqual({ id: "counter-1", count: 2 });
+		expect(await adapter.get("counter-1")).toEqual({
+			id: "counter-1",
+			count: 2,
+		});
+	});
+
 	test("rejects an aborted transaction after request success and closes", async () => {
 		const fake = new FakeIndexedDB();
 		fake.abortNextWrite = true;
@@ -304,6 +331,16 @@ class FakeIndexedDB {
 				const request = fakeRequest<unknown>();
 				queueMicrotask(() => {
 					request.result = this.values.get(key);
+					request.onsuccess?.(eventFor(request));
+					queueMicrotask(() => transaction.oncomplete?.(eventFor(transaction)));
+				});
+				return request as unknown as IDBRequest;
+			},
+			delete: (key: string) => {
+				const request = fakeRequest<undefined>();
+				queueMicrotask(() => {
+					this.values.delete(key);
+					request.result = undefined;
 					request.onsuccess?.(eventFor(request));
 					queueMicrotask(() => transaction.oncomplete?.(eventFor(transaction)));
 				});

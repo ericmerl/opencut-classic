@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import type { EditorCore } from "@/core";
 import type { TProject } from "@/project/types";
 import type {
@@ -14,11 +15,25 @@ import {
 } from "@/services/storage/types";
 import type { TScene } from "@/timeline";
 
+const require = createRequire(import.meta.url);
+const projectState =
+	require("../../../../rust/wasm/pkg-node/opencut_wasm.js") as {
+		evaluateAutomationOperationPolicy: (options: {
+			method: string;
+			status: string;
+		}) => { durableSuccess: boolean; retainSnapshot: boolean };
+		evaluateProjectSnapshotRetention: (options: unknown) => unknown;
+	};
+
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
+	evaluateAutomationOperationPolicy:
+		projectState.evaluateAutomationOperationPolicy,
 	evaluateEditPlan: () => {
 		throw new Error("save tests must not evaluate an edit plan");
 	},
+	evaluateProjectSnapshotRetention:
+		projectState.evaluateProjectSnapshotRetention,
 	formatTimecode: () => "00:00",
 	lastFrameTime: () => 0,
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) => seconds * 120000,
@@ -47,8 +62,17 @@ const originalLoadSaveReceipt = storageService.loadSaveReceipt;
 const originalSaveSaveReceipt = storageService.saveSaveReceipt;
 const originalLoadOperationReceipt = storageService.loadOperationReceipt;
 const originalSaveOperationReceipt = storageService.saveOperationReceipt;
+const originalRetainVerifiedProjectSnapshot =
+	storageService.retainVerifiedProjectSnapshot;
+let retainedSnapshots: Array<
+	Parameters<typeof originalRetainVerifiedProjectSnapshot>[0]
+> = [];
 
 beforeEach(() => {
+	retainedSnapshots = [];
+	storageService.retainVerifiedProjectSnapshot = async (input) => {
+		retainedSnapshots.push(input);
+	};
 	storageService.bindProjectSaveReceiptIdentity = async ({
 		projectId,
 		expectedWriteVersion,
@@ -68,6 +92,8 @@ afterEach(() => {
 	storageService.saveSaveReceipt = originalSaveSaveReceipt;
 	storageService.loadOperationReceipt = originalLoadOperationReceipt;
 	storageService.saveOperationReceipt = originalSaveOperationReceipt;
+	storageService.retainVerifiedProjectSnapshot =
+		originalRetainVerifiedProjectSnapshot;
 });
 
 describe("EditorAutomation save barrier", () => {
@@ -99,6 +125,7 @@ describe("EditorAutomation save barrier", () => {
 		let flushCalls = 0;
 		let persistedReceipt: Parameters<typeof originalSaveSaveReceipt>[0] | null =
 			null;
+		const publicationOrder: string[] = [];
 		const editor = createEditor({
 			project,
 			scene,
@@ -117,7 +144,12 @@ describe("EditorAutomation save barrier", () => {
 			};
 		};
 		storageService.saveSaveReceipt = async (receipt) => {
+			publicationOrder.push("receipt");
 			persistedReceipt = receipt;
+		};
+		storageService.retainVerifiedProjectSnapshot = async (input) => {
+			publicationOrder.push("snapshot");
+			retainedSnapshots.push(input);
 		};
 		const automation = new EditorAutomation(editor);
 		const snapshot = await automation.readProject();
@@ -150,6 +182,27 @@ describe("EditorAutomation save barrier", () => {
 			receiptId: "receiptId" in saved ? saved.receiptId : "missing",
 		});
 		expect(restartedReplay).toMatchObject({ status: "replayed" });
+		expect(retainedSnapshots).toHaveLength(1);
+		expect(retainedSnapshots[0]).toMatchObject({
+			projectId: "project-1",
+			contentHash: {
+				algorithm: "SHA-256",
+				projection: "opencut-project-content",
+				projectionVersion: 2,
+				digest: snapshot.contentIdentity.hash.digest,
+			},
+			verification: {
+				writeVersion: 1,
+				operationId: "save-1",
+			},
+		});
+		expect(retainedSnapshots[0]!.verification.verifiedAt).not.toBe(
+			"2026-09-02T12:00:00.200Z",
+		);
+		expect(
+			new Date(retainedSnapshots[0]!.verification.verifiedAt).toISOString(),
+		).toBe(retainedSnapshots[0]!.verification.verifiedAt);
+		expect(publicationOrder).toEqual(["snapshot", "receipt"]);
 		expect(flushCalls).toBe(1);
 		expect(editor.project.getActive()).toBe(project);
 		expect(editor.scenes.getActiveScene()).toBe(scene);
@@ -289,6 +342,15 @@ describe("EditorAutomation save barrier", () => {
 		expect(flushCalls).toBe(1);
 		expect(writeVersion).toBe(1);
 		expect(receiptWriteCalls).toBe(2);
+		expect(retainedSnapshots).toHaveLength(2);
+		expect(retainedSnapshots[1]).toMatchObject({
+			projectId: project.metadata.id,
+			contentHash: snapshot.contentIdentity.hash,
+			verification: {
+				writeVersion: 1,
+				operationId: request.operationId,
+			},
+		});
 
 		expect(
 			await restartedAutomation.getSaveReceipt({
@@ -367,6 +429,15 @@ describe("EditorAutomation save barrier", () => {
 			contentHash: committedContentHash,
 		});
 		expect(savedReceipt).toBeTruthy();
+		expect(retainedSnapshots).toHaveLength(1);
+		expect(retainedSnapshots[0]).toMatchObject({
+			projectId: project.metadata.id,
+			contentHash: snapshot.contentIdentity.hash,
+			verification: {
+				writeVersion: 7,
+				operationId: `${binding.outerOperationId}:ledger-save`,
+			},
+		});
 		expect(flushCalls).toBe(0);
 	});
 
@@ -433,6 +504,7 @@ describe("EditorAutomation save barrier", () => {
 		});
 		expect(flushCalls).toBe(0);
 		expect(saveReceiptWrites).toBe(0);
+		expect(retainedSnapshots).toHaveLength(0);
 	});
 
 	test("rejects same-hash recovery when the durable write version differs", async () => {
@@ -563,6 +635,64 @@ describe("EditorAutomation save barrier", () => {
 			},
 		});
 		expect(project.currentSceneId).toBe(activeScene.id);
+		expect(retainedSnapshots).toHaveLength(0);
+	});
+
+	test("retains a verified mutating browser result before its operation receipt", async () => {
+		const project = buildProject("Durable browser edit");
+		const scene = project.scenes[0]!;
+		const automation = new EditorAutomation(
+			createEditor({ project, scene, onFlush: () => undefined }),
+		);
+		const snapshot = await automation.readProject();
+		if (snapshot.contentIdentity.status !== "hashed") {
+			throw new Error("hash blocked");
+		}
+		const requestWithoutBinding = { operationId: "edit-retain" };
+		const binding = {
+			version: 1 as const,
+			outerOperationId: "edit-retain",
+			outerToolName: "opencut_apply_edit_plan",
+			outerRequestFingerprint: "a".repeat(64),
+			role: "direct-terminal" as const,
+			stepId: "opencut_apply_edit_plan:direct",
+			browserMethod: "apply_edit_plan",
+			browserRequestFingerprint: createHash("sha256")
+				.update(stableSerializeForTest(requestWithoutBinding))
+				.digest("hex"),
+		};
+		const publicationOrder: string[] = [];
+		storageService.loadProjectFresh = async () =>
+			readback({ project, writeVersion: 11 });
+		storageService.retainVerifiedProjectSnapshot = async (input) => {
+			publicationOrder.push("snapshot");
+			retainedSnapshots.push(input);
+		};
+		storageService.saveOperationReceipt = async () => {
+			publicationOrder.push("receipt");
+		};
+
+		await automation.recordOperationReceipt(
+			"apply_edit_plan",
+			{ ...requestWithoutBinding, operationReceiptBinding: binding },
+			{
+				status: "applied",
+				operationId: requestWithoutBinding.operationId,
+				revision: snapshot.revision,
+				snapshot,
+			},
+		);
+
+		expect(retainedSnapshots).toHaveLength(1);
+		expect(retainedSnapshots[0]).toMatchObject({
+			projectId: project.metadata.id,
+			contentHash: snapshot.contentIdentity.hash,
+			verification: {
+				writeVersion: 11,
+				operationId: binding.outerOperationId,
+			},
+		});
+		expect(publicationOrder).toEqual(["snapshot", "receipt"]);
 	});
 });
 

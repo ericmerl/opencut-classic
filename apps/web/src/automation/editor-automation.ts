@@ -198,12 +198,16 @@ import {
 	serializeEditorProjectContent,
 } from "./project-content-identity";
 import {
+	buildCanonicalProjectState,
 	canonicalSerialize,
 	hashProjectContent,
+	type ProjectContentHash,
 	type ProjectContentHashResult,
 	type ProjectContentProjectionVersion,
 } from "./project-content-hash";
 import { storageService } from "@/services/storage/service";
+import type { FreshProjectReadback } from "@/services/storage/types";
+import { receiptStorageKey } from "@/services/storage/operation-receipt-storage";
 import {
 	buildSaveReceiptId,
 	readProjectSaveReceiptProjectionVersion,
@@ -212,6 +216,36 @@ import {
 	parsePersistedSaveProjectResult,
 	type PersistedAutomationSaveResult,
 } from "./save-project-receipt";
+
+async function retainVerifiedProjectSnapshot({
+	readback,
+	contentHash,
+	verificationReceiptId,
+	verificationOperationId,
+}: {
+	readback: FreshProjectReadback;
+	contentHash: ProjectContentHash;
+	verificationReceiptId: string;
+	verificationOperationId: string;
+}): Promise<void> {
+	const content = buildEditorProjectContentInput({
+		project: readback.project,
+		mediaAssets: readback.mediaAssets,
+	});
+	await storageService.retainVerifiedProjectSnapshot({
+		contentHash,
+		projectId: readback.project.metadata.id,
+		snapshot: buildCanonicalProjectState(content, {
+			projectionVersion: contentHash.projectionVersion,
+		}),
+		verification: {
+			writeVersion: readback.persistence.writeVersion,
+			receiptId: verificationReceiptId,
+			operationId: verificationOperationId,
+			verifiedAt: new Date().toISOString(),
+		},
+	});
+}
 
 interface AppliedOperation {
 	fingerprint: string;
@@ -494,7 +528,10 @@ export class EditorAutomation {
 			);
 			const readbackHash =
 				identity.status === "hashed" ? identity.hash.digest : null;
-			if (readbackHash !== state.contentHashAfter) {
+			if (
+				identity.status !== "hashed" ||
+				identity.hash.digest !== state.contentHashAfter
+			) {
 				return verificationFailure(
 					request.saveOperationId,
 					state.projectId,
@@ -521,8 +558,14 @@ export class EditorAutomation {
 				storageSchemaVersion: readback.persistence.storageSchemaVersion,
 				writeVersion: readback.persistence.writeVersion,
 				reloadVerified: true,
-				readbackContentHash: readbackHash,
+				readbackContentHash: identity.hash.digest,
 			};
+			await retainVerifiedProjectSnapshot({
+				readback,
+				contentHash: identity.hash,
+				verificationReceiptId: result.receiptId,
+				verificationOperationId: request.saveOperationId,
+			});
 			await storageService.saveSaveReceipt({
 				operationId: request.saveOperationId,
 				fingerprint: stableSerialize({
@@ -541,8 +584,16 @@ export class EditorAutomation {
 		request: unknown,
 		result: unknown,
 	): Promise<void> {
-		if (!isDurableOperationSuccess(method, result) || !isRecord(request))
+		if (
+			!isRecord(result) ||
+			typeof result.status !== "string" ||
+			!isRecord(request)
+		)
 			return;
+		const operationPolicy = (
+			await import("opencut-wasm")
+		).evaluateAutomationOperationPolicy({ method, status: result.status });
+		if (!operationPolicy.durableSuccess) return;
 		const binding = parseOperationReceiptBinding(
 			request.operationReceiptBinding,
 		);
@@ -592,6 +643,14 @@ export class EditorAutomation {
 			sessionRevisionAfter: resultState.revisionAfter,
 			durableWriteVersion: readback.persistence.writeVersion,
 		};
+		if (operationPolicy.retainSnapshot) {
+			await retainVerifiedProjectSnapshot({
+				readback,
+				contentHash: persistedIdentity.hash,
+				verificationReceiptId: receiptStorageKey(binding),
+				verificationOperationId: operationId,
+			});
+		}
 		await storageService.saveOperationReceipt({
 			operationId,
 			binding,
@@ -890,6 +949,7 @@ export class EditorAutomation {
 				? readbackIdentity.hash.digest
 				: null;
 		if (
+			readbackIdentity.status !== "hashed" ||
 			readbackHash !== contentHash ||
 			readback.project.currentSceneId !== sceneId ||
 			(write !== null &&
@@ -936,6 +996,12 @@ export class EditorAutomation {
 			reloadVerified: true,
 			readbackContentHash: readbackHash,
 		};
+		await retainVerifiedProjectSnapshot({
+			readback,
+			contentHash: readbackIdentity.hash,
+			verificationReceiptId: result.receiptId,
+			verificationOperationId: request.operationId,
+		});
 		await storageService.saveSaveReceipt({
 			operationId: request.operationId,
 			fingerprint,
@@ -1001,6 +1067,7 @@ export class EditorAutomation {
 			contentHash: identity.contentHash,
 		});
 		if (
+			readbackIdentity.status !== "hashed" ||
 			identity.receiptId !== expectedReceiptId ||
 			readbackHash !== identity.contentHash ||
 			readback.project.currentSceneId !== identity.sceneId
@@ -1030,6 +1097,12 @@ export class EditorAutomation {
 			reloadVerified: true,
 			readbackContentHash: readbackHash,
 		};
+		await retainVerifiedProjectSnapshot({
+			readback,
+			contentHash: readbackIdentity.hash,
+			verificationReceiptId: result.receiptId,
+			verificationOperationId: identity.operationId,
+		});
 		await storageService.saveSaveReceipt({
 			operationId: identity.operationId,
 			fingerprint,
@@ -3232,27 +3305,6 @@ function stripTransientRequest(value: unknown): unknown {
 			.map(([key, child]) => [key, stripTransientRequest(child)]),
 	);
 }
-
-function isDurableOperationSuccess(method: string, value: unknown): boolean {
-	if (!isRecord(value)) return false;
-	const expected = DURABLE_METHOD_STATUSES[method];
-	return expected?.has(String(value.status)) ?? false;
-}
-
-const DURABLE_METHOD_STATUSES: Record<string, ReadonlySet<string>> = {
-	create_project: new Set(["created", "replayed"]),
-	open_project: new Set(["opened", "replayed"]),
-	save_project: new Set(["saved", "replayed"]),
-	sync_audio: new Set(["applied", "replayed"]),
-	attach_clean_audio: new Set(["applied", "replayed"]),
-	apply_edit_plan: new Set(["applied", "replayed"]),
-	undo: new Set(["undone"]),
-	import_media: new Set(["applied", "replayed"]),
-	import_subtitles: new Set(["applied", "replayed"]),
-	transcribe_timeline: new Set(["applied", "replayed"]),
-	attach_matte: new Set(["applied", "replayed"]),
-	render_preview_frame: new Set(["rendered", "replayed"]),
-};
 
 function parseOperationReceiptBinding(value: unknown) {
 	if (!isRecord(value) || value.version !== 1) return null;

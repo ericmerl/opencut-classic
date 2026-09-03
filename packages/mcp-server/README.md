@@ -181,10 +181,20 @@ Without an instance file, Windows state defaults to
 
 Retain the complete state and browser-profile directories for at least 90 days
 after the last operation or project that refers to them. OpenCut does not prune
-them automatically. Back up both directories while the instance is stopped;
-restoring only receipts or only the browser profile can leave durable hashes
-without their matching project library. To recover, restore the pair, use the
-same instance configuration and token, start the web editor, reconnect MCP, call
+those directories automatically. Within the browser profile, every freshly
+verified save also writes its versioned canonical project state to the
+content-addressed `opencut-project-snapshots` IndexedDB database. Each hash is
+retained for 90 days after its latest verification. Expired hashes fail with
+`COMPARISON_SOURCE_UNAVAILABLE` at the exact expiry boundary and are deleted on
+access; a cleanup scan also runs on the first verified save after editor startup
+and no more than once per 24 hours for the rest of that session.
+
+Back up both directories while the instance is stopped; restoring only receipts
+or only the browser profile can leave durable hashes without their matching
+project library. Canonical snapshots retain media identities and project state,
+not a second copy of imported media bytes, so the profile's media stores remain
+part of the recovery unit. To recover, restore the pair, use the same instance
+configuration and token, start the web editor, reconnect MCP, call
 `opencut_capabilities`, and read the relevant operation/save/export receipt.
 
 Provider model caches are owned by their configured provider commands, not by
