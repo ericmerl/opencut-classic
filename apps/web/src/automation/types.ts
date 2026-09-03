@@ -1501,7 +1501,7 @@ export interface AutomationComparisonSourceBinding {
 	revision: number;
 	projectContentHash: string;
 	projectionName: "opencut-project-content";
-	projectionVersion: 1 | 2;
+	projectionVersion: 1 | 2 | 3;
 	writeVersion: number;
 	saveReceiptOperationId: string;
 	saveReceiptId: string;
@@ -1548,7 +1548,7 @@ export type AutomationCompareProjectStatesResult =
 			sceneId: string;
 			revision: number;
 			contentHash: string;
-			contentHashProjectionVersion: 1 | 2;
+			contentHashProjectionVersion: 1 | 2 | 3;
 			capabilitySnapshotHash: string;
 			normalization: AutomationCompareProjectStatesRequest["normalization"];
 			schedule: FrameRangeSchedule;

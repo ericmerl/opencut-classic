@@ -112,7 +112,7 @@ describe("EditorAutomation save barrier", () => {
 		) {
 			throw new Error("hash blocked");
 		}
-		expect(current.contentIdentity.hash.projectionVersion).toBe(2);
+		expect(current.contentIdentity.hash.projectionVersion).toBe(3);
 		expect(legacy.contentIdentity.hash.projectionVersion).toBe(1);
 		expect(current.contentIdentity.hash.digest).not.toBe(
 			legacy.contentIdentity.hash.digest,
@@ -188,7 +188,7 @@ describe("EditorAutomation save barrier", () => {
 			contentHash: {
 				algorithm: "SHA-256",
 				projection: "opencut-project-content",
-				projectionVersion: 2,
+				projectionVersion: 3,
 				digest: snapshot.contentIdentity.hash.digest,
 			},
 			verification: {
@@ -405,7 +405,7 @@ describe("EditorAutomation save barrier", () => {
 				sessionRevisionAfter: 19,
 				durableWriteVersion: 7,
 				contentHashAfter: committedContentHash,
-				contentHashProjectionVersion: 2,
+				contentHashProjectionVersion: 3,
 			},
 			result: { status: "applied", revision: 19, snapshot },
 			recordedAt: "2026-09-02T12:00:00.000Z",
@@ -481,7 +481,7 @@ describe("EditorAutomation save barrier", () => {
 				sessionRevisionAfter: 19,
 				durableWriteVersion: 7,
 				contentHashAfter: committedContentHash,
-				contentHashProjectionVersion: 2,
+				contentHashProjectionVersion: 3,
 			},
 			result: { status: "applied", revision: 19, snapshot },
 			recordedAt: "2026-09-02T12:00:00.000Z",
@@ -546,7 +546,7 @@ describe("EditorAutomation save barrier", () => {
 				sessionRevisionAfter: 19,
 				durableWriteVersion: 7,
 				contentHashAfter: committedContentHash,
-				contentHashProjectionVersion: 2,
+				contentHashProjectionVersion: 3,
 			},
 			result: { status: "applied", revision: 19, snapshot },
 			recordedAt: "2026-09-02T12:00:00.000Z",

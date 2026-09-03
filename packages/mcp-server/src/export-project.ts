@@ -27,7 +27,7 @@ export interface ExportProjectInput {
 
 export interface QueuedProjectPersistence {
 	contentHash: string;
-	contentHashProjectionVersion: 1 | 2;
+	contentHashProjectionVersion: 1 | 2 | 3;
 	writeVersion: number;
 }
 
@@ -463,7 +463,8 @@ function readContentIdentity(
 		value.hash.algorithm !== "SHA-256" ||
 		value.hash.projection !== "opencut-project-content" ||
 		(value.hash.projectionVersion !== 1 &&
-			value.hash.projectionVersion !== 2) ||
+			value.hash.projectionVersion !== 2 &&
+			value.hash.projectionVersion !== 3) ||
 		typeof value.hash.digest !== "string" ||
 		!/^[a-f0-9]{64}$/.test(value.hash.digest)
 	) {

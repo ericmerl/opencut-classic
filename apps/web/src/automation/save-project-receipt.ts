@@ -75,7 +75,8 @@ export function parsePersistedSaveProjectResult(
 		: value.contentHashProjectionVersion;
 	if (
 		contentHashProjectionVersion !== 1 &&
-		contentHashProjectionVersion !== 2
+		contentHashProjectionVersion !== 2 &&
+		contentHashProjectionVersion !== 3
 	) {
 		throw new Error("save result content hash projection version is invalid");
 	}

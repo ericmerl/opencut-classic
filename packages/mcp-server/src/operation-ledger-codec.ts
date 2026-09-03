@@ -24,7 +24,7 @@ export interface FingerprintFields {
 	connectionAffinity?: OperationConnectionAffinity | null;
 	revisionBefore?: number | null;
 	contentHashBefore?: string | null;
-	contentHashProjectionVersionBefore?: 1 | 2;
+	contentHashProjectionVersionBefore?: 1 | 2 | 3;
 }
 
 export function fingerprintOperation(input: FingerprintFields): string {

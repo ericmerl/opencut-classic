@@ -802,7 +802,9 @@ function isProjectContentHash(value: unknown): value is ProjectContentHash {
 		isRecord(value) &&
 		value.algorithm === "SHA-256" &&
 		value.projection === "opencut-project-content" &&
-		(value.projectionVersion === 1 || value.projectionVersion === 2) &&
+		(value.projectionVersion === 1 ||
+			value.projectionVersion === 2 ||
+			value.projectionVersion === 3) &&
 		typeof value.digest === "string" &&
 		/^[a-f0-9]{64}$/.test(value.digest)
 	);

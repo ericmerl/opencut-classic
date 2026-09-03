@@ -280,7 +280,7 @@ export class McpLedgerBoundary {
 			: (stringField(input, "expectedProjectContentHash") ??
 				stringField(input, "expectedContentHash"));
 		let sceneId = stringField(input, "sceneId");
-		let contentHashProjectionVersion: 1 | 2 | null = contentHash
+		let contentHashProjectionVersion: 1 | 2 | 3 | null = contentHash
 			? CURRENT_PROJECT_CONTENT_PROJECTION_VERSION
 			: null;
 		if (!contentHash || requiresVerifiedBrowserHash) {
@@ -753,7 +753,9 @@ function comparisonSourceState(input: ToolInput) {
 		!Number.isInteger(revision) ||
 		Number(revision) < 0 ||
 		source?.projectionName !== "opencut-project-content" ||
-		(source.projectionVersion !== 1 && source.projectionVersion !== 2)
+		(source.projectionVersion !== 1 &&
+			source.projectionVersion !== 2 &&
+			source.projectionVersion !== 3)
 	) {
 		throw new Error("comparison before binding is invalid");
 	}
@@ -1197,13 +1199,15 @@ function contentHashOf(value: Record<string, unknown>): string | null {
 
 function contentHashProjectionVersionOf(
 	value: Record<string, unknown>,
-): 1 | 2 | null {
+): 1 | 2 | 3 | null {
 	const identity = isRecord(value.contentIdentity)
 		? value.contentIdentity
 		: null;
 	const hash = identity && isRecord(identity.hash) ? identity.hash : null;
 	return identity?.status === "hashed" &&
-		(hash?.projectionVersion === 1 || hash?.projectionVersion === 2)
+		(hash?.projectionVersion === 1 ||
+			hash?.projectionVersion === 2 ||
+			hash?.projectionVersion === 3)
 		? hash.projectionVersion
 		: null;
 }
@@ -1213,7 +1217,7 @@ function immutableResultState(value: unknown): {
 	sceneId: string;
 	revision: number;
 	contentHash: string;
-	contentHashProjectionVersion: 1 | 2 | null;
+	contentHashProjectionVersion: 1 | 2 | 3 | null;
 } | null {
 	if (!isRecord(value)) return null;
 	const snapshot = isRecord(value.snapshot) ? value.snapshot : null;
@@ -1229,7 +1233,8 @@ function immutableResultState(value: unknown): {
 		(snapshot ? contentHashOf(snapshot) : null);
 	const contentHashProjectionVersion =
 		value.contentHashProjectionVersion === 1 ||
-		value.contentHashProjectionVersion === 2
+		value.contentHashProjectionVersion === 2 ||
+		value.contentHashProjectionVersion === 3
 			? value.contentHashProjectionVersion
 			: snapshot
 				? contentHashProjectionVersionOf(snapshot)
@@ -1251,7 +1256,7 @@ function matchesLiveProjectState(
 		projectId: string;
 		sceneId: string;
 		contentHash: string;
-		contentHashProjectionVersion: 1 | 2;
+		contentHashProjectionVersion: 1 | 2 | 3;
 	},
 ): boolean {
 	if (!isRecord(value)) return false;
@@ -1271,7 +1276,7 @@ function receiptMatchesState(
 		sceneId: string;
 		revision: number;
 		contentHash: string;
-		contentHashProjectionVersion: 1 | 2;
+		contentHashProjectionVersion: 1 | 2 | 3;
 	},
 ): boolean {
 	return (

@@ -277,7 +277,7 @@ export const comparisonSourceBindingSchema = z
 		revision: z.number().int().nonnegative(),
 		projectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
 		projectionName: z.literal("opencut-project-content"),
-		projectionVersion: z.union([z.literal(1), z.literal(2)]),
+		projectionVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
 		writeVersion: z.number().int().positive(),
 		saveReceiptOperationId: operationIdSchema,
 		saveReceiptId: z.string().min(1).max(512),

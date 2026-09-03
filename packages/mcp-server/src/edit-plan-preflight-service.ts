@@ -214,7 +214,7 @@ export class EditPlanPreflightService {
 		const readback = parseBrowserPayload(
 			await this.browser.request(
 				"read_project",
-				{ ...affinity, projectContentProjectionVersion: 2 },
+				{ ...affinity, projectContentProjectionVersion: 3 },
 				30_000,
 				input.expectedConnectionIdentity,
 			),

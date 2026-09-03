@@ -10,6 +10,8 @@ export type ElementRef = {
 };
 
 export interface Bookmark {
+	/** Stable identity that survives moves and edits; projection version 3 hashes it. */
+	id: string;
 	time: MediaTime;
 	note?: string;
 	color?: string;

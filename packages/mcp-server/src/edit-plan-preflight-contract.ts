@@ -284,7 +284,7 @@ const canonicalMediaSourceSchema = z.discriminatedUnion("kind", [
 export const editPlanProjectSnapshotSchema = z
 	.object({
 		projection: z.literal("opencut-project-content"),
-		projectionVersion: z.union([z.literal(1), z.literal(2)]),
+		projectionVersion: z.union([z.literal(1), z.literal(2), z.literal(3)]),
 		project: z
 			.object({
 				id: z.string().min(1).optional(),
@@ -337,7 +337,7 @@ export const editPlanProjectSnapshotSchema = z
 	})
 	.strict()
 	.superRefine((snapshot, context) => {
-		if (snapshot.projectionVersion === 2 && !snapshot.project.id) {
+		if (snapshot.projectionVersion >= 2 && !snapshot.project.id) {
 			context.addIssue({
 				code: "custom",
 				path: ["project", "id"],

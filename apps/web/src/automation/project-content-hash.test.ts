@@ -45,16 +45,40 @@ describe("canonical project content", () => {
 		);
 	});
 
-	test("version 2 includes project identity while the legacy projection remains readable", async () => {
+	test("version 3 includes project identity and bookmark ids while earlier projections remain readable", async () => {
 		const original = fixture();
 		const duplicate = fixture();
 		duplicate.project.metadata.id = "project-b";
+		for (const project of [original, duplicate]) {
+			project.project.scenes[0]!.bookmarks = [
+				{ id: "bookmark-1", time: 4_000 as MediaTime, note: "hook" },
+			];
+		}
 
-		expect(PROJECT_CONTENT_PROJECTION_VERSION).toBe(2);
+		expect(PROJECT_CONTENT_PROJECTION_VERSION).toBe(3);
 		expect(JSON.parse(serializeProjectContent(original))).toMatchObject({
+			projectionVersion: 3,
+			project: { id: "project-a" },
+		});
+		expect(
+			JSON.parse(serializeProjectContent(original)).project.scenes[0]
+				.bookmarks[0],
+		).toMatchObject({ id: "bookmark-1", time: 4_000 });
+		const versionTwo = JSON.parse(
+			serializeProjectContent(original, { projectionVersion: 2 }),
+		);
+		expect(versionTwo).toMatchObject({
 			projectionVersion: 2,
 			project: { id: "project-a" },
 		});
+		expect(versionTwo.project.scenes[0].bookmarks[0]).not.toHaveProperty("id");
+		expect(await digest(original)).not.toBe(
+			(
+				(await hashProjectContent(original, { projectionVersion: 2 })) as {
+					hash: { digest: string };
+				}
+			).hash.digest,
+		);
 		expect(await digest(duplicate)).not.toBe(await digest(original));
 
 		const legacyOriginal = await hashProjectContent(original, {
@@ -76,9 +100,9 @@ describe("canonical project content", () => {
 	test("rejects an unsupported projection version at the runtime boundary", () => {
 		expect(() =>
 			serializeProjectContent(fixture(), {
-				projectionVersion: 3 as 2,
+				projectionVersion: 4 as 2,
 			}),
-		).toThrow("Unsupported project content projection version: 3");
+		).toThrow("Unsupported project content projection version: 4");
 	});
 
 	test("returns typed blockers for unsafe integers and invalid Unicode", async () => {
@@ -188,9 +212,7 @@ describe("canonical project content", () => {
 			requireDigest(
 				await hashProjectContent(fixture(), { projectionVersion: 1 }),
 			),
-		).toBe(
-			"450842d530ad34357bd95cffe3df6ed9776f019916b872bdf7e08566f302aa43",
-		);
+		).toBe("450842d530ad34357bd95cffe3df6ed9776f019916b872bdf7e08566f302aa43");
 	});
 
 	test("is independent of object key insertion and media enumeration order", async () => {
@@ -550,7 +572,15 @@ function fixture(): MutableInput {
 					id: "scene-a",
 					name: "Main",
 					isMain: true,
-					bookmarks: [{ time: 10, duration: 20, note: "Hook", color: "red" }],
+					bookmarks: [
+						{
+							id: "bookmark-fixture",
+							time: 10,
+							duration: 20,
+							note: "Hook",
+							color: "red",
+						},
+					],
 					createdAt: new Date("2026-01-01T00:00:00Z"),
 					updatedAt: new Date("2026-01-02T00:00:00Z"),
 					tracks: sceneTracks(),

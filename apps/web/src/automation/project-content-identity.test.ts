@@ -29,8 +29,12 @@ describe("editor project content identity mapping", () => {
 				),
 			).text()
 		).replace(/\r?\n$/, "");
-		expect(serializeProjectContent(input)).toBe(fixture);
-		expect(await hashProjectContent(input)).toMatchObject({
+		expect(serializeProjectContent(input, { projectionVersion: 2 })).toBe(
+			fixture,
+		);
+		expect(
+			await hashProjectContent(input, { projectionVersion: 2 }),
+		).toMatchObject({
 			status: "hashed",
 			hash: {
 				projectionVersion: 2,

@@ -24,7 +24,7 @@ import type {
 } from "opencut-wasm";
 
 export const PROJECT_CONTENT_PROJECTION = "opencut-project-content" as const;
-export const PROJECT_CONTENT_PROJECTION_VERSION = 2 as const;
+export const PROJECT_CONTENT_PROJECTION_VERSION = 3 as const;
 export const PROJECT_CONTENT_HASH_ALGORITHM = "SHA-256" as const;
 export const PROJECT_CONTENT_NEGATIVE_ZERO_POLICY =
 	"normalize-to-zero" as const;
@@ -70,7 +70,7 @@ export interface ProjectContentHash {
 	digest: string;
 }
 
-export type ProjectContentProjectionVersion = 1 | 2;
+export type ProjectContentProjectionVersion = 1 | 2 | 3;
 
 export interface ProjectContentProjectionOptions {
 	projectionVersion?: ProjectContentProjectionVersion;
@@ -118,7 +118,11 @@ export function buildCanonicalProjectState(
 ): NativeProjectSnapshot {
 	const projectionVersion =
 		options.projectionVersion ?? PROJECT_CONTENT_PROJECTION_VERSION;
-	if (projectionVersion !== 1 && projectionVersion !== 2) {
+	if (
+		projectionVersion !== 1 &&
+		projectionVersion !== 2 &&
+		projectionVersion !== 3
+	) {
 		throw new Error(
 			`Unsupported project content projection version: ${String(projectionVersion)}`,
 		);
@@ -129,7 +133,7 @@ export function buildCanonicalProjectState(
 		projection: PROJECT_CONTENT_PROJECTION,
 		projectionVersion,
 		project: {
-			...(projectionVersion === 2 ? { id: project.metadata.id } : {}),
+			...(projectionVersion >= 2 ? { id: project.metadata.id } : {}),
 			name: project.metadata.name,
 			activeSceneId: project.currentSceneId,
 			mainSceneId: project.scenes.find((scene) => scene.isMain)?.id ?? null,
@@ -141,6 +145,9 @@ export function buildCanonicalProjectState(
 				isMain: scene.isMain,
 				bookmarks: scene.bookmarks.map((bookmark, bookmarkOrder) => ({
 					order: bookmarkOrder,
+					// Version 3 adds the stable bookmark identity; earlier versions stay
+					// byte-identical so their recorded digests remain valid.
+					...(projectionVersion >= 3 ? { id: bookmark.id } : {}),
 					time: bookmark.time,
 					duration: bookmark.duration ?? null,
 					note: bookmark.note ?? null,

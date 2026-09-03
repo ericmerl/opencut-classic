@@ -1,4 +1,5 @@
 import type { TProject, TProjectMetadata } from "@/project/types";
+import { generateUUID } from "@/utils/id";
 import { getProjectDurationFromScenes } from "@/timeline/scenes";
 import type { MediaAsset } from "@/media/types";
 import { IndexedDBAdapter } from "./indexeddb-adapter";
@@ -56,7 +57,7 @@ function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 	return raw
 		.map((item): Bookmark | null => {
 			if (typeof item === "number") {
-				return { time: roundMediaTime({ time: item }) };
+				return { id: generateUUID(), time: roundMediaTime({ time: item }) };
 			}
 			const obj = item as Record<string, unknown>;
 			if (
@@ -67,6 +68,9 @@ function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 				return null;
 			}
 			return {
+				// Records written before storage version 32 carry no id; the
+				// migration back-fills one, and this guards ad-hoc callers.
+				id: typeof obj.id === "string" && obj.id ? obj.id : generateUUID(),
 				time: roundMediaTime({ time: obj.time }),
 				...(typeof obj.note === "string" && { note: obj.note }),
 				...(typeof obj.color === "string" && { color: obj.color }),

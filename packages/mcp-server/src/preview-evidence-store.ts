@@ -28,7 +28,7 @@ const saveReceiptSchema = z
 		revision: z.number().int().nonnegative(),
 		contentHash: digestSchema,
 		contentHashProjectionVersion: z
-			.union([z.literal(1), z.literal(2)])
+			.union([z.literal(1), z.literal(2), z.literal(3)])
 			.optional(),
 		persistedAt: z.iso.datetime({ offset: true }),
 		completedAt: z.iso.datetime({ offset: true }),

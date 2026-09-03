@@ -677,7 +677,8 @@ function isQueuedProjectPersistence(
 		typeof value.contentHash === "string" &&
 		/^[a-f0-9]{64}$/.test(value.contentHash) &&
 		(value.contentHashProjectionVersion === 1 ||
-			value.contentHashProjectionVersion === 2) &&
+			value.contentHashProjectionVersion === 2 ||
+			value.contentHashProjectionVersion === 3) &&
 		typeof value.writeVersion === "number" &&
 		Number.isSafeInteger(value.writeVersion) &&
 		value.writeVersion > 0
@@ -697,7 +698,8 @@ function readVerifiedProjectPersistence(
 		!/^[a-f0-9]{64}$/.test(value.contentHash) ||
 		value.contentHash !== expectedContentHash ||
 		(value.contentHashProjectionVersion !== 1 &&
-			value.contentHashProjectionVersion !== 2) ||
+			value.contentHashProjectionVersion !== 2 &&
+			value.contentHashProjectionVersion !== 3) ||
 		typeof value.writeVersion !== "number" ||
 		!Number.isSafeInteger(value.writeVersion) ||
 		value.writeVersion <= 0
@@ -792,7 +794,8 @@ function bindJobToObservedProject(
 		!isRecord(identity.hash) ||
 		identity.hash.projection !== "opencut-project-content" ||
 		(identity.hash.projectionVersion !== 1 &&
-			identity.hash.projectionVersion !== 2) ||
+			identity.hash.projectionVersion !== 2 &&
+			identity.hash.projectionVersion !== 3) ||
 		identity.hash.algorithm !== "SHA-256" ||
 		identity.hash.digest !== expectedHash
 	) {

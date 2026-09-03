@@ -113,7 +113,7 @@ export async function resolveRetainedRenderSource({
 		retained.snapshot.projection !== binding.contentHash.projection ||
 		retained.snapshot.projectionVersion !==
 			binding.contentHash.projectionVersion ||
-		(retained.snapshot.projectionVersion === 2 &&
+		(retained.snapshot.projectionVersion >= 2 &&
 			retained.snapshot.project.id !== binding.projectId)
 	) {
 		throw unavailable({ binding, reason: "identity-mismatch" });

@@ -25,7 +25,7 @@ export interface OperationBeforeState {
 	sceneId?: string | null;
 	revision?: number | null;
 	contentHash?: string | null;
-	contentHashProjectionVersion?: 1 | 2;
+	contentHashProjectionVersion?: 1 | 2 | 3;
 }
 
 export interface VerifiedOperationEvidence {
@@ -33,7 +33,7 @@ export interface VerifiedOperationEvidence {
 	sceneId?: string | null;
 	revisionAfter?: number | null;
 	contentHashAfter?: string | null;
-	contentHashProjectionVersionAfter?: 1 | 2;
+	contentHashProjectionVersionAfter?: 1 | 2 | 3;
 	saveReceipt?: OperationSaveReceipt | null;
 	providerProvenance?: OperationProviderProvenance[];
 	artifacts?: OperationArtifact[];
@@ -289,6 +289,9 @@ async function applyOutcome<TInput, TResult>(
 	outcome: OperationExecutionOutcome<TResult>,
 ): Promise<LedgeredOperationResult<TResult>> {
 	if (outcome.disposition === "unknown") {
+		console.error(
+			`[opencut-mcp] operation ${record.operationId} (${record.operationKind}) has an unknown disposition: ${outcome.reason}`,
+		);
 		return recoverable(record, outcome.reason);
 	}
 	if (outcome.disposition === "not-applied") {

@@ -53,7 +53,7 @@ export type SerializedProject = Omit<TProject, "metadata" | "scenes"> & {
 };
 
 export const PROJECT_STORAGE_ENVELOPE_VERSION = 1 as const;
-export type ProjectContentProjectionVersion = 1 | 2;
+export type ProjectContentProjectionVersion = 1 | 2 | 3;
 
 export const PROJECT_SAVE_RECEIPT_IDENTITY_VERSION = 2 as const;
 

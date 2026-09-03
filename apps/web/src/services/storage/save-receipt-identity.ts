@@ -44,7 +44,8 @@ export function readProjectSaveReceiptProjectionVersion(
 	if (identity.version === 1) return 1;
 	return identity.version === PROJECT_SAVE_RECEIPT_IDENTITY_VERSION &&
 		(identity.contentHashProjectionVersion === 1 ||
-			identity.contentHashProjectionVersion === 2)
+			identity.contentHashProjectionVersion === 2 ||
+			identity.contentHashProjectionVersion === 3)
 		? identity.contentHashProjectionVersion
 		: null;
 }

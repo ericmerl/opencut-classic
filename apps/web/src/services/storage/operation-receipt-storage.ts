@@ -187,8 +187,10 @@ function isAfterState(value: unknown, allowLegacyMissing: boolean): boolean {
 		(allowLegacyMissing
 			? value.contentHashProjectionVersion === undefined ||
 				value.contentHashProjectionVersion === 1 ||
-				value.contentHashProjectionVersion === 2
-			: value.contentHashProjectionVersion === 2)
+				value.contentHashProjectionVersion === 2 ||
+				value.contentHashProjectionVersion === 3
+			: value.contentHashProjectionVersion === 2 ||
+				value.contentHashProjectionVersion === 3)
 	);
 }
 

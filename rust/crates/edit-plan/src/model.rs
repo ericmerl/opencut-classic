@@ -1143,7 +1143,9 @@ pub(crate) struct ActiveSceneSnapshot {
 
 pub const PROJECT_CONTENT_PROJECTION: &str = "opencut-project-content";
 pub const PROJECT_CONTENT_PROJECTION_VERSION: u32 = 1;
-pub const CURRENT_PROJECT_CONTENT_PROJECTION_VERSION: u32 = 2;
+/// Version 2 added project identity; version 3 adds stable bookmark ids.
+pub const PROJECT_CONTENT_PROJECTION_VERSION_2: u32 = 2;
+pub const CURRENT_PROJECT_CONTENT_PROJECTION_VERSION: u32 = 3;
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(
@@ -1193,6 +1195,9 @@ pub struct CanonicalScene {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CanonicalBookmark {
     pub order: usize,
+    /// Stable bookmark identity, present from projection version 3 onward.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub time: MediaTime,
     #[cfg_attr(feature = "wasm", tsify(type = "MediaTime | null"))]
     pub duration: Option<MediaTime>,

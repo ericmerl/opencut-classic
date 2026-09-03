@@ -18,6 +18,7 @@ pub(crate) fn validate_projection(
         || !matches!(
             snapshot.projection_version,
             crate::PROJECT_CONTENT_PROJECTION_VERSION
+                | crate::PROJECT_CONTENT_PROJECTION_VERSION_2
                 | crate::CURRENT_PROJECT_CONTENT_PROJECTION_VERSION
         )
     {
@@ -50,7 +51,7 @@ pub(crate) fn extract_active(
     scene_id: &str,
 ) -> Result<ActiveSceneSnapshot, EditPlanError> {
     validate_projection(snapshot, scene_id)?;
-    if snapshot.projection_version == crate::CURRENT_PROJECT_CONTENT_PROJECTION_VERSION
+    if snapshot.projection_version >= crate::PROJECT_CONTENT_PROJECTION_VERSION_2
         && snapshot.project.id.as_deref() != Some(project_id)
     {
         return Err(projection_error(

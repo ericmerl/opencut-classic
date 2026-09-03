@@ -3499,7 +3499,8 @@ function operationReceiptAfterState(value: unknown): {
 		revisionAfter !== null &&
 		contentHashAfter &&
 		(contentHashProjectionVersion === 1 ||
-			contentHashProjectionVersion === 2) &&
+			contentHashProjectionVersion === 2 ||
+			contentHashProjectionVersion === 3) &&
 		/^[a-f0-9]{64}$/.test(contentHashAfter)
 		? {
 				projectId,
@@ -3529,7 +3530,9 @@ function projectContentProjectionVersion(
 		: null;
 	const hash = identity && isRecord(identity.hash) ? identity.hash : null;
 	return identity?.status === "hashed" &&
-		(hash?.projectionVersion === 1 || hash?.projectionVersion === 2)
+		(hash?.projectionVersion === 1 ||
+			hash?.projectionVersion === 2 ||
+			hash?.projectionVersion === 3)
 		? hash.projectionVersion
 		: null;
 }

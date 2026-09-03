@@ -27,7 +27,7 @@ export interface ComparisonSourceBinding {
 	revision: number;
 	projectContentHash: string;
 	projectionName: "opencut-project-content";
-	projectionVersion: 1 | 2;
+	projectionVersion: 1 | 2 | 3;
 	writeVersion: number;
 	saveReceiptOperationId: string;
 	saveReceiptId: string;

@@ -459,7 +459,7 @@ async function sourceBinding(
 		contentHash: {
 			algorithm: "SHA-256",
 			projection: "opencut-project-content",
-			projectionVersion: 2,
+			projectionVersion: 3,
 			digest: await sha256(canonicalSerialize(snapshot)),
 		},
 		writeVersion: 7,

@@ -22,7 +22,7 @@ describe("persisted save receipt projection migration", () => {
 		expect(() =>
 			parsePersistedSaveProjectResult({
 				...receipt(),
-				contentHashProjectionVersion: 3,
+				contentHashProjectionVersion: 4,
 			}),
 		).toThrow("projection version");
 		expect(() =>

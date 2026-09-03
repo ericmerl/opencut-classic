@@ -57,7 +57,7 @@ export interface OperationFingerprintInput {
 	connectionAffinity?: OperationConnectionAffinity | null;
 	revisionBefore?: number | null;
 	contentHashBefore?: string | null;
-	contentHashProjectionVersionBefore?: 1 | 2;
+	contentHashProjectionVersionBefore?: 1 | 2 | 3;
 }
 
 export interface OperationClaimInput extends OperationFingerprintInput {
@@ -83,7 +83,7 @@ export interface OperationTerminalInput {
 	sceneId?: string | null;
 	revisionAfter?: number | null;
 	contentHashAfter?: string | null;
-	contentHashProjectionVersionAfter?: 1 | 2;
+	contentHashProjectionVersionAfter?: 1 | 2 | 3;
 	saveReceipt?: OperationSaveReceipt | null;
 	providerProvenance?: OperationProviderProvenance[];
 	affectedObjects?: OperationAffectedObject[];
@@ -105,7 +105,7 @@ export interface OperationReconcileInput {
 	disposition?: "not-applied" | "unknown";
 	revisionAfter?: number | null;
 	contentHashAfter?: string | null;
-	contentHashProjectionVersionAfter?: 1 | 2;
+	contentHashProjectionVersionAfter?: 1 | 2 | 3;
 	saveReceipt?: OperationSaveReceipt | null;
 	providerProvenance?: OperationProviderProvenance[];
 	affectedObjects?: OperationAffectedObject[];

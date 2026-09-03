@@ -69,6 +69,7 @@ fn snapshot() -> ProjectSnapshot {
                     is_main: false,
                     bookmarks: vec![CanonicalBookmark {
                         order: 0,
+                        id: None,
                         time: MediaTime::from_ticks(4_000),
                         duration: None,
                         note: Some("keep".into()),
@@ -462,6 +463,77 @@ fn response_is_a_typed_error_union() {
         EditPlanEvaluationResponse::Rejected {
             error: EditPlanError {
                 code: ErrorCode::ContractVersion,
+                ..
+            }
+        }
+    ));
+}
+
+#[test]
+fn project_content_v3_accepts_bookmark_ids_and_binds_identity() {
+    let mut before = snapshot();
+    before.projection_version = CURRENT_PROJECT_CONTENT_PROJECTION_VERSION;
+    before.project.id = Some("project".into());
+    let bookmark_index = before.project.scenes[0].bookmarks.len();
+    before.project.scenes[0].bookmarks.push(CanonicalBookmark {
+        order: bookmark_index,
+        id: Some("bookmark-1".into()),
+        time: MediaTime::from_ticks(4_000),
+        duration: None,
+        note: None,
+        color: None,
+    });
+    let serialized = serde_json::to_value(&before).unwrap();
+    assert_eq!(
+        serialized["project"]["scenes"][0]["bookmarks"][bookmark_index]["id"],
+        serde_json::Value::String("bookmark-1".into())
+    );
+    let round_trip: ProjectSnapshot = serde_json::from_value(serialized).unwrap();
+    assert_eq!(
+        round_trip.project.scenes[0].bookmarks[bookmark_index]
+            .id
+            .as_deref(),
+        Some("bookmark-1")
+    );
+    let request = options_with_before(
+        before.clone(),
+        vec![EditOperation::SetTrackState {
+            track_id: "main".into(),
+            muted: Some(true),
+            hidden: None,
+        }],
+    );
+    match evaluate_edit_plan(request) {
+        EditPlanEvaluationResponse::Validated { .. } => {}
+        EditPlanEvaluationResponse::Rejected { error } => {
+            panic!("unexpected rejection: {error:?}")
+        }
+    }
+
+    // Version 2 snapshots still bind identity and never emit bookmark ids.
+    let mut legacy = snapshot();
+    legacy.projection_version = PROJECT_CONTENT_PROJECTION_VERSION_2;
+    legacy.project.id = Some("project".into());
+    let legacy_json = serde_json::to_value(&legacy).unwrap();
+    for scene in legacy_json["project"]["scenes"].as_array().unwrap() {
+        for bookmark in scene["bookmarks"].as_array().unwrap() {
+            assert!(bookmark.get("id").is_none());
+        }
+    }
+    let mut mismatched = legacy;
+    mismatched.project.id = Some("another-project".into());
+    assert!(matches!(
+        evaluate_edit_plan(options_with_before(
+            mismatched,
+            vec![EditOperation::SetTrackState {
+                track_id: "main".into(),
+                muted: Some(true),
+                hidden: None,
+            }],
+        )),
+        EditPlanEvaluationResponse::Rejected {
+            error: EditPlanError {
+                code: ErrorCode::SourceMismatch,
                 ..
             }
         }
