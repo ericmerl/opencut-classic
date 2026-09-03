@@ -21,6 +21,8 @@ const mcpRoot = join(repositoryRoot, "packages", "mcp-server", "src");
  * cost of this build and it only shrinks a file Bun loads from disk.
  */
 const nativeRuntimeProfile = "--profiling";
+/** Phases still running, so an early failure elsewhere does not leave them behind. */
+const pendingChildren: Bun.Subprocess[] = [];
 const cargo = findExecutable({
 	name: process.platform === "win32" ? "cargo.exe" : "cargo",
 	fallbacks:
@@ -53,6 +55,26 @@ const realVideoEnvironment = await prepareRealVideoMilestone();
 
 buildSharedNativeRuntime();
 
+// The Rust phases read only the crates, so they need nothing the JavaScript
+// phases produce and can run beside them. They are started here and collected
+// at the end; their output is held until then so it stays in one piece.
+const rustPhases = [
+	// The desktop app owns no logic and carries no tests, so building it under
+	// the test profile compiles its whole GPUI dependency tree for nothing.
+	// Check that it still compiles instead, which keeps the coverage the test
+	// build gave.
+	start({
+		label: "Rust workspace tests",
+		command: cargo,
+		args: ["test", "--workspace", "--exclude", "opencut-desktop"],
+	}),
+	start({
+		label: "Desktop app compiles",
+		command: cargo,
+		args: ["check", "-p", "opencut-desktop"],
+	}),
+];
+
 run({
 	label: "MCP server tests",
 	command: process.execPath,
@@ -69,21 +91,7 @@ const webTests = Array.from(
 	.sort(webTestOrder);
 
 await runWebTests(webTests);
-
-// The desktop app owns no logic and carries no tests, so building it under the
-// test profile compiles its whole GPUI dependency tree for nothing. Check that
-// it still compiles instead, which keeps the coverage the test build gave.
-run({
-	label: "Rust workspace tests",
-	command: cargo,
-	args: ["test", "--workspace", "--exclude", "opencut-desktop"],
-});
-
-run({
-	label: "Desktop app compiles",
-	command: cargo,
-	args: ["check", "-p", "opencut-desktop"],
-});
+await collect(rustPhases);
 
 if (realVideoEnvironment) runRealVideoMilestone(realVideoEnvironment);
 console.log("\nAll configured test suites passed.");
@@ -333,6 +341,58 @@ function run({
 	}
 }
 
+interface PendingPhase {
+	label: string;
+	finished: Promise<{ exitCode: number; stdout: string; stderr: string }>;
+}
+
+
+/**
+ * Starts a phase without waiting for it. Its output is captured rather than
+ * inherited so that a phase running beside another cannot interleave with it.
+ */
+function start({
+	label,
+	command,
+	args,
+	env = process.env,
+}: {
+	label: string;
+	command: string;
+	args: string[];
+	env?: NodeJS.ProcessEnv;
+}): PendingPhase {
+	const child = Bun.spawn([command, ...args], {
+		cwd: repositoryRoot,
+		env,
+		stdin: "ignore",
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	pendingChildren.push(child);
+	return {
+		label,
+		finished: Promise.all([
+			child.exited,
+			new Response(child.stdout).text(),
+			new Response(child.stderr).text(),
+		]).then(([exitCode, stdout, stderr]) => ({ exitCode, stdout, stderr })),
+	};
+}
+
+/** Prints each pending phase in the order it was started, then fails if any did. */
+async function collect(phases: PendingPhase[]): Promise<void> {
+	const failures: string[] = [];
+	for (const phase of phases) {
+		const { exitCode, stdout, stderr } = await phase.finished;
+		console.log(`\n==> ${phase.label}`);
+		process.stdout.write(stdout);
+		process.stderr.write(stderr);
+		if (exitCode !== 0) failures.push(`${phase.label}: exited with status ${exitCode}`);
+	}
+	if (failures.length > 0) fail(failures.join("\n  "));
+}
+
 function findExecutable({
 	name,
 	fallbacks,
@@ -359,5 +419,6 @@ function resolveExecutablePath(value: string): string | undefined {
 
 function fail(message: string): never {
 	console.error(`\nERROR: ${message}`);
+	for (const child of pendingChildren.splice(0)) child.kill();
 	process.exit(1);
 }
