@@ -75,11 +75,7 @@ const rustPhases = [
 	}),
 ];
 
-run({
-	label: "MCP server tests",
-	command: process.execPath,
-	args: ["test", mcpRoot],
-});
+await runMcpTests();
 
 const webTests = Array.from(
 	new Bun.Glob("**/*.test.{ts,tsx,js,mjs}").scanSync({
@@ -95,6 +91,52 @@ await collect(rustPhases);
 
 if (realVideoEnvironment) runRealVideoMilestone(realVideoEnvironment);
 console.log("\nAll configured test suites passed.");
+
+/**
+ * The MCP suites spawn processes, kill them, and assert on what survived, so
+ * they spend most of their time waiting rather than computing. Running them one
+ * file at a time left the machine idle; running them in the pool does not, and
+ * a file per process also isolates them more than the single shared process
+ * they used to share. None of them replaces a module, so nothing is lost by
+ * splitting them up.
+ *
+ * The supervisor suite goes first because it is by far the longest and its
+ * waits are load-bearing, so nothing else should queue behind it.
+ */
+function runMcpTests(): Promise<void> {
+	const testPaths = Array.from(
+		new Bun.Glob("**/*.test.{ts,tsx,js,mjs}").scanSync({
+			cwd: mcpRoot,
+			onlyFiles: true,
+		}),
+	)
+		.map((path) => join(mcpRoot, path))
+		.sort(mcpTestOrder);
+	const workers = Math.max(
+		1,
+		Math.min(workerLimit(process.env.OPENCUT_TEST_MCP_WORKERS), testPaths.length),
+	);
+	console.log(
+		`\n==> MCP server tests (${testPaths.length} isolated processes, ${workers} at a time)`,
+	);
+	return runPool({
+		suite: "MCP server tests",
+		testPaths,
+		workers,
+		args: (path) => ["test", path],
+		env: process.env,
+	});
+}
+
+function mcpTestOrder(left: string, right: string): number {
+	const ranked =
+		Number(isSlowMcpTest(right)) - Number(isSlowMcpTest(left));
+	return ranked === 0 ? left.localeCompare(right, "en") : ranked;
+}
+
+function isSlowMcpTest(path: string): boolean {
+	return path.endsWith("provider-supervisor.test.ts");
+}
 
 /**
  * Every web suite runs in its own process so that one file's module mocks and
@@ -181,31 +223,50 @@ function shuffle(values: string[], seed: number): string[] {
 	return shuffled;
 }
 
-async function runIsolatedWebTests(
+function runIsolatedWebTests(
 	testPaths: string[],
 	workers: number,
 ): Promise<void> {
+	return runPool({
+		suite: "Web tests",
+		testPaths,
+		workers,
+		args: (path) => ["test", "--preload", webPreload, path],
+		env: webTestEnvironment,
+	});
+}
+
+/**
+ * Runs one process per file, several at a time. Each process's output is held
+ * and printed under its own heading when it finishes, so concurrent files never
+ * interleave. Every file runs even when an earlier one fails; the run then
+ * reports all of them together.
+ */
+async function runPool({
+	suite,
+	testPaths,
+	workers,
+	args,
+	env,
+}: {
+	suite: string;
+	testPaths: string[];
+	workers: number;
+	args: (path: string) => string[];
+	env: NodeJS.ProcessEnv;
+}): Promise<void> {
 	if (testPaths.length === 0) return;
 	const queue = testPaths.slice();
 	const failures: string[] = [];
 	async function consume(): Promise<void> {
 		for (let next = queue.shift(); next; next = queue.shift()) {
 			const label = next.slice(repositoryRoot.length + 1);
-			const child = Bun.spawn(
-				[process.execPath, "test", "--preload", webPreload, next],
-				{
-					cwd: repositoryRoot,
-					env: webTestEnvironment,
-					stdin: "ignore",
-					stdout: "pipe",
-					stderr: "pipe",
-				},
-			);
-			const [exitCode, stdout, stderr] = await Promise.all([
-				child.exited,
-				new Response(child.stdout).text(),
-				new Response(child.stderr).text(),
-			]);
+			const { exitCode, stdout, stderr } = await start({
+				label,
+				command: process.execPath,
+				args: args(next),
+				env,
+			}).finished;
 			console.log(`\n==> ${label}`);
 			process.stdout.write(stdout);
 			process.stderr.write(stderr);
@@ -218,13 +279,21 @@ async function runIsolatedWebTests(
 	await Promise.all(Array.from({ length: workers }, consume));
 	if (failures.length > 0) {
 		fail(
-			`Web tests: ${failures.length} of ${testPaths.length} suites failed\n  ${failures.join("\n  ")}`,
+			`${suite}: ${failures.length} of ${testPaths.length} suites failed\n  ${failures.join("\n  ")}`,
 		);
 	}
 }
 
 function webWorkerLimit(): number {
-	const configured = Number(process.env.OPENCUT_TEST_WEB_WORKERS?.trim());
+	return workerLimit(process.env.OPENCUT_TEST_WEB_WORKERS);
+}
+
+/**
+ * Eight at most: Bun crashes intermittently under sixteen concurrent test
+ * runners, and suites that wait on their own deadlines need spare cores.
+ */
+function workerLimit(configuredValue: string | undefined): number {
+	const configured = Number(configuredValue?.trim());
 	if (Number.isInteger(configured) && configured > 0) return configured;
 	return Math.min(8, availableParallelism());
 }
