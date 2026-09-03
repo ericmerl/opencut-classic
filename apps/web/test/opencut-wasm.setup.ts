@@ -1,9 +1,10 @@
 import { mock } from "bun:test";
-import { createCanvas, type Canvas } from "@napi-rs/canvas";
+import type { Canvas, createCanvas } from "@napi-rs/canvas";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const projectState = require("../../../rust/wasm/pkg-node/opencut_wasm.js") as {
+
+interface NativeProjectState {
 	evaluateAutomationOperationPolicy: (options: {
 		method: string;
 		status: string;
@@ -12,7 +13,21 @@ const projectState = require("../../../rust/wasm/pkg-node/opencut_wasm.js") as {
 		options: EvaluateSnapshotRetentionOptions,
 	) => SnapshotRetentionEvaluation;
 	scheduleFrameRange: (options: unknown) => unknown;
-};
+}
+
+/**
+ * This preload runs in every web test process, but most of those processes
+ * never reach the native boundary or draw anything. Loading the multi-megabyte
+ * WASM package and the native canvas binding here would charge every process
+ * for what only a few of them use, so both load on first use instead.
+ */
+let nativeProjectStateModule: NativeProjectState | undefined;
+function nativeProjectState(): NativeProjectState {
+	nativeProjectStateModule ??= require(
+		"../../../rust/wasm/pkg-node/opencut_wasm.js",
+	) as NativeProjectState;
+	return nativeProjectStateModule;
+}
 
 const TICKS_PER_SECOND = 120_000;
 
@@ -21,7 +36,10 @@ if (typeof globalThis.OffscreenCanvas === "undefined") {
 		private readonly canvas: Canvas;
 
 		constructor(width: number, height: number) {
-			this.canvas = createCanvas(width, height);
+			const { createCanvas: create } = require(
+				"@napi-rs/canvas",
+			) as { createCanvas: typeof createCanvas };
+			this.canvas = create(width, height);
 		}
 
 		getContext(contextId: "2d") {
@@ -53,15 +71,19 @@ function frameTicks({
  */
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => TICKS_PER_SECOND,
-	evaluateAutomationOperationPolicy:
-		projectState.evaluateAutomationOperationPolicy,
+	evaluateAutomationOperationPolicy: (options: {
+		method: string;
+		status: string;
+	}) => nativeProjectState().evaluateAutomationOperationPolicy(options),
 	floorToFrame: ({ time, rate }: NativeFrameTime) =>
 		Math.floor(time / frameTicks({ rate })) * frameTicks({ rate }),
 	formatTimecode: ({ time }: { time: number }) =>
 		new Date((time / TICKS_PER_SECOND) * 1_000).toISOString().slice(11, 19),
-	evaluateProjectSnapshotRetention:
-		projectState.evaluateProjectSnapshotRetention,
-	scheduleFrameRange: projectState.scheduleFrameRange,
+	evaluateProjectSnapshotRetention: (
+		options: EvaluateSnapshotRetentionOptions,
+	) => nativeProjectState().evaluateProjectSnapshotRetention(options),
+	scheduleFrameRange: (options: unknown) =>
+		nativeProjectState().scheduleFrameRange(options),
 	guessTimecodeFormat: () => "HH:MM:SS",
 	isFrameAligned: ({ time, rate }: NativeFrameTime) =>
 		Number.isInteger(time / frameTicks({ rate })),
