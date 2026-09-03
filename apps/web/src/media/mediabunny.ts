@@ -130,6 +130,41 @@ export const extractTimelineAudio = async ({
 	return createWavBlob({ samples: interleavedSamples });
 };
 
+export const extractTimelineAudioRange = async ({
+	tracks,
+	mediaAssets,
+	startTicks,
+	endTicksExclusive,
+}: {
+	tracks: SceneTracks;
+	mediaAssets: MediaAsset[];
+	startTicks: number;
+	endTicksExclusive: number;
+}): Promise<Blob> => {
+	const duration = endTicksExclusive - startTicks;
+	if (
+		!Number.isSafeInteger(startTicks) ||
+		!Number.isSafeInteger(duration) ||
+		duration <= 0
+	)
+		throw new Error("audio range must be a positive safe tick interval");
+	const audioBuffer = await createTimelineAudioBuffer({
+		tracks,
+		mediaAssets,
+		duration,
+		startTime: startTicks,
+		sampleRate: SAMPLE_RATE,
+	});
+	if (!audioBuffer) {
+		const silentSamples = new Float32Array(
+			Math.max(1, Math.ceil((duration / TICKS_PER_SECOND) * SAMPLE_RATE)) *
+				NUM_CHANNELS,
+		);
+		return createWavBlob({ samples: silentSamples });
+	}
+	return createWavBlob({ samples: interleaveAudioBuffer({ audioBuffer }) });
+};
+
 function interleaveAudioBuffer({
 	audioBuffer,
 }: {

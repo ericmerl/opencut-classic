@@ -836,7 +836,11 @@ function operationAction(
 		toolName === "opencut_export_subtitles"
 	)
 		return "exported";
-	if (toolName === "opencut_render_preview_frame") return "processed";
+	if (
+		toolName === "opencut_render_preview_frame" ||
+		toolName === "opencut_render_preview_range"
+	)
+		return "processed";
 	if (
 		toolName === "opencut_queue_export" ||
 		toolName === "opencut_queue_export_batch"
@@ -844,7 +848,8 @@ function operationAction(
 		return "queued";
 	if (
 		toolName === "opencut_cancel_export_job" ||
-		toolName === "opencut_cancel_export_batch"
+		toolName === "opencut_cancel_export_batch" ||
+		toolName === "opencut_cancel_preview_range"
 	)
 		return "cancelled";
 	if (toolName === "opencut_record_export_inspection") return "inspected";
@@ -924,6 +929,8 @@ function receiptEvidence(receipt: OperationSaveReceipt) {
 
 function terminalEvidence(value: unknown) {
 	if (!isRecord(value)) return {};
+	const rangeEvidence = previewRangeTerminalEvidence(value);
+	if (rangeEvidence) return rangeEvidence;
 	const outputPath = stringField(value, "outputPath");
 	const sha256 = stringField(value, "sha256");
 	const bytes =
@@ -1005,6 +1012,70 @@ function terminalEvidence(value: unknown) {
 						},
 					]
 				: undefined,
+	};
+}
+
+function previewRangeTerminalEvidence(value: Record<string, unknown>) {
+	if (!Array.isArray(value.frames) || typeof value.receiptId !== "string")
+		return null;
+	const artifacts = value.frames.flatMap((candidate) => {
+		if (!isRecord(candidate)) return [];
+		const sha256 = stringField(candidate, "pngSha256");
+		const path = stringField(candidate, "path");
+		if (!sha256 || !path) return [];
+		return [
+			{
+				artifactId: sha256,
+				kind: "receipt" as const,
+				state: "verified" as const,
+				sha256,
+				bytes: typeof candidate.bytes === "number" ? candidate.bytes : null,
+				path,
+				mimeType: "image/png",
+			},
+		];
+	});
+	if (isRecord(value.audio)) {
+		const sha256 = stringField(value.audio, "sha256");
+		const path = stringField(value.audio, "path");
+		if (sha256 && path)
+			artifacts.push({
+				artifactId: sha256,
+				kind: "receipt" as const,
+				state: "verified" as const,
+				sha256,
+				bytes: typeof value.audio.bytes === "number" ? value.audio.bytes : null,
+				path,
+				mimeType: "audio/wav",
+			});
+	}
+	return {
+		artifacts,
+		checkpoints: [
+			{
+				checkpointId: value.receiptId,
+				kind: "job" as const,
+				state: "verified" as const,
+				recordedAt: new Date().toISOString(),
+				metadata: {
+					frameCount: artifacts.filter(
+						(artifact) => artifact.mimeType === "image/png",
+					).length,
+					scheduleSha256: stringField(value, "scheduleSha256"),
+					checksum: stringField(value, "checksum"),
+				},
+			},
+		],
+		affectedObjects: [
+			{
+				objectType: "file" as const,
+				objectId: value.receiptId,
+				action:
+					value.status === "cancelled"
+						? ("cancelled" as const)
+						: ("processed" as const),
+			},
+		],
 	};
 }
 
@@ -1212,6 +1283,19 @@ const MUTATOR_RESULT_CONTRACTS = {
 	),
 	opencut_export_project: contract(["exported", "replayed"], rejected),
 	opencut_render_preview_frame: contract(["rendered", "replayed"], rejected),
+	opencut_render_preview_range: contract(
+		["rendered", "replayed", "cancelled"],
+		rejected,
+	),
+	opencut_cancel_preview_range: contract(
+		[
+			"cancellation-requested",
+			"cancelled",
+			"already-succeeded",
+			"already-failed",
+		],
+		rejectedOrMissing,
+	),
 	opencut_queue_export: contract(
 		[],
 		rejected,

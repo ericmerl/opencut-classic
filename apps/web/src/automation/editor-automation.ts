@@ -157,6 +157,8 @@ import type {
 	AutomationExportResult,
 	AutomationRenderPreviewFrameRequest,
 	AutomationRenderPreviewFrameResult,
+	AutomationRenderPreviewRangeRequest,
+	AutomationRenderPreviewRangeResult,
 	AutomationImportAppliedResult,
 	AutomationImportRequest,
 	AutomationImportResult,
@@ -192,6 +194,7 @@ import type {
 	AutomationUndoResult,
 } from "./types";
 import { renderAutomationPreviewFrame } from "./render-preview-frame";
+import { renderAutomationPreviewRange } from "./render-preview-range";
 import {
 	buildEditorProjectContentInput,
 	hashEditorProjectContent,
@@ -617,7 +620,7 @@ export class EditorAutomation {
 		);
 		if (
 			!readback ||
-			(method === "render_preview_frame"
+			(method === "render_preview_frame" || method === "render_preview_range"
 				? !receiptSceneExists
 				: readback.project.currentSceneId !== resultState.sceneId)
 		) {
@@ -766,6 +769,34 @@ export class EditorAutomation {
 						revision: this.revision,
 						contentIdentity: verified,
 					};
+				},
+			});
+		});
+	}
+
+	renderPreviewRange(
+		request: AutomationRenderPreviewRangeRequest,
+	): Promise<AutomationRenderPreviewRangeResult> {
+		return this.enqueue(async () => {
+			this.reconcileExternalChanges();
+			const identity = await this.refreshContentIdentity();
+			if (identity.status !== "hashed") {
+				return {
+					status: "rejected",
+					operationId: request.operationId,
+					code: "SOURCE_CONFLICT",
+					reason: "project content identity is blocked",
+				};
+			}
+			return renderAutomationPreviewRange({
+				editor: this.editor,
+				request,
+				revision: this.revision,
+				contentHash: identity.hash.digest,
+				verifyCurrentSource: async () => {
+					this.reconcileExternalChanges();
+					const verified = await this.refreshContentIdentity();
+					return { revision: this.revision, contentIdentity: verified };
 				},
 			});
 		});

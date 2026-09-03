@@ -178,6 +178,100 @@ export const listPreviewFramesInputSchema = z
 	})
 	.strict();
 
+const previewRangeSelectorSchema = z.discriminatedUnion("kind", [
+	z
+		.object({
+			kind: z.literal("media-time"),
+			startTicks: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+			endTicksExclusive: z
+				.number()
+				.int()
+				.positive()
+				.max(Number.MAX_SAFE_INTEGER),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("frame-index"),
+			startFrameIndex: z.number().int().min(0).max(10_000_000),
+			endFrameIndexExclusive: z.number().int().positive().max(10_000_001),
+		})
+		.strict(),
+]);
+
+export const renderPreviewRangeInputSchema = z
+	.object({
+		contractVersion: z.literal(1),
+		bridgeProtocolVersion: z.literal(2),
+		expectedConnectionIdentity: connectionIdentitySchema,
+		operationId: operationIdSchema,
+		projectId: z.string().min(1),
+		sceneId: z.string().min(1),
+		expectedRevision: z.number().int().nonnegative(),
+		expectedProjectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+		expectedWriteVersion: z.number().int().positive(),
+		saveReceiptOperationId: operationIdSchema,
+		expectedSaveReceiptId: z.string().min(1).max(512),
+		range: previewRangeSelectorSchema,
+		canvasSize: z
+			.object({
+				width: z.number().int().min(16).max(4096),
+				height: z.number().int().min(16).max(4096),
+			})
+			.strict(),
+		output: z
+			.object({
+				kind: z.literal("frame-sequence"),
+				frameFormat: z.literal("png"),
+				includeAudio: z.boolean().default(false),
+			})
+			.strict(),
+	})
+	.strict()
+	.superRefine((value, context) => {
+		if (value.canvasSize.width * value.canvasSize.height > 16_777_216)
+			context.addIssue({
+				code: "custom",
+				path: ["canvasSize"],
+				message: "preview canvas exceeds the 16777216-pixel limit",
+				input: value,
+			});
+		const start =
+			value.range.kind === "media-time"
+				? value.range.startTicks
+				: value.range.startFrameIndex;
+		const end =
+			value.range.kind === "media-time"
+				? value.range.endTicksExclusive
+				: value.range.endFrameIndexExclusive;
+		if (end <= start)
+			context.addIssue({
+				code: "custom",
+				path: ["range"],
+				message: "preview range end must be greater than its start",
+				input: value,
+			});
+	});
+
+export const cancelPreviewRangeInputSchema = withMutationOperationId(
+	z.object({
+		operationId: legacyCompatibleOperationIdSchema,
+		targetOperationId: operationIdSchema,
+	}),
+);
+
+export const getPreviewRangeInputSchema = z
+	.object({ receiptId: z.string().min(1).max(512) })
+	.strict();
+
+export const listPreviewRangesInputSchema = z
+	.object({
+		projectId: z.string().min(1).optional(),
+		sceneId: z.string().min(1).optional(),
+		limit: z.number().int().min(1).max(100).default(25),
+	})
+	.strict();
+
 const backgroundSchema = z.discriminatedUnion("type", [
 	z.object({ type: z.literal("color"), color: z.string().min(1) }).strict(),
 	z

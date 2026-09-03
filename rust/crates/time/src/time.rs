@@ -1,8 +1,14 @@
 mod frame_rate;
+mod frame_schedule;
 mod media_time;
 mod timecode;
 
 pub use frame_rate::FrameRate;
+pub use frame_schedule::{
+    FrameRangeLimits, FrameRangePolicy, FrameRangeSchedule, FrameRangeScheduleErrorCode,
+    FrameRangeScheduleEvaluation, FrameRangeSelector, ScheduleFrameRangeOptions, ScheduledFrame,
+    schedule_frame_range,
+};
 pub use media_time::{
     FloorToFrameOptions, IsFrameAlignedOptions, LastFrameTimeOptions, MediaTime,
     MediaTimeAddOptions, MediaTimeClampOptions, MediaTimeFromFrameOptions,

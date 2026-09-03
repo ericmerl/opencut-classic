@@ -19,6 +19,7 @@ import type {
 	EditPlanEvaluation,
 	ResolvedEditOperation,
 	FrameRate,
+	FrameRangeSchedule,
 	ObjectIdAllocation,
 } from "opencut-wasm";
 import type {
@@ -1418,6 +1419,79 @@ export type AutomationRenderPreviewFrameResult =
 				| "TIME_OUT_OF_BOUNDS"
 				| "TIME_ALIGNMENT_REQUIRED"
 				| "UNSUPPORTED_FRAME_RATE"
+				| "FONT_READINESS_FAILED"
+				| "RENDERER_FAILED";
+			reason: string;
+	  };
+
+export type AutomationPreviewRangeSelector =
+	| { kind: "media-time"; startTicks: number; endTicksExclusive: number }
+	| {
+			kind: "frame-index";
+			startFrameIndex: number;
+			endFrameIndexExclusive: number;
+	  };
+
+export interface AutomationRenderPreviewRangeRequest {
+	contractVersion: 1;
+	bridgeProtocolVersion: 2;
+	expectedConnectionIdentity: AutomationRenderPreviewFrameRequest["expectedConnectionIdentity"];
+	operationId: string;
+	projectId: string;
+	sceneId: string;
+	expectedRevision: number;
+	expectedProjectContentHash: string;
+	expectedWriteVersion: number;
+	saveReceiptOperationId: string;
+	expectedSaveReceiptId: string;
+	range: AutomationPreviewRangeSelector;
+	canvasSize: TCanvasSize;
+	output: { kind: "frame-sequence"; frameFormat: "png"; includeAudio: boolean };
+	baseUrl: string;
+	limits: { maxDurationTicks: number; maxFrames: number };
+	capabilitySnapshotHash: string;
+	wasmSha256?: string;
+}
+
+export type AutomationRenderPreviewRangeResult =
+	| {
+			status: "rendered" | "cancelled";
+			contractVersion: 1;
+			operationId: string;
+			projectId: string;
+			sceneId: string;
+			revision: number;
+			contentIdentity: ProjectContentHashResult;
+			writeVersion: number;
+			saveReceiptId: string;
+			saveReceiptOperationId: string;
+			saveReceipt: AutomationSaveReceipt;
+			capabilitySnapshotHash: string;
+			schedule: FrameRangeSchedule;
+			fontReadiness: AutomationRenderPreviewFrameCompletedResult["fontReadiness"];
+			sourceVerification: AutomationRenderPreviewFrameCompletedResult["sourceVerification"];
+			renderer: Omit<
+				AutomationRenderPreviewFrameCompletedResult["renderer"],
+				"pipeline" | "encoder"
+			> & {
+				pipeline: "editor-native-exact-frame-sequence";
+				encoder: "browser-canvas-png-sequence";
+			};
+			editorState: AutomationRenderPreviewFrameCompletedResult["editorState"];
+	  }
+	| {
+			status: "conflict" | "rejected";
+			operationId: string;
+			code:
+				| "SOURCE_CONFLICT"
+				| "SAVE_RECEIPT_CONFLICT"
+				| "TIME_OUT_OF_BOUNDS"
+				| "INVALID_RANGE"
+				| "EMPTY_RANGE"
+				| "RANGE_DURATION_LIMIT_EXCEEDED"
+				| "RANGE_FRAME_LIMIT_EXCEEDED"
+				| "UNSUPPORTED_FRAME_RATE"
+				| "ARITHMETIC_OVERFLOW"
 				| "FONT_READINESS_FAILED"
 				| "RENDERER_FAILED";
 			reason: string;

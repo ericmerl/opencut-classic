@@ -11,6 +11,7 @@ import type {
 	AutomationImportRequest,
 	AutomationImportSubtitlesRequest,
 	AutomationRenderPreviewFrameRequest,
+	AutomationRenderPreviewRangeRequest,
 	AutomationReadProjectRequest,
 	AutomationExportSubtitlesRequest,
 	AutomationOpenProjectRequest,
@@ -139,6 +140,12 @@ type BridgeRequest =
 			id: string;
 			method: "render_preview_frame";
 			params: AutomationRenderPreviewFrameRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "render_preview_range";
+			params: AutomationRenderPreviewRangeRequest;
 	  }
 	| {
 			kind: "request";
@@ -568,6 +575,8 @@ export class AutomationBridgeClient {
 				return this.automation.exportProject(message.params);
 			case "render_preview_frame":
 				return this.automation.renderPreviewFrame(message.params);
+			case "render_preview_range":
+				return this.automation.renderPreviewRange(message.params);
 			case "import_media":
 				return this.automation.importMedia(message.params);
 			case "import_subtitles":

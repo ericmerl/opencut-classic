@@ -4,6 +4,8 @@ import { ExportTickets } from "./export-tickets";
 import { MediaTickets } from "./media-tickets";
 import { SourceTickets } from "./source-tickets";
 import { PreviewEvidenceStore } from "./preview-evidence-store";
+import { RangePreviewEvidenceStore } from "./range-preview-evidence-store";
+import { readPreviewRangeLimits } from "./range-preview-config";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -64,6 +66,7 @@ export class EditorBridge {
 	readonly mediaTickets: MediaTickets;
 	readonly sourceTickets: SourceTickets;
 	readonly previewEvidence: PreviewEvidenceStore;
+	readonly rangePreviewEvidence: RangePreviewEvidenceStore;
 
 	constructor(
 		private options: {
@@ -72,6 +75,7 @@ export class EditorBridge {
 			requestTimeoutMs?: number;
 			serverInstanceId?: string;
 			previewEvidence?: PreviewEvidenceStore;
+			rangePreviewEvidence?: RangePreviewEvidenceStore;
 		},
 	) {
 		this.serverInstanceId = options.serverInstanceId ?? randomUUID();
@@ -83,6 +87,13 @@ export class EditorBridge {
 			new PreviewEvidenceStore(
 				join(tmpdir(), `opencut-preview-${this.serverInstanceId}`),
 				options.port,
+			);
+		this.rangePreviewEvidence =
+			options.rangePreviewEvidence ??
+			new RangePreviewEvidenceStore(
+				join(tmpdir(), `opencut-preview-ranges-${this.serverInstanceId}`),
+				options.port,
+				readPreviewRangeLimits(),
 			);
 		this.server = Bun.serve<SocketData>({
 			hostname: "127.0.0.1",
@@ -287,6 +298,9 @@ export class EditorBridge {
 		if (url.pathname.startsWith("/preview/")) {
 			return this.handlePreviewRequest(request, url, origin);
 		}
+		if (url.pathname.startsWith("/preview-range/")) {
+			return this.handlePreviewRangeRequest(request, url, origin);
+		}
 		if (url.pathname.startsWith("/bootstrap/")) {
 			return this.handleBootstrapRequest(request, url, origin);
 		}
@@ -449,6 +463,57 @@ export class EditorBridge {
 		} catch (error) {
 			return new Response(
 				error instanceof Error ? error.message : "Preview upload failed",
+				{ status: 409, headers },
+			);
+		}
+	}
+
+	private async handlePreviewRangeRequest(
+		request: Request,
+		url: URL,
+		origin: string | null,
+	): Promise<Response> {
+		const remainder = url.pathname.slice("/preview-range/".length);
+		const slash = remainder.indexOf("/");
+		const token = slash < 0 ? remainder : remainder.slice(0, slash);
+		const part = slash < 0 ? "" : remainder.slice(slash + 1);
+		const headers = transferCorsHeaders(origin);
+		if (request.method === "OPTIONS") {
+			return this.rangePreviewEvidence.hasTicket(token)
+				? new Response(null, { status: 204, headers })
+				: new Response("Expired or invalid preview-range ticket", {
+						status: 404,
+						headers,
+					});
+		}
+		if (request.method === "GET" && part === "status") {
+			try {
+				return Response.json(await this.rangePreviewEvidence.status(token), {
+					headers,
+				});
+			} catch (error) {
+				return new Response(
+					error instanceof Error
+						? error.message
+						: "Preview-range status failed",
+					{ status: 404, headers },
+				);
+			}
+		}
+		if (request.method !== "PUT") {
+			return new Response("Method not allowed", {
+				status: 405,
+				headers: { ...headers, Allow: "GET, PUT, OPTIONS" },
+			});
+		}
+		try {
+			return Response.json(
+				await this.rangePreviewEvidence.receive(token, part, request),
+				{ headers },
+			);
+		} catch (error) {
+			return new Response(
+				error instanceof Error ? error.message : "Preview-range upload failed",
 				{ status: 409, headers },
 			);
 		}
@@ -803,7 +868,8 @@ function transferCorsHeaders(origin: string | null): Record<string, string> {
 	return {
 		"Access-Control-Allow-Origin": origin ?? "http://127.0.0.1",
 		"Access-Control-Allow-Methods": "PUT, OPTIONS",
-		"Access-Control-Allow-Headers": "Content-Type",
+		"Access-Control-Allow-Headers":
+			"Content-Type, X-OpenCut-Pixel-Rgba-Sha256, X-OpenCut-Audio-Start-Ticks, X-OpenCut-Audio-End-Ticks-Exclusive",
 		"Cache-Control": "no-store",
 	};
 }

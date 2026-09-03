@@ -1,4 +1,5 @@
 import { TICKS_PER_SECOND } from "@/wasm";
+import type { FrameRangeScheduleEvaluation } from "opencut-wasm";
 
 export type FrameTimeSelector =
 	| { kind: "frame-index"; frameIndex: number }
@@ -92,4 +93,22 @@ export function requireFrameSchedule(fps: {
 	});
 	if (resolved.status === "error") throw new Error(resolved.reason);
 	return { ticksPerFrame: resolved.ticksPerFrame };
+}
+
+export async function scheduleFrameRange(options: {
+	rate: { numerator: number; denominator: number };
+	sceneDurationTicks: number;
+	range:
+		| { kind: "media-time"; startTicks: number; endTicksExclusive: number }
+		| {
+				kind: "frame-index";
+				startFrameIndex: number;
+				endFrameIndexExclusive: number;
+		  };
+	limits: { maxDurationTicks: number; maxFrames: number };
+}): Promise<FrameRangeScheduleEvaluation> {
+	const { scheduleFrameRange: scheduleFrameRangeNative } = await import(
+		"opencut-wasm"
+	);
+	return scheduleFrameRangeNative(options);
 }

@@ -9,6 +9,7 @@
   "scripts": {
     "build:tools": "turbo run build --filter=@opencut/tools",
     "build:wasm": "wasm-pack build rust/wasm --target bundler --out-dir pkg",
+    "build:wasm:node": "wasm-pack build rust/wasm --target nodejs --out-dir pkg-node",
     "build:web": "turbo run build --filter=@opencut/web",
     "deploy:web": "bun run build:wasm && turbo run deploy --filter=@opencut/web",
     "dev:tools": "turbo run dev --filter=@opencut/tools",
@@ -18,7 +19,7 @@
     "generate:fonts": "npx tsx apps/web/scripts/generate-font-sprites.ts",
     "lint:web": "eslint apps/web/src --ext .ts,.tsx",
     "lint:web:fix": "eslint apps/web/src --ext .ts,.tsx --fix",
-    "mcp": "bun run packages/mcp-server/src/index.ts",
+    "mcp": "bun run build:wasm:node && bun run packages/mcp-server/src/index.ts",
     "preview:web": "bun run build:wasm && turbo run preview --filter=@opencut/web",
     "publish:wasm": "bun run build:wasm && npm publish rust/wasm/pkg --access public",
     "start:tools": "turbo run start --filter=@opencut/tools",

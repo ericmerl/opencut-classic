@@ -96,12 +96,18 @@ pub fn evaluate_automation_operation_policy(
         | "attach_matte" => matches!(options.status.as_str(), "applied" | "replayed"),
         "undo" => options.status == "undone",
         "render_preview_frame" => matches!(options.status.as_str(), "rendered" | "replayed"),
+        "render_preview_range" => {
+            matches!(
+                options.status.as_str(),
+                "rendered" | "replayed" | "cancelled"
+            )
+        }
         _ => false,
     };
     let retain_snapshot = durable_success
         && !matches!(
             options.method.as_str(),
-            "open_project" | "render_preview_frame"
+            "open_project" | "render_preview_frame" | "render_preview_range"
         );
 
     AutomationOperationPolicy {
@@ -264,6 +270,8 @@ mod tests {
         for (method, status) in [
             ("open_project", "opened"),
             ("render_preview_frame", "rendered"),
+            ("render_preview_range", "rendered"),
+            ("render_preview_range", "cancelled"),
         ] {
             assert_eq!(
                 evaluate_automation_operation_policy(EvaluateAutomationOperationPolicyOptions {

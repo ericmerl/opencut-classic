@@ -44,15 +44,15 @@ const webTestEnvironment = {
 const realVideoEnvironment = await prepareRealVideoMilestone();
 
 run({
-	label: "MCP server tests",
-	command: process.execPath,
-	args: ["test", mcpRoot],
+	label: "Shared native WASM test runtime",
+	command: wasmPack,
+	args: ["build", "rust/wasm", "--target", "nodejs", "--out-dir", "pkg-node"],
 });
 
 run({
-	label: "Project-state WASM test runtime",
-	command: wasmPack,
-	args: ["build", "rust/wasm", "--target", "nodejs", "--out-dir", "pkg-node"],
+	label: "MCP server tests",
+	command: process.execPath,
+	args: ["test", mcpRoot],
 });
 
 const webTests = Array.from(

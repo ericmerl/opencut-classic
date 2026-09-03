@@ -99,6 +99,16 @@ export const MUTATING_TOOL_MANIFEST = {
 		requiresSaveVerification: false,
 		protocolMutationPolicy: "v2-required",
 	},
+	opencut_render_preview_range: {
+		operationKind: "render-preview-range",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_cancel_preview_range: {
+		operationKind: "cancel-preview-range",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
 	opencut_queue_export: {
 		operationKind: "queue-export",
 		requiresSaveVerification: false,

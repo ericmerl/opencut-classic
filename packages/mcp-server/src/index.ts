@@ -19,6 +19,9 @@ import { SubjectTrackingService } from "./track-subject";
 import { OperationLedger } from "./operation-ledger";
 import { PreviewEvidenceStore } from "./preview-evidence-store";
 import { PreviewFrameService } from "./preview-frame-service";
+import { RangePreviewEvidenceStore } from "./range-preview-evidence-store";
+import { RangePreviewService } from "./range-preview-service";
+import { readPreviewRangeLimits } from "./range-preview-config";
 import { EditPlanPreflightStore } from "./edit-plan-preflight-store";
 import { EditPlanPreflightService } from "./edit-plan-preflight-service";
 import { EDIT_PLAN_PREFLIGHT_SCHEMA } from "./edit-plan-preflight-contract";
@@ -81,10 +84,14 @@ import {
 	saveProjectInputSchema,
 	getSaveReceiptInputSchema,
 	getPreviewFrameInputSchema,
+	getPreviewRangeInputSchema,
 	getEditPlanPreflightInputSchema,
 	listEditPlanPreflightsInputSchema,
 	listPreviewFramesInputSchema,
+	listPreviewRangesInputSchema,
 	renderPreviewFrameInputSchema,
+	renderPreviewRangeInputSchema,
+	cancelPreviewRangeInputSchema,
 	preflightEditPlanInputSchema,
 	queueExportInputSchema,
 	queueExportBatchInputSchema,
@@ -131,10 +138,29 @@ const previewEvidence = new PreviewEvidenceStore(
 	port,
 );
 await previewEvidence.readiness();
-const bridge = new EditorBridge({ token, port, previewEvidence });
+const previewRangeLimits = readPreviewRangeLimits();
+const rangePreviewEvidence = new RangePreviewEvidenceStore(
+	process.env.OPENCUT_PREVIEW_RANGE_EVIDENCE_DIR ??
+		join(exportReceipts.directory, "preview-range-evidence"),
+	port,
+	previewRangeLimits,
+);
+await rangePreviewEvidence.readiness();
+const bridge = new EditorBridge({
+	token,
+	port,
+	previewEvidence,
+	rangePreviewEvidence,
+});
 let capabilitySnapshots: CapabilitySnapshotService;
 const previewFrames = new PreviewFrameService(bridge, previewEvidence, () =>
 	capabilitySnapshots.capture(),
+);
+const previewRanges = new RangePreviewService(
+	bridge,
+	rangePreviewEvidence,
+	previewRangeLimits,
+	() => capabilitySnapshots.capture(),
 );
 const editPlanPreflightStore = new EditPlanPreflightStore(
 	process.env.OPENCUT_EDIT_PLAN_PREFLIGHT_DIR ??
@@ -514,6 +540,72 @@ function createServer(): McpServer {
 			inputSchema: listPreviewFramesInputSchema,
 		},
 		async (input) => toolResult(await previewFrames.list(input)),
+	);
+
+	server.registerTool(
+		"opencut_render_preview_range",
+		{
+			description:
+				"Render a configuration-bounded export-quality PNG frame sequence with exact Rust-scheduled timestamps and hashes, plus optional PCM WAV audio, durable progress, and cancellation.",
+			inputSchema: renderPreviewRangeInputSchema,
+		},
+		async (input) => {
+			await assertSaveReceiptEditorAffinity(input);
+			const ledgerRecord = await operationLedger.get(input.operationId);
+			if (ledgerRecord?.record.status === "completed") {
+				const receipt = await previewRanges.verifyOperationReceipt(
+					input.operationId,
+				);
+				if (!receipt)
+					throw new Error(
+						"terminal preview-range operation has no durable evidence receipt",
+					);
+			}
+			return toolResult(
+				await ledgerBoundary.execute(
+					"opencut_render_preview_range",
+					input,
+					(context) => previewRanges.render(input, context),
+					(context) => previewRanges.recover(input, context),
+				),
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_cancel_preview_range",
+		{
+			description:
+				"Durably request cancellation of a running inline preview range; the renderer observes it no later than the next frame upload.",
+			inputSchema: cancelPreviewRangeInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_cancel_preview_range",
+					input,
+					() => previewRanges.cancel(input.targetOperationId),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_preview_range",
+		{
+			description:
+				"Read live progress or an integrity-verified terminal preview-range receipt.",
+			inputSchema: getPreviewRangeInputSchema,
+		},
+		async ({ receiptId }) => toolResult(await previewRanges.get(receiptId)),
+	);
+
+	server.registerTool(
+		"opencut_list_preview_ranges",
+		{
+			description: "List durable preview-range progress and receipts.",
+			inputSchema: listPreviewRangesInputSchema,
+		},
+		async (input) => toolResult(await previewRanges.list(input)),
 	);
 
 	server.registerTool(

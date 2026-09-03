@@ -203,16 +203,25 @@ export function resolveElementAudioAsset({
 export function collectAudibleCandidates({
 	tracks,
 	mediaAssets,
+	window,
 }: {
 	tracks: SceneTracks;
 	mediaAssets: MediaAsset[];
+	window?: { startTicks: number; endTicksExclusive: number };
 }): AudibleElementCandidate[] {
 	const mediaMap = new Map(mediaAssets.map((a) => [a.id, a]));
 	const candidates: AudibleElementCandidate[] = [];
 
-	for (const { element, trackMuted, localTimeOffset } of flattenAudioEntries({
-		tracks,
-	})) {
+	const entries = window
+		? flattenAudioWindow({
+				tracks,
+				windowStart: window.startTicks,
+				windowEnd: window.endTicksExclusive,
+				outputStart: 0,
+				inheritedMuted: false,
+			})
+		: flattenAudioEntries({ tracks });
+	for (const { element, trackMuted, localTimeOffset } of entries) {
 		if (trackMuted) continue;
 		if (element.duration <= 0) continue;
 
@@ -257,12 +266,14 @@ export async function collectAudioElements({
 	tracks,
 	mediaAssets,
 	audioContext,
+	window,
 }: {
 	tracks: SceneTracks;
 	mediaAssets: MediaAsset[];
 	audioContext: AudioContext;
+	window?: { startTicks: number; endTicksExclusive: number };
 }): Promise<CollectedAudioElement[]> {
-	const candidates = collectAudibleCandidates({ tracks, mediaAssets });
+	const candidates = collectAudibleCandidates({ tracks, mediaAssets, window });
 	const mediaMap = new Map<string, MediaAsset>(
 		mediaAssets.map((media) => [media.id, media]),
 	);
@@ -772,6 +783,7 @@ export async function createTimelineAudioBuffer({
 	sampleRate = EXPORT_SAMPLE_RATE,
 	audioContext,
 	applyMastering = true,
+	startTime = 0,
 }: {
 	tracks: SceneTracks;
 	mediaAssets: MediaAsset[];
@@ -779,6 +791,7 @@ export async function createTimelineAudioBuffer({
 	sampleRate?: number;
 	audioContext?: AudioContext;
 	applyMastering?: boolean;
+	startTime?: number;
 }): Promise<AudioBuffer | null> {
 	const context = audioContext ?? createAudioContext({ sampleRate });
 
@@ -786,6 +799,14 @@ export async function createTimelineAudioBuffer({
 		tracks,
 		mediaAssets,
 		audioContext: context,
+		...(startTime > 0
+			? {
+					window: {
+						startTicks: startTime,
+						endTicksExclusive: startTime + duration,
+					},
+				}
+			: {}),
 	});
 
 	if (audioElements.length === 0) return null;

@@ -142,4 +142,39 @@ describe("compound audio flattening", () => {
 			}),
 		).toHaveLength(0);
 	});
+
+	test("clips a nonzero preview range and shifts it to audio origin zero", () => {
+		const mediaAssets = [
+			{
+				id: "video-media",
+				name: "video.mp4",
+				type: "video" as const,
+				file: new File([], "video.mp4", { type: "video/mp4" }),
+				hasAudio: true,
+			},
+			{
+				id: "audio-media",
+				name: "audio.wav",
+				type: "audio" as const,
+				file: new File([], "audio.wav", { type: "audio/wav" }),
+			},
+		];
+		const candidates = collectAudibleCandidates({
+			tracks: fixture(),
+			mediaAssets,
+			window: { startTicks: 1_025, endTicksExclusive: 1_075 },
+		});
+		expect(candidates.map(({ element }) => element)).toEqual([
+			expect.objectContaining({
+				id: "nested-video",
+				startTime: 0,
+				duration: 50,
+			}),
+			expect.objectContaining({
+				id: "nested-audio",
+				startTime: 0,
+				duration: 25,
+			}),
+		]);
+	});
 });

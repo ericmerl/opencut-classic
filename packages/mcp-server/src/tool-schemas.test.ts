@@ -22,6 +22,7 @@ import {
 	queueExportBatchInputSchema,
 	queueExportInputSchema,
 	recordExportInspectionInputSchema,
+	renderPreviewRangeInputSchema,
 	runExportJobsInputSchema,
 	searchStickersInputSchema,
 	startEditorWorkerInputSchema,
@@ -41,6 +42,67 @@ const connectionIdentity = {
 	editorSessionId: "session-1",
 	connectionGeneration: 1,
 };
+
+describe("OpenCut preview range contract", () => {
+	const base = {
+		contractVersion: 1 as const,
+		bridgeProtocolVersion: 2 as const,
+		expectedConnectionIdentity: connectionIdentity,
+		operationId: "range-1",
+		projectId: "project-1",
+		sceneId: "scene-1",
+		expectedRevision: 1,
+		expectedProjectContentHash: "a".repeat(64),
+		expectedWriteVersion: 2,
+		saveReceiptOperationId: "save-1",
+		expectedSaveReceiptId: "save:1",
+		canvasSize: { width: 320, height: 180 },
+		output: { kind: "frame-sequence" as const, frameFormat: "png" as const },
+	};
+
+	test("accepts half-open time and frame-index selectors", () => {
+		expect(
+			renderPreviewRangeInputSchema.parse({
+				...base,
+				range: {
+					kind: "media-time",
+					startTicks: 0,
+					endTicksExclusive: 120_000,
+				},
+			}).output.includeAudio,
+		).toBe(false);
+		expect(
+			renderPreviewRangeInputSchema.safeParse({
+				...base,
+				range: {
+					kind: "frame-index",
+					startFrameIndex: 3,
+					endFrameIndexExclusive: 7,
+				},
+			}).success,
+		).toBe(true);
+	});
+
+	test("rejects reversed ranges and accepts the configured maximum canvas", () => {
+		expect(
+			renderPreviewRangeInputSchema.safeParse({
+				...base,
+				range: { kind: "media-time", startTicks: 10, endTicksExclusive: 10 },
+			}).success,
+		).toBe(false);
+		expect(
+			renderPreviewRangeInputSchema.safeParse({
+				...base,
+				canvasSize: { width: 4096, height: 4096 },
+				range: {
+					kind: "frame-index",
+					startFrameIndex: 0,
+					endFrameIndexExclusive: 1,
+				},
+			}).success,
+		).toBe(true);
+	});
+});
 
 describe("OpenCut bridge affinity contract", () => {
 	const schema = withConnectionAffinity(timelineQueryInputSchema);
@@ -94,8 +156,10 @@ describe("OpenCut bridge affinity contract", () => {
 		).toBe(true);
 	});
 
-		test("generates isolated degraded IDs only when legacy callers omit them", () => {
-		const start = startEditorWorkerInputSchema.parse({ projectId: "project-1" });
+	test("generates isolated degraded IDs only when legacy callers omit them", () => {
+		const start = startEditorWorkerInputSchema.parse({
+			projectId: "project-1",
+		});
 		const stop = stopEditorWorkerInputSchema.parse({});
 		const undo = withProjectMutationSafety(undoInputSchema).parse({
 			projectId: "project-1",

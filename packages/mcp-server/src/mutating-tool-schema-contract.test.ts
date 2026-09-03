@@ -9,6 +9,7 @@ import {
 	attachMatteInputSchema,
 	cancelExportBatchInputSchema,
 	cancelExportJobInputSchema,
+	cancelPreviewRangeInputSchema,
 	cleanAudioInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
@@ -23,6 +24,7 @@ import {
 	queueExportInputSchema,
 	recordExportInspectionInputSchema,
 	renderPreviewFrameInputSchema,
+	renderPreviewRangeInputSchema,
 	runExportJobsInputSchema,
 	saveProjectInputSchema,
 	startEditorWorkerInputSchema,
@@ -239,10 +241,37 @@ const cases: SchemaCase[] = [
 		},
 		v2Only: true,
 	},
+	{
+		name: "opencut_render_preview_range",
+		schema: renderPreviewRangeInputSchema,
+		input: {
+			contractVersion: 1,
+			projectId: "project-1",
+			sceneId: "scene-1",
+			expectedRevision: 1,
+			expectedProjectContentHash: hash,
+			expectedWriteVersion: 1,
+			saveReceiptOperationId: "save-operation",
+			expectedSaveReceiptId: "save:project-1:1",
+			range: { kind: "media-time", startTicks: 0, endTicksExclusive: 120_000 },
+			canvasSize: { width: 320, height: 180 },
+			output: {
+				kind: "frame-sequence",
+				frameFormat: "png",
+				includeAudio: false,
+			},
+		},
+		v2Only: true,
+	},
+	{
+		name: "opencut_cancel_preview_range",
+		schema: cancelPreviewRangeInputSchema,
+		input: { targetOperationId: "range-operation" },
+	},
 ];
 
 describe("all mutating public MCP schema versions", () => {
-	test("covers exactly the 26 registered mutation identities", () => {
+	test("covers exactly the 28 registered mutation identities", () => {
 		expect(cases.map(({ name }) => String(name)).sort()).toEqual(
 			Object.keys(MUTATING_TOOL_MANIFEST).map(String).sort(),
 		);

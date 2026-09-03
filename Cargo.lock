@@ -5711,6 +5711,7 @@ dependencies = [
  "bridge",
  "num-traits",
  "serde",
+ "serde_json",
  "tsify-next",
  "wasm-bindgen",
 ]

@@ -11,6 +11,7 @@ const projectState = require("../../../rust/wasm/pkg-node/opencut_wasm.js") as {
 	evaluateProjectSnapshotRetention: (
 		options: EvaluateSnapshotRetentionOptions,
 	) => SnapshotRetentionEvaluation;
+	scheduleFrameRange: (options: unknown) => unknown;
 };
 
 const TICKS_PER_SECOND = 120_000;
@@ -60,6 +61,7 @@ mock.module("opencut-wasm", () => ({
 		new Date((time / TICKS_PER_SECOND) * 1_000).toISOString().slice(11, 19),
 	evaluateProjectSnapshotRetention:
 		projectState.evaluateProjectSnapshotRetention,
+	scheduleFrameRange: projectState.scheduleFrameRange,
 	guessTimecodeFormat: () => "HH:MM:SS",
 	isFrameAligned: ({ time, rate }: NativeFrameTime) =>
 		Number.isInteger(time / frameTicks({ rate })),

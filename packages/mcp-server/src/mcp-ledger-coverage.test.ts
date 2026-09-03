@@ -26,7 +26,7 @@ describe("complete mutating handler ledger coverage", () => {
 		});
 	});
 
-	test("exactly replays and rejects changed reuse for all 26 mutators", async () => {
+	test("exactly replays and rejects changed reuse for all 28 mutators", async () => {
 		const ledger = new OperationLedger(directory);
 		const boundary = new McpLedgerBoundary(ledger, verificationBridge());
 		try {
@@ -281,6 +281,20 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 			status: "rendered",
 			operationId,
 			receiptId: `preview:${operationId}`,
+		};
+	}
+	if (toolName === "opencut_render_preview_range") {
+		return {
+			status: "rendered",
+			operationId,
+			receiptId: `preview-range:${operationId}`,
+		};
+	}
+	if (toolName === "opencut_cancel_preview_range") {
+		return {
+			status: "cancellation-requested",
+			operationId,
+			targetOperationId: "range-1",
 		};
 	}
 	const status = statusByTool[toolName];

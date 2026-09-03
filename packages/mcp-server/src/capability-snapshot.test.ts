@@ -62,6 +62,15 @@ describe("CapabilitySnapshotService", () => {
 				reason: "OpenCut web editor is not running or connected.",
 			},
 			queue: { jobs: { total: 3, queued: 1 }, batches: 2 },
+			previewRange: {
+				status: "ready",
+				endpointPolicy: "start-inclusive-end-exclusive",
+				limits: {
+					maxDurationSeconds: 10,
+					maxDurationTicks: 1_200_000,
+					maxFrames: 300,
+				},
+			},
 		});
 		expect((snapshot.tools as Record<string, unknown>).registered).toEqual(
 			REGISTERED_TOOL_NAMES,

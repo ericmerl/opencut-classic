@@ -7,6 +7,7 @@ import { stableSerialize } from "./matte-generation-data";
 import { OPERATION_LEDGER_SCHEMA_VERSION } from "./operation-ledger-schema";
 import { CURRENT_PROJECT_CONTENT_PROJECTION_VERSION } from "./project-content-version";
 import { EDIT_PLAN_OPERATION_VARIANTS } from "./tool-schemas";
+import { readPreviewRangeLimits } from "./range-preview-config";
 
 export const CAPABILITY_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
@@ -28,6 +29,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_attach_matte",
 	"opencut_cancel_export_batch",
 	"opencut_cancel_export_job",
+	"opencut_cancel_preview_range",
 	"opencut_capabilities",
 	"opencut_clean_audio",
 	"opencut_connection_status",
@@ -41,6 +43,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_get_export_receipt",
 	"opencut_get_operation",
 	"opencut_get_preview_frame",
+	"opencut_get_preview_range",
 	"opencut_get_project",
 	"opencut_get_save_receipt",
 	"opencut_import_media",
@@ -51,6 +54,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_list_export_jobs",
 	"opencut_list_operation_history",
 	"opencut_list_preview_frames",
+	"opencut_list_preview_ranges",
 	"opencut_list_projects",
 	"opencut_list_visual_assets",
 	"opencut_normalize_audio",
@@ -61,6 +65,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_queue_export_batch",
 	"opencut_record_export_inspection",
 	"opencut_render_preview_frame",
+	"opencut_render_preview_range",
 	"opencut_run_export_jobs",
 	"opencut_save_project",
 	"opencut_search_stickers",
@@ -169,6 +174,7 @@ export class CapabilitySnapshotService {
 				this.readWasmArtifact(),
 			]);
 		const capturedAt = this.now().toISOString();
+		const previewRangeLimits = readPreviewRangeLimits(this.environment);
 		const editor = {
 			status: bridgeStatus.connected ? "ready" : "unavailable",
 			connected: bridgeStatus.connected,
@@ -204,10 +210,22 @@ export class CapabilitySnapshotService {
 				exportJob: 1,
 				exportReceipt: 1,
 				previewReceipt: 2,
+				previewRangeReceipt: 1,
 				projectStorage: 31,
 			},
 			projections: {
 				projectContent: CURRENT_PROJECT_CONTENT_PROJECTION_VERSION,
+			},
+			previewRange: {
+				status: "ready",
+				mode: "inline",
+				outputs: ["frame-sequence"],
+				frameCodec: "image/png",
+				audio: { supported: true, codec: "pcm-s16le", container: "audio/wav" },
+				endpointPolicy: "start-inclusive-end-exclusive",
+				limits: previewRangeLimits,
+				cancellationObservationBound:
+					"next-completed-frame-upload; during-audio: 100ms-poll-interval-plus-local-status-round-trip, terminal-after-extraction-cleanup",
 			},
 			instance: {
 				serverInstanceId: bridgeStatus.serverInstanceId,
