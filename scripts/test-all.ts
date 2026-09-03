@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { availableParallelism, homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
 const repositoryRoot = resolve(import.meta.dir, "..");
@@ -59,17 +59,9 @@ const webTests = Array.from(
 	}),
 )
 	.map((path) => join(webRoot, path))
-	.sort((left, right) => left.localeCompare(right, "en"));
+	.sort(webTestOrder);
 
-console.log(`\n==> Web tests (${webTests.length} isolated processes)`);
-for (const testPath of webTests) {
-	run({
-		label: testPath.slice(repositoryRoot.length + 1),
-		command: process.execPath,
-		args: ["test", "--preload", webPreload, testPath],
-		env: webTestEnvironment,
-	});
-}
+await runWebTests(webTests);
 
 run({
 	label: "Rust workspace tests",
@@ -79,6 +71,80 @@ run({
 
 if (realVideoEnvironment) runRealVideoMilestone(realVideoEnvironment);
 console.log("\nAll configured test suites passed.");
+
+/**
+ * Every web suite runs in its own process so that one file's module mocks and
+ * global patches cannot reach another. Those processes are independent, and
+ * each spends far longer starting up than testing, so run several at once.
+ *
+ * The pool stays at or below eight: Bun crashes intermittently under sixteen
+ * concurrent test runners, and the timing-sensitive suites need spare cores to
+ * meet their own deadlines. Set OPENCUT_TEST_WEB_WORKERS=1 to restore the fully
+ * sequential run.
+ */
+async function runWebTests(testPaths: string[]): Promise<void> {
+	const workers = Math.max(1, Math.min(webWorkerLimit(), testPaths.length));
+	console.log(
+		`\n==> Web tests (${testPaths.length} isolated processes, ${workers} at a time)`,
+	);
+
+	const queue = testPaths.slice();
+	const failures: string[] = [];
+	async function consume(): Promise<void> {
+		for (let next = queue.shift(); next; next = queue.shift()) {
+			const label = next.slice(repositoryRoot.length + 1);
+			const child = Bun.spawn(
+				[process.execPath, "test", "--preload", webPreload, next],
+				{
+					cwd: repositoryRoot,
+					env: webTestEnvironment,
+					stdin: "ignore",
+					stdout: "pipe",
+					stderr: "pipe",
+				},
+			);
+			const [exitCode, stdout, stderr] = await Promise.all([
+				child.exited,
+				new Response(child.stdout).text(),
+				new Response(child.stderr).text(),
+			]);
+			console.log(`\n==> ${label}`);
+			process.stdout.write(stdout);
+			process.stderr.write(stderr);
+			if (exitCode === 0) continue;
+			console.error(`\nERROR: ${label}: exited with status ${exitCode}`);
+			failures.push(label);
+		}
+	}
+
+	await Promise.all(Array.from({ length: workers }, consume));
+	if (failures.length > 0) {
+		fail(
+			`Web tests: ${failures.length} of ${testPaths.length} suites failed\n  ${failures.join("\n  ")}`,
+		);
+	}
+}
+
+function webWorkerLimit(): number {
+	const configured = Number(process.env.OPENCUT_TEST_WEB_WORKERS?.trim());
+	if (Number.isInteger(configured) && configured > 0) return configured;
+	return Math.min(8, availableParallelism());
+}
+
+/**
+ * Longest-running suites first, so the pool never finishes its short work and
+ * then waits on one straggler. The native parity suite dominates because it
+ * builds and runs a Rust evaluator, and it holds cargo's build lock while it
+ * does, which would serialize anything scheduled beside it later in the run.
+ */
+function webTestOrder(left: string, right: string): number {
+	const ranked = Number(isSlowWebTest(right)) - Number(isSlowWebTest(left));
+	return ranked === 0 ? left.localeCompare(right, "en") : ranked;
+}
+
+function isSlowWebTest(path: string): boolean {
+	return path.endsWith("edit-plan-native-parity.test.ts");
+}
 
 /**
  * The Node-target WASM package is a pure function of the Rust sources, the
