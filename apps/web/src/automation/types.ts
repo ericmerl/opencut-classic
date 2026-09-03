@@ -857,6 +857,8 @@ export interface AutomationEditPlan {
 	projectId: string;
 	operationId: string;
 	expectedRevision: number;
+	expectedProjectContentHash?: string;
+	bridgeProtocolVersion?: 1 | 2;
 	description: string;
 	operations: AutomationEditOperation[];
 }
@@ -883,6 +885,14 @@ export type AutomationMutationResult =
 			operationId: string;
 			expectedRevision: number;
 			actualRevision: number;
+	  }
+	| {
+			status: "content-hash-conflict";
+			code: "CONTENT_HASH_CONFLICT";
+			operationId: string;
+			projectId: string;
+			expectedProjectContentHash: string;
+			actualProjectContentHash: string;
 	  }
 	| { status: "rejected"; operationId: string; reason: string }
 	| AutomationContentIdentityBlockedResult;

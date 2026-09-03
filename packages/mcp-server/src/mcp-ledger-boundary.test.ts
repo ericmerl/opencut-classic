@@ -10,6 +10,7 @@ describe("MCP ledger handler recovery", () => {
 	test("recovers pre-response browser commit through verification-only save without redispatch", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "opencut-browser-receipt-"));
 		const input = {
+			bridgeProtocolVersion: 2,
 			projectId: "project-1",
 			operationId: "browser-restart-edit",
 			expectedRevision: 7,
@@ -222,6 +223,55 @@ describe("MCP ledger handler recovery", () => {
 
 	afterEach(async () => {
 		await rm(directory, { recursive: true, force: true });
+	});
+
+	test("records the authoritative live hash when an edit plan is rejected", async () => {
+		const staleHash = "a".repeat(64);
+		const liveHash = "b".repeat(64);
+		let projectReads = 0;
+		const bridge = {
+			request: async (method: string) => {
+				if (method === "read_project") {
+					projectReads += 1;
+					return projectSnapshot("b");
+				}
+				throw new Error(`unexpected bridge request: ${method}`);
+			},
+		} as unknown as EditorBridge;
+		const ledger = new OperationLedger(directory);
+		const result = await new McpLedgerBoundary(ledger, bridge).execute(
+			"opencut_apply_edit_plan",
+			{
+				bridgeProtocolVersion: 2,
+				projectId: "project-1",
+				operationId: "stale-edit-plan",
+				expectedRevision: 8,
+				expectedProjectContentHash: staleHash,
+			},
+			async () => ({
+				status: "content-hash-conflict",
+				code: "CONTENT_HASH_CONFLICT",
+				operationId: "stale-edit-plan",
+				projectId: "project-1",
+				expectedProjectContentHash: staleHash,
+				actualProjectContentHash: liveHash,
+			}),
+		);
+
+		ledger.close();
+
+		expect(result).toMatchObject({
+			status: "content-hash-conflict",
+			code: "CONTENT_HASH_CONFLICT",
+			durableOperationStatus: "completed",
+			operationDisposition: "not-applied",
+			operationRecord: {
+				contentHashBefore: liveHash,
+				diagnostics: { code: "CONTENT_HASH_CONFLICT" },
+				affectedObjects: [],
+			},
+		});
+		expect(projectReads).toBe(1);
 	});
 
 	test("terminalizes a durable export receipt without rerendering", async () => {

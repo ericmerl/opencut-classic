@@ -158,6 +158,37 @@ integrationTest(
 				},
 			],
 		};
+		const staleHash =
+			importedContentHash === "0".repeat(64) ? "f".repeat(64) : "0".repeat(64);
+		const staleEdit = await first.callTool("opencut_apply_edit_plan", {
+			...editRequest,
+			operationId: "public-stale-content-hash",
+			expectedProjectContentHash: staleHash,
+		});
+		expect(staleEdit).toMatchObject({
+			status: "content-hash-conflict",
+			code: "CONTENT_HASH_CONFLICT",
+			expectedProjectContentHash: staleHash,
+			actualProjectContentHash: importedContentHash,
+			durableOperationStatus: "completed",
+			operationDisposition: "not-applied",
+			operationRecord: {
+				contentHashBefore: importedContentHash,
+				diagnostics: { code: "CONTENT_HASH_CONFLICT" },
+				affectedObjects: [],
+			},
+		});
+		const afterStaleEdit = await first.callTool(
+			"opencut_get_project",
+			affinity(initialIdentity),
+		);
+		expect(requireNumber(afterStaleEdit.revision, "revision")).toBe(
+			requireNumber(imported.revision, "revision"),
+		);
+		expect(requireProjectContentHash(afterStaleEdit)).toBe(importedContentHash);
+		expect(requireRecords(afterStaleEdit.elements, "elements")).toEqual(
+			requireRecords(importedSnapshot.elements, "elements"),
+		);
 		const edited = await first.callTool("opencut_apply_edit_plan", editRequest);
 		expect(edited.status).toBe("applied");
 		const editedSnapshot = requireRecord(edited.snapshot, "snapshot");

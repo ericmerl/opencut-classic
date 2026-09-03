@@ -71,6 +71,9 @@ export class McpLedgerBoundary {
 		const suppliedContentHash =
 			stringField(input, "expectedProjectContentHash") ??
 			stringField(input, "expectedContentHash");
+		const requiresVerifiedBrowserHash =
+			toolName === "opencut_apply_edit_plan" &&
+			input.bridgeProtocolVersion === 2;
 		const before = !operationUsesProjectPreconditions(toolName)
 			? {}
 			: existing
@@ -84,11 +87,15 @@ export class McpLedgerBoundary {
 							definition.operationKind === "create-project"
 								? null
 								: (stringField(input, "sceneId") ??
-									(suppliedContentHash ? null : existing.record.sceneId)),
+									(requiresVerifiedBrowserHash
+										? existing.record.sceneId
+										: suppliedContentHash
+											? null
+											: existing.record.sceneId)),
 						revision: existing.record.revisionBefore,
 						contentHash: existing.record.contentHashBefore,
 					}
-				: await this.resolveBeforeState(input);
+				: await this.resolveBeforeState(input, requiresVerifiedBrowserHash);
 		const result = await executeLedgeredOperation({
 			ledger: this.ledger,
 			input,
@@ -241,14 +248,18 @@ export class McpLedgerBoundary {
 		};
 	}
 
-	private async resolveBeforeState(input: ToolInput) {
+	private async resolveBeforeState(
+		input: ToolInput,
+		requiresVerifiedBrowserHash: boolean,
+	) {
 		const projectId = stringField(input, "projectId");
 		if (!projectId) return {};
-		let contentHash =
-			stringField(input, "expectedProjectContentHash") ??
-			stringField(input, "expectedContentHash");
+		let contentHash = requiresVerifiedBrowserHash
+			? null
+			: (stringField(input, "expectedProjectContentHash") ??
+				stringField(input, "expectedContentHash"));
 		let sceneId = stringField(input, "sceneId");
-		if (!contentHash) {
+		if (!contentHash || requiresVerifiedBrowserHash) {
 			const snapshot = await this.bridge.request("read_project", {
 				...protocolContext(input),
 				projectId,

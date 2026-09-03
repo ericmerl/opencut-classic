@@ -116,6 +116,7 @@ integrationTest(
 			);
 			const projectId = requireString(initial.projectId, "projectId");
 			const revision = requireNumber(initial.revision, "revision");
+			const initialContentHash = requireProjectContentHash(initial);
 			const inserted = requireRecord(
 				await bridge.request(
 					"apply_edit_plan",
@@ -125,6 +126,7 @@ integrationTest(
 						projectId,
 						operationId: "visual-integration-insert",
 						expectedRevision: revision,
+						expectedProjectContentHash: initialContentHash,
 						description: "Insert native visual automation fixtures",
 						operations: [
 							{
@@ -483,6 +485,7 @@ integrationTest(
 						projectId,
 						operationId: "save-barrier-observable-grade",
 						expectedRevision: requireNumber(imported.revision, "revision"),
+						expectedProjectContentHash: importedHash,
 						description: "Apply the complete realistic color grade",
 						operations: [
 							{
@@ -739,6 +742,7 @@ integrationTest(
 						projectId,
 						operationId: "timeline-integration-break-apart",
 						expectedRevision: requireNumber(reloaded.revision, "revision"),
+						expectedProjectContentHash: requireProjectContentHash(reloaded),
 						description: "Restore the nested linked elements",
 						operations: [
 							{

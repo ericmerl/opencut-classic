@@ -952,6 +952,30 @@ export class EditorAutomation {
 				actualRevision: this.revision,
 			};
 		}
+		if (plan.bridgeProtocolVersion === 2) {
+			const expectedProjectContentHash = plan.expectedProjectContentHash;
+			if (!expectedProjectContentHash) {
+				return {
+					status: "rejected",
+					operationId: plan.operationId,
+					reason: "bridge protocol v2 requires expectedProjectContentHash",
+				};
+			}
+			const identity = this.requireContentIdentity();
+			if (
+				identity.status === "hashed" &&
+				identity.hash.digest !== expectedProjectContentHash
+			) {
+				return {
+					status: "content-hash-conflict",
+					code: "CONTENT_HASH_CONFLICT",
+					operationId: plan.operationId,
+					projectId: activeProjectId,
+					expectedProjectContentHash,
+					actualProjectContentHash: identity.hash.digest,
+				};
+			}
+		}
 		const beforeSnapshot = this.buildSnapshot();
 
 		let commands: Command[];

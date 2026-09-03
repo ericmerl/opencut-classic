@@ -395,6 +395,76 @@ describe("EditorAutomation save barrier", () => {
 		expect(saveReceiptWrites).toBe(0);
 	});
 
+	test("rejects a stale v2 edit-plan hash before executing commands", async () => {
+		const project = buildProject("Hash guarded edit");
+		const scene = project.scenes[0]!;
+		let commandExecutions = 0;
+		let flushCalls = 0;
+		const automation = new EditorAutomation(
+			createEditor({
+				project,
+				scene,
+				onExecute: () => (commandExecutions += 1),
+				onFlush: () => (flushCalls += 1),
+			}),
+		);
+		const snapshot = await automation.readProject();
+		if (snapshot.contentIdentity.status !== "hashed")
+			throw new Error("hash blocked");
+		const currentHash = snapshot.contentIdentity.hash.digest;
+		const staleHash =
+			currentHash === "0".repeat(64) ? "f".repeat(64) : "0".repeat(64);
+
+		const rejected = await automation.applyEditPlan({
+			bridgeProtocolVersion: 2,
+			projectId: project.metadata.id,
+			operationId: "stale-hash-edit",
+			expectedRevision: snapshot.revision,
+			expectedProjectContentHash: staleHash,
+			description: "Must not execute",
+			operations: [
+				{
+					kind: "set_project_settings",
+					background: { type: "color", color: "#ffffff" },
+				},
+			],
+		});
+
+		expect(rejected).toEqual({
+			status: "content-hash-conflict",
+			code: "CONTENT_HASH_CONFLICT",
+			operationId: "stale-hash-edit",
+			projectId: project.metadata.id,
+			expectedProjectContentHash: staleHash,
+			actualProjectContentHash: currentHash,
+		});
+		expect({ commandExecutions, flushCalls }).toEqual({
+			commandExecutions: 0,
+			flushCalls: 0,
+		});
+
+		const applied = await automation.applyEditPlan({
+			bridgeProtocolVersion: 2,
+			projectId: project.metadata.id,
+			operationId: "current-hash-edit",
+			expectedRevision: snapshot.revision,
+			expectedProjectContentHash: currentHash,
+			description: "May execute",
+			operations: [
+				{
+					kind: "set_project_settings",
+					background: { type: "color", color: "#ffffff" },
+				},
+			],
+		});
+
+		expect(applied.status).toBe("applied");
+		expect({ commandExecutions, flushCalls }).toEqual({
+			commandExecutions: 1,
+			flushCalls: 1,
+		});
+	});
+
 	test("records exact-frame evidence for a persisted non-active scene", async () => {
 		const project = buildProject("Non-active evidence");
 		const activeScene = project.scenes[0]!;
@@ -479,16 +549,19 @@ function stableSerializeForTest(value: unknown): string {
 function createEditor({
 	project,
 	scene,
+	onExecute = () => undefined,
 	onFlush,
 }: {
 	project: TProject;
 	scene: TScene;
+	onExecute?: () => void;
 	onFlush: () => void;
 }): EditorCore {
 	const editor: unknown = {
 		project: { getActive: () => project, getActiveOrNull: () => project },
 		scenes: { getScenes: () => project.scenes, getActiveScene: () => scene },
 		media: { getAssets: () => [] },
+		command: { execute: onExecute },
 		save: {
 			flush: async () => {
 				onFlush();
