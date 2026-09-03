@@ -70,10 +70,19 @@ const webTests = Array.from(
 
 await runWebTests(webTests);
 
+// The desktop app owns no logic and carries no tests, so building it under the
+// test profile compiles its whole GPUI dependency tree for nothing. Check that
+// it still compiles instead, which keeps the coverage the test build gave.
 run({
 	label: "Rust workspace tests",
 	command: cargo,
-	args: ["test", "--workspace"],
+	args: ["test", "--workspace", "--exclude", "opencut-desktop"],
+});
+
+run({
+	label: "Desktop app compiles",
+	command: cargo,
+	args: ["check", "-p", "opencut-desktop"],
 });
 
 if (realVideoEnvironment) runRealVideoMilestone(realVideoEnvironment);
