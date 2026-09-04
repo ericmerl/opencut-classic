@@ -36,6 +36,7 @@ export const NAMED_FONT_PRESETS = [
 
 export const REGISTERED_TOOL_NAMES = [
 	"opencut_analyze_audio",
+	"opencut_analyze_speech",
 	"opencut_apply_edit_plan",
 	"opencut_attach_clean_audio",
 	"opencut_attach_matte",
@@ -49,18 +50,23 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_clone_scene",
 	"opencut_compare_project_states",
 	"opencut_connection_status",
+	"opencut_correct_transcript",
 	"opencut_create_delivery_package",
+	"opencut_create_editorial_decision",
 	"opencut_create_project",
 	"opencut_create_scene",
 	"opencut_delete_project",
 	"opencut_delete_scene",
+	"opencut_diff_editorial_decision",
 	"opencut_duplicate_project",
 	"opencut_evaluate_export_qc",
+	"opencut_export_editorial_decision_json",
 	"opencut_export_project",
 	"opencut_export_subtitles",
 	"opencut_generate_matte",
 	"opencut_get_comparison",
 	"opencut_get_edit_plan_preflight",
+	"opencut_get_editorial_decision",
 	"opencut_get_export_batch",
 	"opencut_get_export_job",
 	"opencut_get_export_qc",
@@ -71,11 +77,15 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_get_preview_range",
 	"opencut_get_project",
 	"opencut_get_save_receipt",
+	"opencut_get_speech_analysis",
+	"opencut_get_transcript",
+	"opencut_import_editorial_decision_json",
 	"opencut_import_media",
 	"opencut_import_media_asset",
 	"opencut_import_subtitles",
 	"opencut_list_comparisons",
 	"opencut_list_edit_plan_preflights",
+	"opencut_list_editorial_decisions",
 	"opencut_list_effects",
 	"opencut_list_export_batches",
 	"opencut_list_export_jobs",
@@ -86,6 +96,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_list_preview_ranges",
 	"opencut_list_projects",
 	"opencut_list_scenes",
+	"opencut_list_transcripts",
 	"opencut_list_visual_assets",
 	"opencut_normalize_audio",
 	"opencut_open_project",
@@ -95,6 +106,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_query_timeline",
 	"opencut_queue_export",
 	"opencut_queue_export_batch",
+	"opencut_reapply_editorial_decision",
 	"opencut_record_export_inspection",
 	"opencut_relink_media_asset",
 	"opencut_remove_media_asset",
@@ -109,12 +121,14 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_run_export_jobs",
 	"opencut_save_project",
 	"opencut_search_stickers",
+	"opencut_search_transcript",
 	"opencut_set_main_scene",
 	"opencut_start_editor_worker",
 	"opencut_stop_editor_worker",
 	"opencut_switch_scene",
 	"opencut_sync_audio",
 	"opencut_track_subject",
+	"opencut_transcribe_source",
 	"opencut_transcribe_timeline",
 	"opencut_undo",
 	"opencut_verify_delivery_package",
@@ -208,6 +222,15 @@ export interface CapabilitySnapshotServiceOptions {
 	buildTimestamp?: string;
 	environment?: Record<string, string | undefined>;
 	now?: () => Date;
+	parakeetReadiness?: () => Promise<{
+		ready: boolean;
+		reason: string | null;
+		modelId: string;
+		modelRevision: string | null;
+		modelCacheDirectory: string | null;
+		modelArtifactPath: string | null;
+		workflowScriptPath: string | null;
+	}>;
 }
 
 export class CapabilitySnapshotService {
@@ -231,16 +254,25 @@ export class CapabilitySnapshotService {
 	async capture(): Promise<Record<string, unknown>> {
 		const bridgeStatus = this.options.bridge.getStatus();
 		const workerStatus = this.options.worker.getStatus();
-		const [build, editorRuntime, mediaTools, providers, queues, disk, wasm] =
-			await Promise.all([
-				this.readBuildIdentity(),
-				this.readEditorRuntime(bridgeStatus),
-				this.readMediaTools(),
-				this.readProviderReadiness(),
-				this.options.queueState(),
-				readDiskCapacity(this.options.stateDirectory),
-				this.readWasmArtifact(),
-			]);
+		const [
+			build,
+			editorRuntime,
+			mediaTools,
+			providers,
+			parakeet,
+			queues,
+			disk,
+			wasm,
+		] = await Promise.all([
+			this.readBuildIdentity(),
+			this.readEditorRuntime(bridgeStatus),
+			this.readMediaTools(),
+			this.readProviderReadiness(),
+			this.options.parakeetReadiness?.() ?? Promise.resolve(null),
+			this.options.queueState(),
+			readDiskCapacity(this.options.stateDirectory),
+			this.readWasmArtifact(),
+		]);
 		const capturedAt = this.now().toISOString();
 		const previewRangeLimits = readPreviewRangeLimits(this.environment);
 		const editor = {
@@ -282,6 +314,9 @@ export class CapabilitySnapshotService {
 				comparisonReceipt: 1,
 				job: JOB_SCHEMA_VERSION,
 				projectStorage: 31,
+				transcript: 1,
+				speechAnalysis: 1,
+				editorialDecision: 1,
 			},
 			projections: {
 				projectContent: CURRENT_PROJECT_CONTENT_PROJECTION_VERSION,
@@ -413,6 +448,25 @@ export class CapabilitySnapshotService {
 			},
 			providers: {
 				...providers,
+				sourceTranscription: parakeet
+					? {
+							status: parakeet.ready ? "ready" : "misconfigured",
+							reason: parakeet.reason,
+							provider: "nvidia-parakeet-local",
+							fallback: "disabled",
+							model: {
+								status: parakeet.ready ? "ready" : "unavailable",
+								id: parakeet.modelId,
+								version: parakeet.modelRevision,
+								artifactPath: parakeet.modelArtifactPath,
+								cacheDirectory: parakeet.modelCacheDirectory,
+							},
+							workflowScriptPath: parakeet.workflowScriptPath,
+						}
+					: {
+							status: "unknown",
+							reason: "Parakeet readiness probe is unavailable.",
+						},
 				timelineTranscription: readRecordField(
 					editorRuntime,
 					"timelineTranscription",

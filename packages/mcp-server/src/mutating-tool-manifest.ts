@@ -247,6 +247,41 @@ export const MUTATING_TOOL_MANIFEST = {
 		requiresSaveVerification: false,
 		protocolMutationPolicy: "v2-required",
 	},
+	opencut_transcribe_source: {
+		operationKind: "transcribe-source",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_correct_transcript: {
+		operationKind: "correct-transcript",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_analyze_speech: {
+		operationKind: "analyze-speech",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_create_editorial_decision: {
+		operationKind: "create-editorial-decision",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_reapply_editorial_decision: {
+		operationKind: "reapply-editorial-decision",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_export_editorial_decision_json: {
+		operationKind: "export-editorial-decision-json",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_import_editorial_decision_json: {
+		operationKind: "import-editorial-decision-json",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
 } as const;
 
 export type MutatingToolName = keyof typeof MUTATING_TOOL_MANIFEST;

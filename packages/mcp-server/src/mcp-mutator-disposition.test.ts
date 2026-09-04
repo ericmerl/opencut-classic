@@ -57,6 +57,13 @@ const successes: Record<MutatingToolName, Record<string, unknown>> = {
 	opencut_resolve_job: { status: "found", job: {} },
 	opencut_run_export_jobs: { connected: true, processed: [] },
 	opencut_record_export_inspection: { receipt: {}, path: "C:/receipt.json" },
+	opencut_transcribe_source: { status: "transcribed" },
+	opencut_correct_transcript: { status: "corrected" },
+	opencut_analyze_speech: { status: "analyzed" },
+	opencut_create_editorial_decision: { status: "created" },
+	opencut_reapply_editorial_decision: { status: "created" },
+	opencut_export_editorial_decision_json: { status: "exported" },
+	opencut_import_editorial_decision_json: { status: "imported" },
 };
 
 describe("typed per-mutator terminal disposition contracts", () => {

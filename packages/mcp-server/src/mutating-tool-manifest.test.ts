@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MUTATING_TOOL_MANIFEST } from "./mutating-tool-manifest";
 
 describe("mutating MCP tool manifest", () => {
-	test("defines the complete dependency-map set of 49 mutators", () => {
+	test("defines the complete dependency-map set of 56 mutators", () => {
 		expect(Object.keys(MUTATING_TOOL_MANIFEST).sort()).toEqual(
 			[
 				"opencut_apply_edit_plan",
@@ -54,9 +54,16 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_track_subject",
 				"opencut_transcribe_timeline",
 				"opencut_undo",
+				"opencut_transcribe_source",
+				"opencut_correct_transcript",
+				"opencut_analyze_speech",
+				"opencut_create_editorial_decision",
+				"opencut_reapply_editorial_decision",
+				"opencut_export_editorial_decision_json",
+				"opencut_import_editorial_decision_json",
 			].sort(),
 		);
-		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(49);
+		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(56);
 	});
 
 	test("exempts only pre-affinity worker lifecycle controls from the v2 gate", () => {
@@ -75,7 +82,7 @@ describe("mutating MCP tool manifest", () => {
 			Object.values(MUTATING_TOOL_MANIFEST).filter(
 				(definition) => definition.protocolMutationPolicy === "v2-required",
 			),
-		).toHaveLength(47);
+		).toHaveLength(54);
 	});
 
 	test("declares target-specific persistence verification for project lifecycle mutations", () => {

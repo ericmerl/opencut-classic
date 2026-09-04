@@ -1674,6 +1674,182 @@ export const editPlanInputSchema = z
 		}
 	});
 
+const transcriptIdentifierSchema = z.string().trim().min(1).max(512);
+const transcriptDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+
+export const transcribeSourceInputSchema = z
+	.object({
+		bridgeProtocolVersion: z.literal(2),
+		expectedConnectionIdentity: connectionIdentitySchema.strict(),
+		projectId: transcriptIdentifierSchema,
+		operationId: operationIdSchema,
+		transcriptId: transcriptIdentifierSchema,
+		expectedRevision: z.number().int().nonnegative(),
+		expectedProjectContentHash: transcriptDigestSchema,
+		trackId: transcriptIdentifierSchema,
+		elementId: transcriptIdentifierSchema,
+		language: z.literal("en").default("en"),
+		terms: z.array(z.string().trim().min(1).max(256)).max(1_000).default([]),
+		timeoutSeconds: z.number().int().min(30).max(7_200).default(1_800),
+	})
+	.strict();
+
+export const getTranscriptInputSchema = z
+	.object({
+		transcriptId: transcriptIdentifierSchema,
+		version: z.number().int().positive().optional(),
+	})
+	.strict();
+
+export const listTranscriptsInputSchema = z
+	.object({
+		projectId: transcriptIdentifierSchema.optional(),
+		limit: z.number().int().min(1).max(100).default(25),
+	})
+	.strict();
+
+export const searchTranscriptInputSchema = z
+	.object({
+		transcriptId: transcriptIdentifierSchema,
+		query: z.string().trim().min(1).max(1_000),
+		limit: z.number().int().min(1).max(100).default(25),
+		scope: z.enum(["current", "original"]).default("current"),
+	})
+	.strict();
+
+export const correctTranscriptInputSchema = z
+	.object({
+		operationId: operationIdSchema.optional(),
+		transcriptId: transcriptIdentifierSchema,
+		expectedVersion: z.number().int().positive(),
+		correctionId: transcriptIdentifierSchema,
+		policy: z.enum(["transcript-only", "propagate-linked-captions"]),
+		changes: z
+			.array(
+				z
+					.object({
+						wordId: transcriptIdentifierSchema,
+						text: z.string().trim().min(1).max(1_000),
+					})
+					.strict(),
+			)
+			.min(1)
+			.max(10_000),
+	})
+	.strict();
+
+export const analyzeSpeechInputSchema = z
+	.object({
+		operationId: operationIdSchema.optional(),
+		analysisId: transcriptIdentifierSchema,
+		transcriptId: transcriptIdentifierSchema,
+		expectedTranscriptVersion: z.number().int().positive(),
+		parameters: z
+			.object({
+				minimumWordConfidence: z.number().min(0).max(1).default(0),
+				minimumSilenceTicks: z.number().int().positive(),
+				paddingTicks: z.number().int().nonnegative().default(0),
+				channel: z.literal("mix").default("mix"),
+				rangePolicy: z.discriminatedUnion("kind", [
+					z.object({ kind: z.literal("source") }).strict(),
+					z.object({ kind: z.literal("visible-clip") }).strict(),
+					z
+						.object({
+							kind: z.literal("explicit"),
+							startTicks: z.number().int().nonnegative(),
+							endTicks: z.number().int().positive(),
+						})
+						.strict(),
+				]),
+			})
+			.strict(),
+	})
+	.strict();
+
+export const getSpeechAnalysisInputSchema = z
+	.object({ analysisId: transcriptIdentifierSchema })
+	.strict();
+
+const editorialSelectionInputSchema = z.discriminatedUnion("kind", [
+	z
+		.object({
+			kind: z.literal("word-range"),
+			transcriptId: transcriptIdentifierSchema,
+			expectedTranscriptVersion: z.number().int().positive(),
+			startWordId: transcriptIdentifierSchema,
+			endWordId: transcriptIdentifierSchema,
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("silence-ranges"),
+			analysisId: transcriptIdentifierSchema,
+			rangeIds: z.array(transcriptIdentifierSchema).min(1).max(10_000),
+		})
+		.strict(),
+]);
+
+export const createEditorialDecisionInputSchema = z
+	.object({
+		operationId: operationIdSchema.optional(),
+		decisionId: transcriptIdentifierSchema,
+		projectId: transcriptIdentifierSchema,
+		sceneId: transcriptIdentifierSchema,
+		baseRevision: z.number().int().nonnegative(),
+		baseProjectContentHash: transcriptDigestSchema,
+		description: z.string().trim().min(1).max(4_096),
+		rationale: z.string().trim().min(1).max(4_096),
+		selection: editorialSelectionInputSchema,
+	})
+	.strict();
+
+export const getEditorialDecisionInputSchema = z
+	.object({ decisionId: transcriptIdentifierSchema })
+	.strict();
+
+export const listEditorialDecisionsInputSchema = z
+	.object({
+		projectId: transcriptIdentifierSchema.optional(),
+		limit: z.number().int().min(1).max(100).default(25),
+	})
+	.strict();
+
+export const diffEditorialDecisionInputSchema = z
+	.object({
+		decisionId: transcriptIdentifierSchema,
+		currentRevision: z.number().int().nonnegative(),
+		currentProjectContentHash: transcriptDigestSchema,
+	})
+	.strict();
+
+export const reapplyEditorialDecisionInputSchema = z
+	.object({
+		operationId: operationIdSchema.optional(),
+		decisionId: transcriptIdentifierSchema,
+		newDecisionId: transcriptIdentifierSchema,
+		currentRevision: z.number().int().nonnegative(),
+		currentProjectContentHash: transcriptDigestSchema,
+	})
+	.strict();
+
+export const exportEditorialDecisionInputSchema = z
+	.object({
+		operationId: operationIdSchema.optional(),
+		decisionId: transcriptIdentifierSchema,
+		outputPath: z
+			.string()
+			.min(1)
+			.refine(isAbsolute, "outputPath must be absolute"),
+	})
+	.strict();
+
+export const importEditorialDecisionInputSchema = z
+	.object({
+		operationId: operationIdSchema.optional(),
+		path: z.string().min(1).refine(isAbsolute, "path must be absolute"),
+	})
+	.strict();
+
 export const importMediaInputSchema = z.object({
 	projectId: z.string().min(1),
 	operationId: legacyCompatibleOperationIdSchema,

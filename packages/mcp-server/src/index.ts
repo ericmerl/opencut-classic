@@ -45,6 +45,14 @@ import { readPreviewRangeLimits } from "./range-preview-config";
 import { EditPlanPreflightStore } from "./edit-plan-preflight-store";
 import { EditPlanPreflightService } from "./edit-plan-preflight-service";
 import { EDIT_PLAN_PREFLIGHT_SCHEMA } from "./edit-plan-preflight-contract";
+import { TranscriptStore } from "./transcript-store";
+import { TranscriptService } from "./transcript-service";
+import {
+	parakeetTranscriberFromEnvironment,
+	readParakeetReadiness,
+} from "./parakeet-transcriber";
+import { SpeechAnalysisService } from "./speech-analysis";
+import { EditorialDecisionService } from "./editorial-decision";
 import { parseJsonValue, type JsonValue } from "./operation-ledger-schema";
 import {
 	McpLedgerBoundary,
@@ -161,6 +169,20 @@ import {
 	withMutationOperationId,
 	withProjectMutationSafety,
 	undoInputSchema,
+	transcribeSourceInputSchema,
+	getTranscriptInputSchema,
+	listTranscriptsInputSchema,
+	searchTranscriptInputSchema,
+	correctTranscriptInputSchema,
+	analyzeSpeechInputSchema,
+	getSpeechAnalysisInputSchema,
+	createEditorialDecisionInputSchema,
+	getEditorialDecisionInputSchema,
+	listEditorialDecisionsInputSchema,
+	diffEditorialDecisionInputSchema,
+	reapplyEditorialDecisionInputSchema,
+	exportEditorialDecisionInputSchema,
+	importEditorialDecisionInputSchema,
 } from "./tool-schemas";
 
 const token =
@@ -248,6 +270,22 @@ const editPlanPreflights = new EditPlanPreflightService(
 	undefined,
 	{ captureCapabilitySnapshot: () => capabilitySnapshots.capture() },
 );
+const transcriptStore = new TranscriptStore(
+	process.env.OPENCUT_TRANSCRIPT_DIR ??
+		join(exportReceipts.directory, "transcripts"),
+);
+await transcriptStore.readiness();
+const transcripts = new TranscriptService(
+	bridge,
+	transcriptStore,
+	parakeetTranscriberFromEnvironment,
+);
+const speechAnalysis = new SpeechAnalysisService(transcriptStore);
+const editorialDecisions = new EditorialDecisionService(
+	transcriptStore,
+	speechAnalysis,
+);
+await editorialDecisions.readiness();
 const normalizeAudio = new NormalizeAudioOperation(bridge);
 const audioCleanup = new AudioCleanupService(
 	bridge,
@@ -312,6 +350,7 @@ capabilitySnapshots = new CapabilitySnapshotService({
 	bridge,
 	worker: editorWorker,
 	stateDirectory: exportReceipts.directory,
+	parakeetReadiness: readParakeetReadiness,
 	queueState: async () => {
 		await exportJobs.store.initialize();
 		const summary = exportJobs.store.jobs.summary();
@@ -2273,6 +2312,235 @@ function createServer(): McpServer {
 							},
 							context,
 						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_transcribe_source",
+		{
+			description:
+				"Transcribe one uploaded audio or video source with the configured local NVIDIA Parakeet workflow. The model runs offline with fallback disabled and produces durable word IDs, source/timeline mappings, and hash-pinned provenance.",
+			inputSchema: transcribeSourceInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_transcribe_source",
+					input,
+					() => transcripts.transcribe(input),
+					() => transcripts.transcribe(input),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_transcript",
+		{
+			description:
+				"Read one immutable transcript version, verifying its durable content hash and Parakeet provider artifacts.",
+			inputSchema: getTranscriptInputSchema,
+		},
+		async ({ transcriptId, version }) => {
+			const transcript = await transcripts.get(transcriptId, version);
+			return toolResult(
+				transcript
+					? { status: "found", transcript }
+					: { status: "not-found", transcriptId, version: version ?? null },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_transcripts",
+		{
+			description:
+				"List the latest durable transcripts, optionally scoped to a project.",
+			inputSchema: listTranscriptsInputSchema,
+		},
+		async ({ projectId, limit }) =>
+			toolResult({
+				status: "listed",
+				transcripts: (await transcriptStore.list(projectId)).slice(0, limit),
+			}),
+	);
+
+	server.registerTool(
+		"opencut_search_transcript",
+		{
+			description:
+				"Search a transcript with bounded results and stable word-range selectors suitable for preview and edit-plan preflight.",
+			inputSchema: searchTranscriptInputSchema,
+		},
+		async (input) =>
+			toolResult({
+				status: "found",
+				matches: await transcripts.search(input),
+			}),
+	);
+
+	server.registerTool(
+		"opencut_correct_transcript",
+		{
+			description:
+				"Append a durable transcript correction while retaining original recognition. Caption propagation occurs only under the explicit propagate-linked-captions policy and returns reviewable edit operations.",
+			inputSchema: withMutationOperationId(correctTranscriptInputSchema),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_correct_transcript",
+					input,
+					() => transcripts.correct(input),
+					() => transcripts.correct(input),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_analyze_speech",
+		{
+			description:
+				"Derive durable speech and silence ranges from Parakeet word activity using typed confidence, duration, padding, channel, and range parameters.",
+			inputSchema: withMutationOperationId(analyzeSpeechInputSchema),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_analyze_speech",
+					input,
+					() => speechAnalysis.analyze(input),
+					() => speechAnalysis.analyze(input),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_speech_analysis",
+		{
+			description:
+				"Read one hash-verified speech/silence analysis and revalidate its transcript evidence binding.",
+			inputSchema: getSpeechAnalysisInputSchema,
+		},
+		async ({ analysisId }) => {
+			const analysis = await speechAnalysis.get(analysisId);
+			return toolResult(
+				analysis
+					? { status: "found", analysis }
+					: { status: "not-found", analysisId },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_create_editorial_decision",
+		{
+			description:
+				"Create an immutable editorial decision from stable transcript words or analyzed silence. The returned deterministic edit operations are a dry-run cut plan; pass them through opencut_preflight_edit_plan before atomic apply.",
+			inputSchema: withMutationOperationId(createEditorialDecisionInputSchema),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_create_editorial_decision",
+					input,
+					() => editorialDecisions.create(input),
+					() => editorialDecisions.create(input),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_editorial_decision",
+		{
+			description:
+				"Read one hash-verified editorial decision and its exact transcript/analysis evidence bindings.",
+			inputSchema: getEditorialDecisionInputSchema,
+		},
+		async ({ decisionId }) => {
+			const decision = await editorialDecisions.get(decisionId);
+			return toolResult(
+				decision
+					? { status: "found", decision }
+					: { status: "not-found", decisionId },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_editorial_decisions",
+		{
+			description:
+				"List durable editorial decisions, optionally scoped to one project.",
+			inputSchema: listEditorialDecisionsInputSchema,
+		},
+		async ({ projectId, limit }) =>
+			toolResult({
+				status: "listed",
+				decisions: (await editorialDecisions.list(projectId)).slice(0, limit),
+			}),
+	);
+
+	server.registerTool(
+		"opencut_diff_editorial_decision",
+		{
+			description:
+				"Compare a durable decision's source revision/hash with the current project binding before reapply or preflight.",
+			inputSchema: diffEditorialDecisionInputSchema,
+		},
+		async (input) => toolResult(await editorialDecisions.diff(input)),
+	);
+
+	server.registerTool(
+		"opencut_reapply_editorial_decision",
+		{
+			description:
+				"Create a new immutable decision derived from an earlier one and rebound to an explicitly supplied current revision/hash. The new operations still require edit-plan preflight.",
+			inputSchema: withMutationOperationId(reapplyEditorialDecisionInputSchema),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_reapply_editorial_decision",
+					input,
+					() => editorialDecisions.reapply(input),
+					() => editorialDecisions.reapply(input),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_export_editorial_decision_json",
+		{
+			description:
+				"Export a durable decision as strict, versioned, hash-protected OpenCut editorial-decision JSON. Refuses to overwrite an existing file.",
+			inputSchema: withMutationOperationId(exportEditorialDecisionInputSchema),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_export_editorial_decision_json",
+					input,
+					() =>
+						editorialDecisions.exportJson(input.decisionId, input.outputPath),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_import_editorial_decision_json",
+		{
+			description:
+				"Import strict OpenCut editorial-decision v1 JSON losslessly, verifying interchange, decision, transcript, and analysis hashes.",
+			inputSchema: withMutationOperationId(importEditorialDecisionInputSchema),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_import_editorial_decision_json",
+					input,
+					() => editorialDecisions.importJson(input.path),
+					() => editorialDecisions.importJson(input.path),
 				),
 			),
 	);

@@ -95,6 +95,9 @@ export const operationAffectedObjectSchema = z
 			"export-receipt",
 			"qc-report",
 			"delivery-package",
+			"transcript",
+			"speech-analysis",
+			"editorial-decision",
 		]),
 		objectId: identifierSchema,
 		action: z.enum([

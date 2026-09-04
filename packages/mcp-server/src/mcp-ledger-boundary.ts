@@ -670,6 +670,13 @@ function operationUsesProjectPreconditions(
 		"opencut_rename_project",
 		"opencut_duplicate_project",
 		"opencut_delete_project",
+		"opencut_transcribe_source",
+		"opencut_correct_transcript",
+		"opencut_analyze_speech",
+		"opencut_create_editorial_decision",
+		"opencut_reapply_editorial_decision",
+		"opencut_export_editorial_decision_json",
+		"opencut_import_editorial_decision_json",
 	]).has(toolName);
 }
 
@@ -901,6 +908,19 @@ function verifiedAffectedObjects(
 			"packaged",
 		);
 	}
+	const transcript = isRecord(result.transcript) ? result.transcript : null;
+	const analysis = isRecord(result.analysis) ? result.analysis : null;
+	const decision = isRecord(result.decision) ? result.decision : null;
+	add("transcript", transcript?.transcriptId, action);
+	add("speech-analysis", analysis?.analysisId, action);
+	add(
+		"editorial-decision",
+		decision?.decisionId ??
+			(toolName === "opencut_export_editorial_decision_json"
+				? _input.decisionId
+				: null),
+		action,
+	);
 	add(
 		"media",
 		result.assetId ?? result.mediaId,
@@ -975,6 +995,15 @@ function operationAction(
 		return "exported";
 	if (toolName === "opencut_evaluate_export_qc") return "evaluated";
 	if (toolName === "opencut_create_delivery_package") return "packaged";
+	if (
+		toolName === "opencut_transcribe_source" ||
+		toolName === "opencut_analyze_speech" ||
+		toolName === "opencut_create_editorial_decision" ||
+		toolName === "opencut_reapply_editorial_decision"
+	)
+		return "created";
+	if (toolName === "opencut_import_editorial_decision_json") return "imported";
+	if (toolName === "opencut_export_editorial_decision_json") return "exported";
 	if (
 		toolName === "opencut_render_preview_frame" ||
 		toolName === "opencut_render_preview_range" ||
@@ -1075,7 +1104,8 @@ function terminalEvidence(value: unknown) {
 	if (comparisonEvidence) return comparisonEvidence;
 	const rangeEvidence = previewRangeTerminalEvidence(value);
 	if (rangeEvidence) return rangeEvidence;
-	const outputPath = stringField(value, "outputPath");
+	const outputPath =
+		stringField(value, "outputPath") ?? stringField(value, "path");
 	const sha256 = stringField(value, "sha256");
 	const bytes =
 		typeof value.bytesWritten === "number" ? value.bytesWritten : null;
@@ -1587,6 +1617,22 @@ const MUTATOR_RESULT_CONTRACTS = {
 		[],
 		rejectedOrMissing,
 		(value) => isRecord(value.receipt) && typeof value.path === "string",
+	),
+	opencut_transcribe_source: contract(["transcribed", "replayed"], rejected),
+	opencut_correct_transcript: contract(["corrected", "replayed"], rejected),
+	opencut_analyze_speech: contract(["analyzed", "replayed"], rejected),
+	opencut_create_editorial_decision: contract(
+		["created", "replayed"],
+		rejected,
+	),
+	opencut_reapply_editorial_decision: contract(
+		["created", "replayed"],
+		rejected,
+	),
+	opencut_export_editorial_decision_json: contract(["exported"], rejected),
+	opencut_import_editorial_decision_json: contract(
+		["imported", "replayed"],
+		rejected,
 	),
 } as const satisfies Record<MutatingToolName, MutatorResultContract>;
 

@@ -54,6 +54,13 @@ import {
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 	undoInputSchema,
+	transcribeSourceInputSchema,
+	correctTranscriptInputSchema,
+	analyzeSpeechInputSchema,
+	createEditorialDecisionInputSchema,
+	reapplyEditorialDecisionInputSchema,
+	exportEditorialDecisionInputSchema,
+	importEditorialDecisionInputSchema,
 	withMutationOperationId,
 	withProjectMutationSafety,
 	withLifecycleProjectMutationSafety,
@@ -477,10 +484,90 @@ const cases: SchemaCase[] = [
 		input: { targetOperationId: "comparison-operation" },
 		v2Only: true,
 	},
+	{
+		name: "opencut_transcribe_source",
+		schema: transcribeSourceInputSchema,
+		input: {
+			projectId: "project-1",
+			transcriptId: "transcript-1",
+			expectedRevision: 1,
+			expectedProjectContentHash: hash,
+			trackId: "track-1",
+			elementId: "clip-1",
+		},
+		v2Only: true,
+	},
+	{
+		name: "opencut_correct_transcript",
+		schema: withMutationOperationId(correctTranscriptInputSchema),
+		input: {
+			transcriptId: "transcript-1",
+			expectedVersion: 1,
+			correctionId: "correction-1",
+			policy: "transcript-only",
+			changes: [{ wordId: "word-1", text: "Hello" }],
+		},
+	},
+	{
+		name: "opencut_analyze_speech",
+		schema: withMutationOperationId(analyzeSpeechInputSchema),
+		input: {
+			analysisId: "analysis-1",
+			transcriptId: "transcript-1",
+			expectedTranscriptVersion: 1,
+			parameters: {
+				minimumSilenceTicks: 12_000,
+				rangePolicy: { kind: "visible-clip" },
+			},
+		},
+	},
+	{
+		name: "opencut_create_editorial_decision",
+		schema: withMutationOperationId(createEditorialDecisionInputSchema),
+		input: {
+			decisionId: "decision-1",
+			projectId: "project-1",
+			sceneId: "scene-1",
+			baseRevision: 1,
+			baseProjectContentHash: hash,
+			description: "Remove a word",
+			rationale: "Tighten pacing",
+			selection: {
+				kind: "word-range",
+				transcriptId: "transcript-1",
+				expectedTranscriptVersion: 1,
+				startWordId: "word-1",
+				endWordId: "word-1",
+			},
+		},
+	},
+	{
+		name: "opencut_reapply_editorial_decision",
+		schema: withMutationOperationId(reapplyEditorialDecisionInputSchema),
+		input: {
+			decisionId: "decision-1",
+			newDecisionId: "decision-2",
+			currentRevision: 2,
+			currentProjectContentHash: hash,
+		},
+	},
+	{
+		name: "opencut_export_editorial_decision_json",
+		schema: withMutationOperationId(exportEditorialDecisionInputSchema),
+		input: {
+			decisionId: "decision-1",
+			outputPath: "C:/decisions/decision-1.json",
+		},
+	},
+	{
+		name: "opencut_import_editorial_decision_json",
+		schema: withMutationOperationId(importEditorialDecisionInputSchema),
+		input: { path: "C:/decisions/decision-1.json" },
+	},
 ];
 
 describe("all mutating public MCP schema versions", () => {
-	test("covers exactly the 49 registered mutation identities", () => {
+	test("covers exactly the 56 registered mutation identities", () => {
 		expect(cases.map(({ name }) => String(name)).sort()).toEqual(
 			Object.keys(MUTATING_TOOL_MANIFEST).map(String).sort(),
 		);

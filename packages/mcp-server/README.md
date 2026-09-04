@@ -167,6 +167,11 @@ are inherited or set in the web shell instead.
 | `OPENCUT_PREVIEW_RANGE_MAX_DURATION_SECONDS`, `OPENCUT_PREVIEW_RANGE_MAX_FRAMES`   | Positive range-preview bounds; defaults to 10 seconds and 300 frames, is reported by `opencut_capabilities`, and caps the frame override at the manifest-safe operational maximum of 10,000.        |
 | `OPENCUT_WASM_ARTIFACT_PATH`, `OPENCUT_WASM_PACKAGE_VERSION`                       | Optional WASM identity overrides for a custom deployment.                                                                                                                                           |
 | `OPENCUT_AUDIO_CLEANER_*`, `OPENCUT_MATTE_PRODUCER_*`, `OPENCUT_SUBJECT_TRACKER_*` | Optional external-provider command and JSON-array arguments.                                                                                                                                        |
+| `OPENCUT_TRANSCRIPT_DIR`                                                           | Optional durable transcript, speech-analysis, editorial-decision, and Parakeet-result root. Defaults below the instance state root.                                                                 |
+| `OPENCUT_PARAKEET_PYTHON`                                                          | Absolute path to the proven CUDA/NeMo Python executable used by the local Parakeet workflow.                                                                                                        |
+| `OPENCUT_PARAKEET_WORKFLOW_SCRIPT`                                                 | Optional absolute workflow script path; defaults to the installed `transcribe-media` skill script.                                                                                                  |
+| `OPENCUT_PARAKEET_MODEL_CACHE`, `OPENCUT_PARAKEET_MODEL_REVISION`                  | Required service-managed Hugging Face cache root and optional explicit cached revision. Exactly one revision may be discovered when revision is omitted.                                            |
+| `OPENCUT_PARAKEET_MODEL_ARTIFACT`, `OPENCUT_PARAKEET_MODEL_SHA256`                 | Optional explicit cached `.nemo` path and required lowercase SHA-256 pin. The complete model bytes are verified before every run.                                                                   |
 
 Protocol-v1 mutation remains disabled unless
 `OPENCUT_ENABLE_PROTOCOL_V1_MUTATION=1`; do not enable it in a production
@@ -202,14 +207,17 @@ part of the recovery unit. To recover, restore the pair, use the same instance
 configuration and token, start the web editor, reconnect MCP, call
 `opencut_capabilities`, and read the relevant operation/save/export receipt.
 
-Provider model caches are owned by their configured provider commands, not by
-OpenCut. Record their locations with those provider installations and retain
-them under the same 90-day policy when replay depends on a model. The caption
+External-provider model caches are owned by their configured provider commands.
+The source-transcription cache is explicitly managed through the
+`OPENCUT_PARAKEET_MODEL_*` settings; OpenCut verifies its pinned model bytes
+before every offline run and never enables the workflow's Whisper fallback.
+Record all cache locations with those provider installations and retain them
+under the same 90-day policy when replay depends on a model. The caption
 font bundle ships with the editor (TikTok Sans and Montserrat under the SIL Open
 Font License in `apps/web/public/fonts/bundled`, pinned by SHA-256 and reported
-as `bundled-font-bytes` provenance in receipts); local AI models remain deferred
-to issue #29, and capability readiness reports their current state rather than
-assuming an untracked cache. `opencut_capabilities.fonts` lists that catalog
+as `bundled-font-bytes` provenance in receipts); capability readiness reports
+the current local-model state rather than assuming an untracked cache.
+`opencut_capabilities.fonts` lists that catalog
 with byte hashes, reports `thirdPartyFetch: "blocked"` for the managed editor,
 which never fetches a font from Google Fonts or any other third-party host, and
 lists the reusable caption presets (`tiktok-classic`, `tiktok-classic-red`,
@@ -333,6 +341,10 @@ Available tools:
 - `opencut_attach_matte`, attaching an existing image or video matte with explicit model provenance
 - `opencut_generate_matte`, securely transferring a selected clip source to the configured provider, generating a matte, and attaching it in one revision-safe operation
 - `opencut_track_subject`, transferring a selected video source to the configured tracker, validating and smoothing normalized subject boxes, mapping source samples through clip trim and retime, and atomically creating focal-point or crop reframe keyframes
+- `opencut_transcribe_source`, `opencut_get_transcript`, `opencut_list_transcripts`, `opencut_search_transcript`, and `opencut_correct_transcript`, providing hash-pinned offline Parakeet source transcription, durable word provenance, bounded stable selectors, restart-safe readback, and explicit correction propagation
+- `opencut_analyze_speech` and `opencut_get_speech_analysis`, deriving durable typed speech/silence ranges from Parakeet word activity
+- `opencut_create_editorial_decision`, `opencut_get_editorial_decision`, `opencut_list_editorial_decisions`, `opencut_diff_editorial_decision`, and `opencut_reapply_editorial_decision`, turning word or silence selections into deterministic dry-run cut plans for the existing preview/preflight/atomic-apply workflow
+- `opencut_export_editorial_decision_json` and `opencut_import_editorial_decision_json`, losslessly exchanging strict hash-protected `opencut.editorial-decision.v1` files
 
 The editor must be open with a project loaded. Creating or opening a project automatically updates the connected editor route. The sidecar rejects non-loopback browser origins, unauthenticated sockets, and a second editor attempting to take over an active session.
 

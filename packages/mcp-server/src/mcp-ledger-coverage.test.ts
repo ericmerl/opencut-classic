@@ -26,7 +26,7 @@ describe("complete mutating handler ledger coverage", () => {
 		});
 	});
 
-	test("exactly replays and rejects changed reuse for all 49 mutators", async () => {
+	test("exactly replays and rejects changed reuse for all 56 mutators", async () => {
 		const ledger = new OperationLedger(directory);
 		const boundary = new McpLedgerBoundary(ledger, verificationBridge());
 		try {
@@ -208,6 +208,17 @@ function operationInput(
 		};
 	}
 	if (
+		toolName === "opencut_transcribe_source" ||
+		toolName === "opencut_correct_transcript" ||
+		toolName === "opencut_analyze_speech" ||
+		toolName === "opencut_create_editorial_decision" ||
+		toolName === "opencut_reapply_editorial_decision" ||
+		toolName === "opencut_export_editorial_decision_json" ||
+		toolName === "opencut_import_editorial_decision_json"
+	) {
+		return { bridgeProtocolVersion: 2, operationId };
+	}
+	if (
 		MUTATING_TOOL_MANIFEST[toolName].requiresSaveVerification &&
 		toolName !== "opencut_create_project"
 	) {
@@ -277,6 +288,13 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 		opencut_export_project: "exported",
 		opencut_evaluate_export_qc: "evaluated",
 		opencut_create_delivery_package: "packaged",
+		opencut_transcribe_source: "transcribed",
+		opencut_correct_transcript: "corrected",
+		opencut_analyze_speech: "analyzed",
+		opencut_create_editorial_decision: "created",
+		opencut_reapply_editorial_decision: "created",
+		opencut_export_editorial_decision_json: "exported",
+		opencut_import_editorial_decision_json: "imported",
 	};
 	if (toolName === "opencut_save_project") return verifiedSave(operationId);
 	if (toolName === "opencut_start_editor_worker") {
