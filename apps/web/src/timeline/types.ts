@@ -33,6 +33,16 @@ export type TrackType = "video" | "text" | "audio" | "graphic" | "effect";
 interface BaseTrack {
 	id: string;
 	name: string;
+	trackMatte?: TrackMatteRouting;
+}
+
+export type TrackMatteMode = "alpha" | "luma";
+
+export interface TrackMatteRouting {
+	sourceTrackId: string;
+	mode: TrackMatteMode;
+	inverted: boolean;
+	enabled: boolean;
 }
 
 export interface VideoTrack extends BaseTrack {
@@ -128,6 +138,24 @@ export interface ClipAudioReplacementAttachment {
 	enabled: boolean;
 }
 
+export type CompositingKey =
+	| {
+			type: "chroma";
+			keyColor: string;
+			similarity: number;
+			softness: number;
+			spillSuppression: number;
+			enabled: boolean;
+	  }
+	| {
+			type: "luma";
+			low: number;
+			high: number;
+			softness: number;
+			inverted: boolean;
+			enabled: boolean;
+	  };
+
 interface BaseAudioElement extends BaseTimelineElement {
 	type: "audio";
 	buffer?: AudioBuffer;
@@ -170,6 +198,7 @@ export interface VideoElement extends BaseTimelineElement {
 	retime?: RetimeConfig;
 	effects?: Effect[];
 	masks?: Mask[];
+	key?: CompositingKey;
 	matte?: ClipMatteAttachment;
 	audioReplacement?: ClipAudioReplacementAttachment;
 }
@@ -180,6 +209,7 @@ export interface ImageElement extends BaseTimelineElement {
 	hidden?: boolean;
 	effects?: Effect[];
 	masks?: Mask[];
+	key?: CompositingKey;
 }
 
 export interface TextElement extends BaseTimelineElement {

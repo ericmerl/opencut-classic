@@ -15,7 +15,9 @@ import type {
 	ClipAudioReplacementAttachment,
 	ClipMatteAttachment,
 	ClipTransitionType,
+	CompositingKey,
 	RetimeConfig,
+	TrackMatteRouting,
 	TrackType,
 } from "@/timeline";
 import type {
@@ -68,6 +70,7 @@ export interface AutomationElementSnapshot {
 	matte?: AutomationMatteSnapshot;
 	audioReplacement?: AutomationAudioReplacementSnapshot;
 	reframe?: AutomationReframeSnapshot;
+	key?: CompositingKey;
 	sourceAudioSeparated?: boolean;
 	graphicDefinitionId?: string;
 	stickerId?: string;
@@ -234,6 +237,7 @@ export interface AutomationTrackSnapshot {
 	role: "main" | "overlay" | "audio";
 	muted?: boolean;
 	hidden?: boolean;
+	trackMatte?: TrackMatteRouting;
 }
 
 export interface AutomationTransitionSnapshot {
@@ -908,6 +912,26 @@ export type AutomationEditOperation =
 			layout?: AutomationReframeLayout | undefined;
 	  }
 	| {
+			kind: "set_key";
+			trackId: string;
+			elementId: string;
+			key: CompositingKey;
+	  }
+	| {
+			kind: "remove_key";
+			trackId: string;
+			elementId: string;
+	  }
+	| {
+			kind: "set_track_matte";
+			trackId: string;
+			routing: TrackMatteRouting;
+	  }
+	| {
+			kind: "remove_track_matte";
+			trackId: string;
+	  }
+	| {
 			kind: "set_audio";
 			trackId: string;
 			elementId: string;
@@ -1295,8 +1319,7 @@ export interface AutomationHistorySafetyRequest {
 	bridgeProtocolVersion?: number;
 }
 
-export interface AutomationHistoryMutationRequest
-	extends AutomationHistorySafetyRequest {
+export interface AutomationHistoryMutationRequest extends AutomationHistorySafetyRequest {
 	steps: number;
 }
 
@@ -1337,9 +1360,9 @@ export type AutomationHistoryConflictResult =
 	  };
 
 export type AutomationUndoResult =
-	| {
+	| ({
 			status: "undone";
-		} & AutomationHistoryMovedResult
+	  } & AutomationHistoryMovedResult)
 	| {
 			status: "nothing-to-undo";
 			revision: number;
@@ -1350,9 +1373,9 @@ export type AutomationUndoResult =
 	| AutomationContentIdentityBlockedResult;
 
 export type AutomationRedoResult =
-	| {
+	| ({
 			status: "redone";
-	  } & AutomationHistoryMovedResult
+	  } & AutomationHistoryMovedResult)
 	| {
 			status: "nothing-to-redo";
 			revision: number;
@@ -1362,8 +1385,7 @@ export type AutomationRedoResult =
 	| AutomationHistoryConflictResult
 	| AutomationContentIdentityBlockedResult;
 
-export interface AutomationRestoreHistoryRequest
-	extends AutomationHistorySafetyRequest {
+export interface AutomationRestoreHistoryRequest extends AutomationHistorySafetyRequest {
 	expectedTargetProjectContentHash: string;
 	nativeHistory: CommandHistorySnapshot;
 }

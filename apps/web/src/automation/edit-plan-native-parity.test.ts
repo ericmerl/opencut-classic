@@ -169,6 +169,51 @@ const parityCases: NativeParityCase[] = [
 		},
 	},
 	{
+		name: "set_key chroma controls",
+		state: richState,
+		operation: {
+			kind: "set_key",
+			trackId: "scene-target-main",
+			elementId: "video-1",
+			key: {
+				type: "chroma",
+				keyColor: "#00ff00",
+				similarity: 0.2,
+				softness: 0.1,
+				spillSuppression: 0.8,
+				enabled: true,
+			},
+		},
+	},
+	{
+		name: "remove_key restores unkeyed rendering",
+		state: keyedRichState,
+		operation: {
+			kind: "remove_key",
+			trackId: "scene-target-main",
+			elementId: "video-1",
+		},
+	},
+	{
+		name: "set_track_matte uses stable source identity",
+		state: richState,
+		operation: {
+			kind: "set_track_matte",
+			trackId: "scene-target-main",
+			routing: {
+				sourceTrackId: "compound-target",
+				mode: "luma",
+				inverted: true,
+				enabled: true,
+			},
+		},
+	},
+	{
+		name: "remove_track_matte restores independent track rendering",
+		state: routedRichState,
+		operation: { kind: "remove_track_matte", trackId: "scene-target-main" },
+	},
+	{
 		name: "upsert_effect omitted defaults",
 		state: richState,
 		operation: {
@@ -1351,6 +1396,13 @@ function invalidOperation(
 			};
 		case "set_track_state":
 			return { ...operation, trackId: "missing-track" };
+		case "set_track_matte":
+			return {
+				...operation,
+				routing: { ...operation.routing, sourceTrackId: "missing-track" },
+			};
+		case "remove_track_matte":
+			return { ...operation, trackId: "missing-track" };
 		case "adjust_mix_gain":
 			return { ...operation, gainDb: 1_000 };
 		case "duplicate_elements":
@@ -1382,6 +1434,8 @@ function invalidOperation(
 			return { ...operation, transitionId: "missing-transition" };
 		case "set_params":
 		case "set_reframe":
+		case "set_key":
+		case "remove_key":
 		case "set_audio":
 		case "separate_source_audio":
 		case "duck_audio":
@@ -1660,6 +1714,39 @@ function richState(): NativeState {
 	return state;
 }
 
+function keyedRichState(): NativeState {
+	const state = richState();
+	const element = state.project.scenes
+		.find((scene) => scene.id === "scene-target")
+		?.tracks.main.elements.find((candidate) => candidate.id === "video-1");
+	if (!element || element.type !== "video")
+		throw new Error("key fixture missing");
+	element.key = {
+		type: "luma",
+		low: 0.2,
+		high: 0.8,
+		softness: 0.1,
+		inverted: false,
+		enabled: true,
+	};
+	return state;
+}
+
+function routedRichState(): NativeState {
+	const state = richState();
+	const scene = state.project.scenes.find(
+		(candidate) => candidate.id === "scene-target",
+	);
+	if (!scene) throw new Error("route fixture missing");
+	scene.tracks.main.trackMatte = {
+		sourceTrackId: "compound-target",
+		mode: "alpha",
+		inverted: false,
+		enabled: true,
+	};
+	return state;
+}
+
 function bookmarkState(): NativeState {
 	const state = richState();
 	const target = state.project.scenes.find(
@@ -1855,7 +1942,11 @@ function withPlainCaptions(): NativeState {
 			content: "Second caption text",
 			startTicks: 150_000,
 		}),
-		plainCaption({ id: "caption-third", content: "Third caption", startTicks: 300_000 }),
+		plainCaption({
+			id: "caption-third",
+			content: "Third caption",
+			startTicks: 300_000,
+		}),
 	] as TextElement[];
 	return state;
 }

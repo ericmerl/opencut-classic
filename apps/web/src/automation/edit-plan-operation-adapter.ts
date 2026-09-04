@@ -220,6 +220,11 @@ export function toAutomationResolvedOperation(
 				targetRect: optional(operation.targetRect),
 				layout: optional(operation.layout),
 			};
+		case "set_key":
+		case "remove_key":
+		case "set_track_matte":
+		case "remove_track_matte":
+			return operation;
 		case "move":
 			return {
 				...operation,
@@ -624,6 +629,11 @@ function toNativeEditOperation(
 				targetRect: operation.targetRect,
 				layout: operation.layout,
 			};
+		case "set_key":
+		case "remove_key":
+		case "set_track_matte":
+		case "remove_track_matte":
+			return operation;
 		case "set_audio":
 			return {
 				kind: operation.kind,

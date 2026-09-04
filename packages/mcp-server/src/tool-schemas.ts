@@ -665,6 +665,41 @@ const relationshipScopeSchema = z
 	.enum(["element", "group", "link", "all"])
 	.default("all");
 
+export const compositingKeySchema = z.discriminatedUnion("type", [
+	z
+		.object({
+			type: z.literal("chroma"),
+			keyColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+			similarity: z.number().min(0).max(1),
+			softness: z.number().min(0).max(1),
+			spillSuppression: z.number().min(0).max(1),
+			enabled: z.boolean(),
+		})
+		.strict(),
+	z
+		.object({
+			type: z.literal("luma"),
+			low: z.number().min(0).max(1),
+			high: z.number().min(0).max(1),
+			softness: z.number().min(0).max(1),
+			inverted: z.boolean(),
+			enabled: z.boolean(),
+		})
+		.strict()
+		.refine((key) => key.low <= key.high, {
+			message: "low must be less than or equal to high",
+		}),
+]);
+
+export const trackMatteRoutingSchema = z
+	.object({
+		sourceTrackId: z.string().trim().min(1),
+		mode: z.enum(["alpha", "luma"]),
+		inverted: z.boolean(),
+		enabled: z.boolean(),
+	})
+	.strict();
+
 const elementRefSchema = z
 	.object({
 		trackId: z.string().min(1),
@@ -1227,6 +1262,30 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 				});
 			}
 		}),
+	z.object({
+		kind: z.literal("set_key"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		key: compositingKeySchema,
+	}),
+	z.object({
+		kind: z.literal("remove_key"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+	}),
+	z
+		.object({
+			kind: z.literal("set_track_matte"),
+			trackId: z.string().min(1),
+			routing: trackMatteRoutingSchema,
+		})
+		.refine((value) => value.trackId !== value.routing.sourceTrackId, {
+			message: "a track cannot use itself as a track matte",
+		}),
+	z.object({
+		kind: z.literal("remove_track_matte"),
+		trackId: z.string().min(1),
+	}),
 	z
 		.object({
 			kind: z.literal("set_audio"),

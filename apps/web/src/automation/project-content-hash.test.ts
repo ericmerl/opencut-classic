@@ -164,6 +164,41 @@ describe("canonical project content", () => {
 		expect(canonical).not.toContain('"fps":30.0');
 	});
 
+	test("keys and track-matte routing are canonical persisted project content", async () => {
+		const original = fixture();
+		const keyed = fixture();
+		Object.assign(video(keyed), {
+			key: {
+				type: "chroma",
+				keyColor: "#00ff00",
+				similarity: 0.42,
+				softness: 0.08,
+				spillSuppression: 0.65,
+				enabled: true,
+			},
+		});
+		const routed = fixture();
+		Object.assign(routed.project.scenes[0]!.tracks.overlay[0]!, {
+			trackMatte: {
+				sourceTrackId: routed.project.scenes[0]!.tracks.main.id,
+				mode: "luma",
+				inverted: true,
+				enabled: true,
+			},
+		});
+
+		const keyedProjection = JSON.parse(serializeProjectContent(keyed));
+		expect(
+			keyedProjection.project.scenes[0].tracks[0].elements[0].key,
+		).toMatchObject({ type: "chroma", keyColor: "#00ff00" });
+		const routedProjection = JSON.parse(serializeProjectContent(routed));
+		expect(
+			routedProjection.project.scenes[0].tracks[1].trackMatte,
+		).toMatchObject({ sourceTrackId: "main", mode: "luma" });
+		expect(await digest(keyed)).not.toBe(await digest(original));
+		expect(await digest(routed)).not.toBe(await digest(original));
+	});
+
 	test("numbers transitions contiguously instead of by destination element", () => {
 		const input = fixture();
 		const current = input.project.scenes[0]!.tracks.main.elements[0]!;

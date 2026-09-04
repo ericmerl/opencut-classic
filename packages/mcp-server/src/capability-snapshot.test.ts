@@ -131,6 +131,14 @@ describe("CapabilitySnapshotService", () => {
 		expect(
 			(snapshot.tools as Record<string, unknown>).editPlanOperationVariants,
 		).toEqual(EDIT_PLAN_OPERATION_VARIANTS);
+		for (const variant of [
+			"set_key",
+			"remove_key",
+			"set_track_matte",
+			"remove_track_matte",
+		] as const) {
+			expect(EDIT_PLAN_OPERATION_VARIANTS).toContain(variant);
+		}
 	});
 
 	test("uses a connected editor runtime report for renderer and font readiness", async () => {

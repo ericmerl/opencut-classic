@@ -71,7 +71,7 @@ test("publishes strict preflight receipt tools over MCP stdio", async () => {
 	const publishedOperationKinds = [...collectStringConstants(operations)]
 		.filter((value) => expectedOperationKindSet.has(value))
 		.sort();
-	expect(expectedOperationKinds).toHaveLength(57);
+	expect(expectedOperationKinds).toHaveLength(61);
 	expect(publishedOperationKinds).toEqual(expectedOperationKinds);
 	expect(inputSchema.required).toEqual(
 		expect.arrayContaining([

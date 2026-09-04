@@ -14,12 +14,14 @@ import { CompoundNode } from "../nodes/compound-node";
 import { StickerNode } from "../nodes/sticker-node";
 import { renderTextToContext, TextNode } from "../nodes/text-node";
 import { VideoNode } from "../nodes/video-node";
+import { TrackNode } from "../nodes/track-node";
 import type { ResolvedVisualSourceNodeState } from "../nodes/visual-node";
 import { computeReframeGeometry, DEFAULT_REFRAME } from "@/rendering";
 import type {
 	FrameDescriptor,
 	FrameItemDescriptor,
 	LayerMaskDescriptor,
+	LayerKeyDescriptor,
 	QuadTransformDescriptor,
 	TextureCanvasDrawFn,
 	TextureUploadDescriptor,
@@ -76,6 +78,33 @@ async function collectNode({
 	items: FrameItemDescriptor[];
 	textures: Map<string, TextureUploadDescriptor>;
 }): Promise<void> {
+	if (node instanceof TrackNode) {
+		const trackItems: FrameItemDescriptor[] = [];
+		for (let index = 0; index < node.children.length; index++) {
+			await collectNode({
+				node: node.children[index],
+				renderer,
+				path: `${path}:${index}`,
+				items: trackItems,
+				textures,
+			});
+		}
+		items.push({
+			type: "track",
+			trackId: node.params.trackId,
+			items: trackItems,
+			...(node.params.trackMatte?.enabled
+				? {
+						matte: {
+							sourceTrackId: node.params.trackMatte.sourceTrackId,
+							mode: node.params.trackMatte.mode,
+							inverted: node.params.trackMatte.inverted,
+						},
+					}
+				: {}),
+		});
+		return;
+	}
 	if (node instanceof RootNode || node instanceof CompoundNode) {
 		if (node instanceof CompoundNode && !node.resolved?.active) return;
 		for (let index = 0; index < node.children.length; index++) {
@@ -272,10 +301,39 @@ async function collectVisualSourceNode({
 		blendMode: node.params.blendMode ?? "normal",
 		effectPassGroups: node.resolved.effectPasses,
 		masks,
+		...(node.params.key?.enabled
+			? { key: buildLayerKeyDescriptor(node.params.key) }
+			: {}),
 	});
 	if (strokeLayer) {
 		items.push(strokeLayer);
 	}
+}
+
+function buildLayerKeyDescriptor(
+	key: NonNullable<import("@/timeline").CompositingKey>,
+): LayerKeyDescriptor {
+	if (key.type === "luma") {
+		return {
+			type: "luma",
+			low: key.low,
+			high: key.high,
+			softness: key.softness,
+			inverted: key.inverted,
+		};
+	}
+	const hex = key.keyColor.slice(1);
+	return {
+		type: "chroma",
+		keyColor: [
+			Number.parseInt(hex.slice(0, 2), 16) / 255,
+			Number.parseInt(hex.slice(2, 4), 16) / 255,
+			Number.parseInt(hex.slice(4, 6), 16) / 255,
+		],
+		similarity: key.similarity,
+		softness: key.softness,
+		spillSuppression: key.spillSuppression,
+	};
 }
 
 function collectTextNode({

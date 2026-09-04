@@ -129,6 +129,9 @@ export class DuplicateTrackCommand extends Command {
 			...source,
 			id: newTrackId,
 			name: this.name ?? `${source.name} copy`,
+			// A copied destination must not silently share the source track's
+			// compositing dependency. Callers can establish a new route explicitly.
+			trackMatte: undefined,
 			elements: elements.map((element) =>
 				buildDuplicateElement({
 					element,

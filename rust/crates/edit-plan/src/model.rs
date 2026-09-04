@@ -1130,6 +1130,13 @@ pub enum EditOperation {
     SetMainTrack {
         track_id: String,
     },
+    SetTrackMatte {
+        track_id: String,
+        routing: TrackMatteRouting,
+    },
+    RemoveTrackMatte {
+        track_id: String,
+    },
     AddBookmark {
         bookmark_id: Option<String>,
         time: MediaTime,
@@ -1429,6 +1436,15 @@ pub enum EditOperation {
         track_id: String,
         element_id: String,
     },
+    SetKey {
+        track_id: String,
+        element_id: String,
+        key: CompositingKey,
+    },
+    RemoveKey {
+        track_id: String,
+        element_id: String,
+    },
     SetMask {
         track_id: String,
         element_id: String,
@@ -1496,6 +1512,26 @@ pub struct Track {
     pub role: String,
     pub muted: Option<bool>,
     pub hidden: Option<bool>,
+    #[serde(default)]
+    pub track_matte: Option<TrackMatteRouting>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrackMatteRouting {
+    pub source_track_id: String,
+    pub mode: TrackMatteMode,
+    pub inverted: bool,
+    pub enabled: bool,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackMatteMode {
+    Alpha,
+    Luma,
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -1559,6 +1595,8 @@ pub struct Element {
     pub effects: Vec<Effect>,
     pub keyframes: Vec<Keyframe>,
     pub masks: Vec<Mask>,
+    #[serde(default)]
+    pub key: Option<CompositingKey>,
     pub matte_enabled: Option<bool>,
     pub audio_replacement_enabled: Option<bool>,
     pub source_audio_separated: Option<bool>,
@@ -1702,6 +1740,8 @@ pub struct CanonicalTrack {
     pub track_type: String,
     pub muted: Option<bool>,
     pub hidden: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_matte: Option<TrackMatteRouting>,
     pub transitions: Vec<CanonicalTransition>,
     pub elements: Vec<CanonicalElement>,
 }
@@ -1781,6 +1821,31 @@ pub struct CanonicalElementCommon {
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum CompositingKey {
+    Chroma {
+        key_color: String,
+        similarity: f64,
+        softness: f64,
+        spill_suppression: f64,
+        enabled: bool,
+    },
+    Luma {
+        low: f64,
+        high: f64,
+        softness: f64,
+        inverted: bool,
+        enabled: bool,
+    },
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(missing_as_null))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(
@@ -1807,6 +1872,8 @@ pub enum CanonicalElement {
         retime: CanonicalValue,
         effects: Vec<CanonicalEffect>,
         masks: Vec<CanonicalMask>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<Box<CompositingKey>>,
         matte: Option<Box<CanonicalAttachment>>,
         audio_replacement: Option<Box<CanonicalAttachment>>,
     },
@@ -1817,6 +1884,8 @@ pub enum CanonicalElement {
         hidden: Option<bool>,
         effects: Vec<CanonicalEffect>,
         masks: Vec<CanonicalMask>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<Box<CompositingKey>>,
     },
     Text {
         #[serde(flatten)]

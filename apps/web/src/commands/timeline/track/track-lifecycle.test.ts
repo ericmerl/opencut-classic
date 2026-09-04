@@ -130,6 +130,12 @@ describe("track lifecycle commands", () => {
 
 	test("duplicate copies elements and transitions with fresh ids after the source", () => {
 		tracks = fixture();
+		tracks.overlay[0]!.trackMatte = {
+			sourceTrackId: "main",
+			mode: "alpha",
+			inverted: false,
+			enabled: true,
+		};
 		const command = new DuplicateTrackCommand({ trackId: "overlay-a" });
 		command.execute();
 		const copyId = command.getTrackId();
@@ -139,6 +145,7 @@ describe("track lifecycle commands", () => {
 			"text-b",
 		]);
 		const copy = tracks.overlay[1] as VideoTrack;
+		expect(copy.trackMatte).toBeUndefined();
 		expect(copy.name).toBe("overlay-a copy");
 		expect(copy.elements.map((candidate) => candidate.name)).toEqual([
 			"a-1 (copy)",

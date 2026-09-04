@@ -1,6 +1,7 @@
 mod blend_mode;
 mod compositor;
 mod frame;
+mod keying;
 mod texture_pool;
 mod texture_store;
 
@@ -9,5 +10,6 @@ pub use compositor::{Compositor, CompositorError, RenderFrameOptions};
 pub use frame::{
     CanvasClearDescriptor, CanvasTextureDescriptor, EffectPassDescriptor, FrameDescriptor,
     FrameItemDescriptor, LayerDescriptor, LayerMaskDescriptor, MaskChannel,
-    QuadTransformDescriptor,
+    QuadTransformDescriptor, TrackMatteDescriptor, TrackMatteMode,
 };
+pub use keying::{LayerKeyDescriptor, apply_compositing_key};

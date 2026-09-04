@@ -1304,7 +1304,10 @@ integrationTest(
 		const profileDirectory = join(directory, "profile");
 		const receiptDirectory = join(directory, "receipts");
 		const sourcePath = join(directory, "public-source.mp4");
-		await createSyntheticVideo(sourcePath);
+		await createSyntheticVideo(
+			sourcePath,
+			"color=c=0x00ff00:size=320x240:rate=30:duration=2,drawbox=x=20+80*t:y=70:w=80:h=100:color=0xff0000:t=fill",
+		);
 		const sourceHash = createHash("sha256")
 			.update(await readFile(sourcePath))
 			.digest("hex");
@@ -1362,6 +1365,23 @@ integrationTest(
 			connected.connectionIdentity,
 			"connectionIdentity",
 		);
+		const capabilities = await first.callTool("opencut_capabilities", {});
+		const capabilityTools = requireRecord(
+			capabilities.tools,
+			"capability tools",
+		);
+		const editPlanOperationVariants = capabilityTools.editPlanOperationVariants;
+		if (!Array.isArray(editPlanOperationVariants)) {
+			throw new Error("editPlanOperationVariants must be an array");
+		}
+		for (const variant of [
+			"set_key",
+			"remove_key",
+			"set_track_matte",
+			"remove_track_matte",
+		]) {
+			expect(editPlanOperationVariants).toContain(variant);
+		}
 		const initial = await first.callTool(
 			"opencut_get_project",
 			affinity(initialIdentity),
@@ -1425,6 +1445,34 @@ integrationTest(
 		const gradeDescription = "Apply the complete realistic color grade";
 		const gradeOperations = [
 			{
+				kind: "set_key",
+				trackId: requireString(importedElement.trackId, "trackId"),
+				elementId: importedElementId,
+				key: {
+					type: "chroma",
+					keyColor: "#00ff00",
+					similarity: 0.2,
+					softness: 0.1,
+					spillSuppression: 0.8,
+					enabled: true,
+				},
+			},
+			{
+				kind: "duplicate_track",
+				trackId: requireString(importedElement.trackId, "trackId"),
+				newTrackId: "public-track-matte-source",
+			},
+			{
+				kind: "set_track_matte",
+				trackId: requireString(importedElement.trackId, "trackId"),
+				routing: {
+					sourceTrackId: "public-track-matte-source",
+					mode: "alpha",
+					inverted: false,
+					enabled: true,
+				},
+			},
+			{
 				kind: "set_reframe",
 				trackId: requireString(importedElement.trackId, "trackId"),
 				elementId: importedElementId,
@@ -1473,6 +1521,44 @@ integrationTest(
 				enabled: true,
 			},
 		];
+		await expect(
+			first.callTool("opencut_preflight_edit_plan", {
+				contractVersion: 2,
+				...affinity(initialIdentity),
+				preflightId: "public-invalid-self-track-matte",
+				projectId,
+				sceneId: sourceSaveRequest.sceneId,
+				expectedRevision: sourceSaveRequest.expectedRevision,
+				expectedProjectContentHash: importedContentHash,
+				expectedWriteVersion: requireNumber(
+					sourceSaved.writeVersion,
+					"writeVersion",
+				),
+				saveReceiptOperationId: sourceSaveRequest.operationId,
+				expectedSaveReceiptId: requireString(
+					sourceSaved.receiptId,
+					"receiptId",
+				),
+				description: "Reject a self-routed track matte",
+				operations: [
+					{
+						kind: "set_track_matte",
+						trackId: requireString(importedElement.trackId, "trackId"),
+						routing: {
+							sourceTrackId: requireString(importedElement.trackId, "trackId"),
+							mode: "luma",
+							inverted: false,
+							enabled: true,
+						},
+					},
+				],
+				policy: {
+					warningPolicy: "allow",
+					providerExecution: "forbidden",
+					costPolicy: "require-exact",
+				},
+			}),
+		).rejects.toThrow();
 		const preflightRequest = {
 			contractVersion: 2,
 			bridgeProtocolVersion: 2,
@@ -1513,7 +1599,7 @@ integrationTest(
 					fontReadiness: { status: "ready", families: ["Arial"] },
 					captions: [
 						{
-							operationIndex: 1,
+							operationIndex: 4,
 							captionIndex: 0,
 							elementName: "Caption 1",
 							fontDescriptorCss: 'italic bold 16px "Arial"',
@@ -1823,6 +1909,14 @@ integrationTest(
 			(element) => element.elementId === importedElementId,
 		);
 		expect(reloadedElement).toMatchObject({
+			key: {
+				type: "chroma",
+				keyColor: "#00ff00",
+				similarity: 0.2,
+				softness: 0.1,
+				spillSuppression: 0.8,
+				enabled: true,
+			},
 			params: { volume: -3 },
 			effects: [
 				expect.objectContaining({
@@ -1830,6 +1924,19 @@ integrationTest(
 					effectType: "color-grade",
 				}),
 			],
+		});
+		expect(
+			requireRecords(reloaded.tracks, "tracks").find(
+				(track) =>
+					track.trackId === requireString(importedElement.trackId, "trackId"),
+			),
+		).toMatchObject({
+			trackMatte: {
+				sourceTrackId: "public-track-matte-source",
+				mode: "alpha",
+				inverted: false,
+				enabled: true,
+			},
 		});
 		const recoveredAudio = await second.callTool("opencut_apply_edit_plan", {
 			...audioRequest,
@@ -2121,7 +2228,7 @@ integrationTest(
 				expectedProjectContentHash: audioContentHash,
 				outputPath,
 				format: "webm",
-				quality: "high",
+				quality: "very_high",
 				fps: { numerator: 30, denominator: 1 },
 				includeAudio: true,
 				canvasSize: { width: 320, height: 240 },
@@ -2179,6 +2286,30 @@ integrationTest(
 			export: { chain: "opencut-fixed-mastering-v1" },
 			difference: expect.stringContaining("per rendered buffer"),
 		});
+		const paritySaveOperationId = "public-parity-source-save";
+		const paritySaved = await third.callTool("opencut_save_project", {
+			...affinity(thirdIdentity),
+			projectId,
+			sceneId: previewRequest.sceneId,
+			operationId: paritySaveOperationId,
+			expectedRevision: previewRequest.expectedRevision,
+			expectedContentHash: previewRequest.expectedProjectContentHash,
+		});
+		expect(paritySaved).toMatchObject({
+			status: "saved",
+			contentHash: previewRequest.expectedProjectContentHash,
+		});
+		const paritySourceBinding = {
+			expectedWriteVersion: requireNumber(
+				paritySaved.writeVersion,
+				"parity save writeVersion",
+			),
+			saveReceiptOperationId: paritySaveOperationId,
+			expectedSaveReceiptId: requireString(
+				paritySaved.receiptId,
+				"parity save receiptId",
+			),
+		};
 
 		const videoDurationSeconds = requireNumber(
 			videoValidation.durationSeconds,
@@ -2197,6 +2328,7 @@ integrationTest(
 				{
 					...previewRequest,
 					...affinity(thirdIdentity),
+					...paritySourceBinding,
 					operationId: `public-parity-frame-${position}`,
 					time: {
 						kind: "media-time",
@@ -2247,9 +2379,9 @@ integrationTest(
 					sceneId: previewRequest.sceneId,
 					expectedRevision: previewRequest.expectedRevision,
 					expectedProjectContentHash: previewRequest.expectedProjectContentHash,
-					expectedWriteVersion: previewRequest.expectedWriteVersion,
-					saveReceiptOperationId: previewRequest.saveReceiptOperationId,
-					expectedSaveReceiptId: previewRequest.expectedSaveReceiptId,
+					expectedWriteVersion: paritySourceBinding.expectedWriteVersion,
+					saveReceiptOperationId: paritySourceBinding.saveReceiptOperationId,
+					expectedSaveReceiptId: paritySourceBinding.expectedSaveReceiptId,
 					range: {
 						kind: "media-time",
 						startTicks: Math.round(startSeconds * MEDIA_TICKS_PER_SECOND),
@@ -2386,6 +2518,12 @@ integrationTest(
 				},
 			],
 		});
+		// Keep the default milestone comprehensive while allowing issue-focused
+		// runs to stop after the complete compositing/replay/export contract.
+		if (process.env.OPENCUT_COMPOSITING_E2E_ONLY === "1") {
+			await third.callTool("opencut_stop_editor_worker", {});
+			return;
+		}
 
 		// -----------------------------------------------------------------
 		// Issue #20: project, scene, bookmark, track, and media-bin lifecycle
@@ -3357,7 +3495,10 @@ async function availablePort(): Promise<number> {
 	});
 }
 
-async function createSyntheticVideo(outputPath: string): Promise<void> {
+async function createSyntheticVideo(
+	outputPath: string,
+	videoSource = "testsrc2=size=320x240:rate=30:duration=2",
+): Promise<void> {
 	const ffmpeg =
 		process.env.OPENCUT_FFMPEG_PATH ?? process.env.FFMPEG_PATH ?? "ffmpeg";
 	await new Promise<void>((resolve, reject) => {
@@ -3369,7 +3510,7 @@ async function createSyntheticVideo(outputPath: string): Promise<void> {
 				"-f",
 				"lavfi",
 				"-i",
-				"testsrc2=size=320x240:rate=30:duration=2",
+				videoSource,
 				"-f",
 				"lavfi",
 				"-i",

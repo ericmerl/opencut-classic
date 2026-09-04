@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use bytemuck::{Pod, Zeroable};
 use effects::{ApplyEffectsOptions, EffectPass, EffectPipeline, UniformValue};
 use gpu::{FULLSCREEN_SHADER_SOURCE, GpuContext, wgpu};
@@ -45,6 +47,8 @@ pub enum CompositorError {
     Effects(#[from] effects::EffectsError),
     #[error("Failed to present frame: {0}")]
     Gpu(#[from] gpu::GpuError),
+    #[error("Invalid track matte routing: {0}")]
+    InvalidTrackMatte(String),
 }
 
 #[repr(C)]
@@ -60,6 +64,8 @@ struct LayerUniformBuffer {
     source_offset: [f32; 2],
     source_scale: [f32; 2],
     _padding: [f32; 2],
+    key_color_kind: [f32; 4],
+    key_params: [f32; 4],
 }
 
 #[repr(C)]
@@ -305,40 +311,18 @@ impl Compositor {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("compositor-frame-encoder"),
                 });
-        let mut scene = self.create_cleared_texture(
+        let scene = self.render_items_to_texture(
             context,
             &mut encoder,
+            frame,
+            &frame.items,
+            &frame.items,
             frame.width,
             frame.height,
             frame.clear.color,
-        );
-
-        for item in &frame.items {
-            match item {
-                FrameItemDescriptor::Layer(layer) => {
-                    let layer_texture = self.render_layer(context, &mut encoder, frame, layer)?;
-                    scene = self.blend_texture(
-                        context,
-                        &mut encoder,
-                        &scene,
-                        &layer_texture,
-                        layer.blend_mode,
-                        frame.width,
-                        frame.height,
-                    )?;
-                }
-                FrameItemDescriptor::SceneEffect { effect_pass_groups } => {
-                    scene = self.apply_effect_groups(
-                        context,
-                        &mut encoder,
-                        &scene,
-                        frame.width,
-                        frame.height,
-                        effect_pass_groups,
-                    )?;
-                }
-            }
-        }
+            true,
+            &mut BTreeSet::new(),
+        )?;
 
         context.queue().submit([encoder.finish()]);
         Ok(scene)
@@ -361,40 +345,18 @@ impl Compositor {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("compositor-frame-encoder"),
                 });
-        let mut scene = self.create_cleared_texture(
+        let scene = self.render_items_to_texture(
             context,
             &mut encoder,
+            frame,
+            &frame.items,
+            &frame.items,
             frame.width,
             frame.height,
             frame.clear.color,
-        );
-
-        for item in &frame.items {
-            match item {
-                FrameItemDescriptor::Layer(layer) => {
-                    let layer_texture = self.render_layer(context, &mut encoder, frame, layer)?;
-                    scene = self.blend_texture(
-                        context,
-                        &mut encoder,
-                        &scene,
-                        &layer_texture,
-                        layer.blend_mode,
-                        frame.width,
-                        frame.height,
-                    )?;
-                }
-                FrameItemDescriptor::SceneEffect { effect_pass_groups } => {
-                    scene = self.apply_effect_groups(
-                        context,
-                        &mut encoder,
-                        &scene,
-                        frame.width,
-                        frame.height,
-                        effect_pass_groups,
-                    )?;
-                }
-            }
-        }
+            true,
+            &mut BTreeSet::new(),
+        )?;
 
         context.encode_texture_blit_to_view(
             &mut encoder,
@@ -405,6 +367,146 @@ impl Compositor {
         context.queue().submit([encoder.finish()]);
         surface_texture.present();
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_items_to_texture(
+        &mut self,
+        context: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &FrameDescriptor,
+        items: &[FrameItemDescriptor],
+        root_items: &[FrameItemDescriptor],
+        width: u32,
+        height: u32,
+        clear: [f32; 4],
+        suppress_consumed_sources: bool,
+        visiting: &mut BTreeSet<String>,
+    ) -> Result<wgpu::Texture, CompositorError> {
+        let consumed_sources: BTreeSet<&str> = if suppress_consumed_sources {
+            items
+                .iter()
+                .filter_map(|item| match item {
+                    FrameItemDescriptor::Track {
+                        matte: Some(matte), ..
+                    } => Some(matte.source_track_id.as_str()),
+                    _ => None,
+                })
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
+        let mut scene = self.create_cleared_texture(context, encoder, width, height, clear);
+        for item in items {
+            match item {
+                FrameItemDescriptor::Layer(layer) => {
+                    let layer_texture = self.render_layer(context, encoder, frame, layer)?;
+                    scene = self.blend_texture(
+                        context,
+                        encoder,
+                        &scene,
+                        &layer_texture,
+                        layer.blend_mode,
+                        width,
+                        height,
+                    )?;
+                }
+                FrameItemDescriptor::SceneEffect { effect_pass_groups } => {
+                    scene = self.apply_effect_groups(
+                        context,
+                        encoder,
+                        &scene,
+                        width,
+                        height,
+                        effect_pass_groups,
+                    )?;
+                }
+                FrameItemDescriptor::Track { track_id, .. } => {
+                    if consumed_sources.contains(track_id.as_str()) {
+                        continue;
+                    }
+                    let track_texture = self.render_track_to_texture(
+                        context, encoder, frame, item, root_items, visiting,
+                    )?;
+                    scene = self.blend_texture(
+                        context,
+                        encoder,
+                        &scene,
+                        &track_texture,
+                        BlendMode::Normal,
+                        width,
+                        height,
+                    )?;
+                }
+            }
+        }
+        Ok(scene)
+    }
+
+    fn render_track_to_texture(
+        &mut self,
+        context: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &FrameDescriptor,
+        track: &FrameItemDescriptor,
+        root_items: &[FrameItemDescriptor],
+        visiting: &mut BTreeSet<String>,
+    ) -> Result<wgpu::Texture, CompositorError> {
+        let FrameItemDescriptor::Track {
+            track_id,
+            items,
+            matte,
+        } = track
+        else {
+            unreachable!("track renderer requires a track descriptor")
+        };
+        if !visiting.insert(track_id.clone()) {
+            return Err(CompositorError::InvalidTrackMatte(format!(
+                "dependency cycle at {track_id}"
+            )));
+        }
+        let result = (|| {
+            let mut output = self.render_items_to_texture(
+                context,
+                encoder,
+                frame,
+                items,
+                root_items,
+                frame.width,
+                frame.height,
+                [0.0; 4],
+                true,
+                visiting,
+            )?;
+            if let Some(matte) = matte {
+                let source =
+                    find_track_descriptor(root_items, &matte.source_track_id).ok_or_else(|| {
+                        CompositorError::InvalidTrackMatte(format!(
+                            "missing source {}",
+                            matte.source_track_id
+                        ))
+                    })?;
+                let source_texture = self.render_track_to_texture(
+                    context, encoder, frame, source, root_items, visiting,
+                )?;
+                output = self.apply_mask(
+                    context,
+                    encoder,
+                    &output,
+                    &source_texture,
+                    matte.inverted,
+                    match matte.mode {
+                        crate::frame::TrackMatteMode::Alpha => crate::frame::MaskChannel::Alpha,
+                        crate::frame::TrackMatteMode::Luma => crate::frame::MaskChannel::Luma,
+                    },
+                    frame.width,
+                    frame.height,
+                );
+            }
+            Ok(output)
+        })();
+        visiting.remove(track_id);
+        result
     }
 
     fn render_layer(
@@ -615,6 +717,8 @@ impl Compositor {
                             layer.transform.source_rect.height,
                         ],
                         _padding: [0.0; 2],
+                        key_color_kind: layer_key_color_kind(layer.key.as_ref()),
+                        key_params: layer_key_params(layer.key.as_ref()),
                     }),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });
@@ -714,6 +818,7 @@ impl Compositor {
                         channel: match channel {
                             crate::frame::MaskChannel::Alpha => 0.0,
                             crate::frame::MaskChannel::Red => 1.0,
+                            crate::frame::MaskChannel::Luma => 2.0,
                         },
                         _padding: [0.0; 2],
                     }),
@@ -863,6 +968,56 @@ impl Compositor {
     ) {
         let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
         context.encode_texture_blit_to_view(encoder, source, &target_view, "compositor-blit-pass");
+    }
+}
+
+fn find_track_descriptor<'a>(
+    items: &'a [FrameItemDescriptor],
+    source_track_id: &str,
+) -> Option<&'a FrameItemDescriptor> {
+    for item in items {
+        if let FrameItemDescriptor::Track {
+            track_id,
+            items: children,
+            ..
+        } = item
+        {
+            if track_id == source_track_id {
+                return Some(item);
+            }
+            if let Some(found) = find_track_descriptor(children, source_track_id) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn layer_key_color_kind(key: Option<&crate::LayerKeyDescriptor>) -> [f32; 4] {
+    match key {
+        Some(crate::LayerKeyDescriptor::Chroma { key_color, .. }) => {
+            [key_color[0], key_color[1], key_color[2], 1.0]
+        }
+        Some(crate::LayerKeyDescriptor::Luma { .. }) => [0.0, 0.0, 0.0, 2.0],
+        None => [0.0; 4],
+    }
+}
+
+fn layer_key_params(key: Option<&crate::LayerKeyDescriptor>) -> [f32; 4] {
+    match key {
+        Some(crate::LayerKeyDescriptor::Chroma {
+            similarity,
+            softness,
+            spill_suppression,
+            ..
+        }) => [*similarity, *softness, *spill_suppression, 0.0],
+        Some(crate::LayerKeyDescriptor::Luma {
+            low,
+            high,
+            softness,
+            inverted,
+        }) => [*low, *high, *softness, f32::from(*inverted)],
+        None => [0.0; 4],
     }
 }
 

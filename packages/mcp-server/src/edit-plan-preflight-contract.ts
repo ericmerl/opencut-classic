@@ -3,9 +3,11 @@ import { fontReadinessSchema } from "./preview-evidence-store";
 import * as z from "zod/v4";
 import {
 	allocationRoleSchema,
+	compositingKeySchema,
 	editOperationSchema,
 	preflightEditPlanInputSchema,
 	resolvedEditOperationSchema,
+	trackMatteRoutingSchema,
 } from "./tool-schemas";
 import { jsonValueSchema } from "./operation-ledger-schema";
 
@@ -154,6 +156,7 @@ type CanonicalTrack = {
 	type: string;
 	muted?: boolean | null;
 	hidden?: boolean | null;
+	trackMatte?: z.infer<typeof trackMatteRoutingSchema>;
 	transitions: z.infer<typeof canonicalTransitionSchema>[];
 	elements: CanonicalElement[];
 };
@@ -167,6 +170,10 @@ function canonicalElementVariantSchema(trackSchema: z.ZodType<CanonicalTrack>) {
 	const visual = {
 		hidden: nullableBooleanSchema,
 		effects: z.array(canonicalEffectSchema),
+	};
+	const keyedVisual = {
+		...visual,
+		key: compositingKeySchema.optional(),
 	};
 	return z.discriminatedUnion("type", [
 		z
@@ -185,7 +192,7 @@ function canonicalElementVariantSchema(trackSchema: z.ZodType<CanonicalTrack>) {
 				...canonicalElementCommonShape,
 				type: z.literal("video"),
 				...media,
-				...visual,
+				...keyedVisual,
 				isSourceAudioEnabled: nullableBooleanSchema,
 				retime: canonicalValueSchema,
 				masks: z.array(canonicalMaskSchema),
@@ -198,7 +205,7 @@ function canonicalElementVariantSchema(trackSchema: z.ZodType<CanonicalTrack>) {
 				...canonicalElementCommonShape,
 				type: z.literal("image"),
 				...media,
-				...visual,
+				...keyedVisual,
 				masks: z.array(canonicalMaskSchema),
 			})
 			.strict(),
@@ -256,6 +263,7 @@ const canonicalTrackSchema: z.ZodType<CanonicalTrack> = z.lazy(() =>
 			type: z.string().min(1),
 			muted: nullableBooleanSchema,
 			hidden: nullableBooleanSchema,
+			trackMatte: trackMatteRoutingSchema.optional(),
 			transitions: z.array(canonicalTransitionSchema),
 			elements: z.array(canonicalElementVariantSchema(canonicalTrackSchema)),
 		})

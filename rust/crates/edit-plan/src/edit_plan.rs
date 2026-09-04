@@ -678,6 +678,71 @@ impl State {
         for track in &self.snapshot.tracks {
             validate_id(&track.track_id, operation_index, "trackId")?;
             unique(&mut ids, &track.track_id, operation_index)?;
+            if let Some(routing) = &track.track_matte {
+                let source = self
+                    .snapshot
+                    .tracks
+                    .iter()
+                    .find(|candidate| candidate.track_id == routing.source_track_id)
+                    .ok_or_else(|| {
+                        error(
+                            ErrorCode::UnknownReference,
+                            "track matte source is missing",
+                            operation_index,
+                            Some("track.trackMatte.sourceTrackId"),
+                        )
+                    })?;
+                if source.track_id == track.track_id {
+                    return Err(error(
+                        ErrorCode::InvalidValue,
+                        "track matte source cannot be its destination",
+                        operation_index,
+                        Some("track.trackMatte.sourceTrackId"),
+                    ));
+                }
+                if matches!(source.track_type.as_str(), "audio" | "effect")
+                    || source.role == "audio"
+                    || matches!(track.track_type.as_str(), "audio" | "effect")
+                    || track.role == "audio"
+                {
+                    return Err(error(
+                        ErrorCode::IncompatibleTrack,
+                        "track matte routing requires visual tracks",
+                        operation_index,
+                        Some("track.trackMatte"),
+                    ));
+                }
+                if routing.enabled && source.hidden == Some(true) {
+                    return Err(error(
+                        ErrorCode::InvalidValue,
+                        "track matte source is hidden",
+                        operation_index,
+                        Some("track.trackMatte.sourceTrackId"),
+                    ));
+                }
+                if routing.enabled {
+                    let mut next_id = Some(routing.source_track_id.as_str());
+                    let mut visited = BTreeSet::new();
+                    while let Some(candidate_id) = next_id {
+                        if candidate_id == track.track_id || !visited.insert(candidate_id) {
+                            return Err(error(
+                                ErrorCode::InvalidValue,
+                                "track matte dependency cycle",
+                                operation_index,
+                                Some("track.trackMatte.sourceTrackId"),
+                            ));
+                        }
+                        next_id = self
+                            .snapshot
+                            .tracks
+                            .iter()
+                            .find(|candidate| candidate.track_id == candidate_id)
+                            .and_then(|candidate| candidate.track_matte.as_ref())
+                            .filter(|candidate| candidate.enabled)
+                            .map(|candidate| candidate.source_track_id.as_str());
+                    }
+                }
+            }
         }
         for element in &self.snapshot.elements {
             validate_id(&element.element_id, operation_index, "elementId")?;
@@ -697,6 +762,12 @@ impl State {
             }
             validate_interval(element.start_time, element.duration, operation_index)?;
             validate_finite_element(element, operation_index)?;
+            if let Some(key) = &element.key {
+                if let Err(mut key_error) = validate_compositing_key(key, 0) {
+                    key_error.operation_index = operation_index;
+                    return Err(key_error);
+                }
+            }
         }
         for transition in &self.snapshot.transitions {
             unique(&mut ids, &transition.transition_id, operation_index)?;
@@ -1942,6 +2013,69 @@ impl State {
                 relationships,
             ),
             EditOperation::SetMainTrack { track_id } => self.set_main_track(track_id, index),
+            EditOperation::SetTrackMatte { track_id, routing } => {
+                let destination = self
+                    .snapshot
+                    .tracks
+                    .iter()
+                    .find(|track| track.track_id == *track_id)
+                    .ok_or_else(|| unknown_error(index, "track matte destination"))?;
+                let source = self
+                    .snapshot
+                    .tracks
+                    .iter()
+                    .find(|track| track.track_id == routing.source_track_id)
+                    .ok_or_else(|| unknown_error(index, "track matte source"))?;
+                if source.track_id == *track_id {
+                    return invalid(index, "track matte source cannot be its destination");
+                }
+                if matches!(source.track_type.as_str(), "audio" | "effect")
+                    || source.role == "audio"
+                {
+                    return incompatible(index, "track matte source must be visual");
+                }
+                if matches!(destination.track_type.as_str(), "audio" | "effect")
+                    || destination.role == "audio"
+                {
+                    return incompatible(index, "track matte destination must be visual");
+                }
+                if routing.enabled && source.hidden == Some(true) {
+                    return invalid(index, "track matte source is hidden");
+                }
+                if routing.enabled {
+                    let mut next_id = Some(routing.source_track_id.as_str());
+                    let mut visited = BTreeSet::new();
+                    while let Some(candidate_id) = next_id {
+                        if candidate_id == track_id {
+                            return invalid(index, "track matte dependency cycle");
+                        }
+                        if !visited.insert(candidate_id) {
+                            return invalid(index, "track matte dependency cycle");
+                        }
+                        next_id = self
+                            .snapshot
+                            .tracks
+                            .iter()
+                            .find(|candidate| candidate.track_id == candidate_id)
+                            .and_then(|candidate| candidate.track_matte.as_ref())
+                            .filter(|candidate| candidate.enabled)
+                            .map(|candidate| candidate.source_track_id.as_str());
+                    }
+                }
+                self.track_mut(track_id, index)?.track_matte = Some(routing.clone());
+                Ok(())
+            }
+            EditOperation::RemoveTrackMatte { track_id } => {
+                if self
+                    .track_mut(track_id, index)?
+                    .track_matte
+                    .take()
+                    .is_none()
+                {
+                    return unknown(index, "track matte routing");
+                }
+                Ok(())
+            }
             EditOperation::AddBookmark {
                 bookmark_id,
                 time,
@@ -2017,6 +2151,18 @@ impl State {
                 muted,
                 hidden,
             } => {
+                if hidden == &Some(true)
+                    && self.snapshot.tracks.iter().any(|candidate| {
+                        candidate.track_matte.as_ref().is_some_and(|routing| {
+                            routing.enabled && routing.source_track_id == *track_id
+                        })
+                    })
+                {
+                    return invalid(
+                        index,
+                        "track is an enabled track matte source; remove its routing first",
+                    );
+                }
                 let track = self.track_mut(track_id, index)?;
                 if muted.is_none() && hidden.is_none() {
                     return invalid(index, "track state is empty");
@@ -3145,6 +3291,32 @@ impl State {
                 decrement_reference(&mut self.media_reference_counts, &asset_id);
                 Ok(())
             }
+            EditOperation::SetKey {
+                track_id,
+                element_id,
+                key,
+            } => {
+                validate_compositing_key(key, index)?;
+                match self.element_mut(track_id, element_id, index)? {
+                    element if matches!(element.element_type.as_str(), "video" | "image") => {
+                        element.key = Some(key.clone());
+                        Ok(())
+                    }
+                    _ => incompatible(index, "keying requires a video or image element"),
+                }
+            }
+            EditOperation::RemoveKey {
+                track_id,
+                element_id,
+            } => match self.element_mut(track_id, element_id, index)? {
+                element if matches!(element.element_type.as_str(), "video" | "image") => {
+                    if element.key.take().is_none() {
+                        return unknown(index, "compositing key");
+                    }
+                    Ok(())
+                }
+                _ => incompatible(index, "keying requires a video or image element"),
+            },
             EditOperation::SetMask {
                 track_id,
                 element_id,
@@ -3732,6 +3904,17 @@ impl State {
         warnings: &mut BTreeSet<Warning>,
     ) -> Result<(), EditPlanError> {
         let track = self.track_mut(track_id, index)?.clone();
+        if self.snapshot.tracks.iter().any(|candidate| {
+            candidate
+                .track_matte
+                .as_ref()
+                .is_some_and(|routing| routing.enabled && routing.source_track_id == track_id)
+        }) {
+            return invalid(
+                index,
+                "track is an enabled track matte source; remove its routing first",
+            );
+        }
         if track.role == "main" {
             return incompatible(
                 index,
@@ -3927,6 +4110,7 @@ impl State {
             },
             muted: source.muted,
             hidden: source.hidden,
+            track_matte: None,
         };
         // The copy sits directly after its source; the main track duplicates
         // onto the top of the overlay stack.
@@ -4393,6 +4577,7 @@ impl State {
             },
             muted: matches!(kind, "video" | "audio").then_some(false),
             hidden: (kind != "audio").then_some(false),
+            track_matte: None,
         };
         let insert_index = if kind == "audio" {
             if highest {
@@ -6318,6 +6503,7 @@ fn new_element(id: &str, kind: &str, name: &str, start: MediaTime, duration: Med
         effects: vec![],
         keyframes: vec![],
         masks: vec![],
+        key: None,
         matte_enabled: None,
         audio_replacement_enabled: None,
         source_audio_separated: None,
@@ -7443,6 +7629,48 @@ fn finite_range(v: f64, min: f64, max: f64, index: usize, path: &str) -> Result<
         ))
     }
 }
+
+fn validate_compositing_key(key: &CompositingKey, index: usize) -> Result<(), EditPlanError> {
+    match key {
+        CompositingKey::Chroma {
+            key_color,
+            similarity,
+            softness,
+            spill_suppression,
+            ..
+        } => {
+            let bytes = key_color.as_bytes();
+            if bytes.len() != 7 || bytes[0] != b'#' || !bytes[1..].iter().all(u8::is_ascii_hexdigit)
+            {
+                return invalid(index, "keyColor must be a six-digit hexadecimal color");
+            }
+            unit_key_control(*similarity, index, "similarity")?;
+            unit_key_control(*softness, index, "softness")?;
+            unit_key_control(*spill_suppression, index, "spillSuppression")
+        }
+        CompositingKey::Luma {
+            low,
+            high,
+            softness,
+            ..
+        } => {
+            unit_key_control(*low, index, "low")?;
+            unit_key_control(*high, index, "high")?;
+            unit_key_control(*softness, index, "softness")?;
+            if low > high {
+                return invalid(index, "luma key low must not exceed high");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn unit_key_control(value: f64, index: usize, name: &str) -> Result<(), EditPlanError> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return invalid(index, &format!("key {name} must be between zero and one"));
+    }
+    Ok(())
+}
 fn validate_mask_params(params: &MaskParams, index: usize) -> Result<(), EditPlanError> {
     for (key, value) in params {
         if key.trim().is_empty() {
@@ -8490,6 +8718,7 @@ fn media_element(
             hidden: Some(false),
             effects: vec![],
             masks: vec![],
+            key: None,
         },
         _ => CanonicalElement::Video {
             common,
@@ -8499,6 +8728,7 @@ fn media_element(
             retime: CanonicalValue::Null(()),
             effects: vec![],
             masks: vec![],
+            key: None,
             matte: None,
             audio_replacement: None,
         },

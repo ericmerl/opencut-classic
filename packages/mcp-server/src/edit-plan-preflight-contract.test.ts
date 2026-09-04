@@ -389,6 +389,90 @@ describe("edit-plan preflight contract", () => {
 		expect(editPlanProjectSnapshotSchema.parse(projectionV3)).toEqual(
 			projectionV3,
 		);
+		const projectionWithCompositing = {
+			...projectionV2,
+			project: {
+				...projectionV2.project,
+				scenes: [
+					{
+						...projectionV2.project.scenes[0],
+						tracks: [
+							{
+								role: "primary",
+								order: 0,
+								id: "track-1",
+								name: "Foreground",
+								type: "video",
+								muted: null,
+								hidden: null,
+								trackMatte: {
+									sourceTrackId: "track-matte",
+									mode: "luma",
+									inverted: false,
+									enabled: true,
+								},
+								transitions: [],
+								elements: [
+									{
+										order: 0,
+										id: "video-1",
+										name: "Keyed video",
+										groupId: null,
+										linkId: null,
+										startTime: 0,
+										duration: 1_000,
+										trimStart: 0,
+										trimEnd: 0,
+										sourceDuration: 1_000,
+										params: {},
+										animations: {},
+										type: "video",
+										mediaId: "media-1",
+										hidden: null,
+										isSourceAudioEnabled: true,
+										retime: {},
+										effects: [],
+										masks: [],
+										key: {
+											type: "chroma",
+											keyColor: "#00ff00",
+											similarity: 0.2,
+											softness: 0.1,
+											spillSuppression: 0.7,
+											enabled: true,
+										},
+										matte: null,
+										audioReplacement: null,
+									},
+								],
+							},
+						],
+					},
+				],
+			},
+		};
+		const parsedCompositing = editPlanProjectSnapshotSchema.parse(
+			projectionWithCompositing,
+		);
+		const parsedTrack = parsedCompositing.project.scenes[0]?.tracks[0];
+		expect(parsedTrack?.trackMatte).toEqual({
+			sourceTrackId: "track-matte",
+			mode: "luma",
+			inverted: false,
+			enabled: true,
+		});
+		const parsedElement = parsedTrack?.elements[0];
+		if (!parsedElement || parsedElement.type !== "video") {
+			throw new Error("parsed keyed video is missing");
+		}
+		expect(parsedElement.key).toEqual({
+			type: "chroma",
+			keyColor: "#00ff00",
+			similarity: 0.2,
+			softness: 0.1,
+			spillSuppression: 0.7,
+			enabled: true,
+		});
 		expect(() =>
 			editPlanProjectSnapshotSchema.parse({
 				...projectionV2,

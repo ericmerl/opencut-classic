@@ -1079,6 +1079,102 @@ describe("OpenCut timeline-query MCP contract", () => {
 });
 
 describe("OpenCut edit-plan MCP contract", () => {
+	test("accepts typed chroma, luma, and track-matte compositing controls", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "compositing-1",
+			expectedRevision: 2,
+			description: "Key the presenter and route a luma matte",
+			operations: [
+				{
+					kind: "set_key",
+					trackId: "presenter",
+					elementId: "green-screen",
+					key: {
+						type: "chroma",
+						keyColor: "#00ff00",
+						similarity: 0.2,
+						softness: 0.1,
+						spillSuppression: 0.8,
+						enabled: true,
+					},
+				},
+				{
+					kind: "set_key",
+					trackId: "matte",
+					elementId: "luma-source",
+					key: {
+						type: "luma",
+						low: 0.2,
+						high: 0.8,
+						softness: 0.05,
+						inverted: false,
+						enabled: true,
+					},
+				},
+				{
+					kind: "set_track_matte",
+					trackId: "presenter",
+					routing: {
+						sourceTrackId: "matte",
+						mode: "luma",
+						inverted: true,
+						enabled: true,
+					},
+				},
+				{ kind: "remove_key", trackId: "presenter", elementId: "green-screen" },
+				{ kind: "remove_track_matte", trackId: "presenter" },
+			],
+		});
+
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects malformed key and self-routed track-matte transport controls", () => {
+		const malformedKey = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "compositing-invalid-key",
+			expectedRevision: 2,
+			description: "Reject malformed key controls",
+			operations: [
+				{
+					kind: "set_key",
+					trackId: "presenter",
+					elementId: "green-screen",
+					key: {
+						type: "chroma",
+						keyColor: "green",
+						similarity: 2,
+						softness: 0,
+						spillSuppression: 0,
+						enabled: true,
+					},
+				},
+			],
+		});
+		const selfRoute = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "compositing-self-route",
+			expectedRevision: 2,
+			description: "Reject self route",
+			operations: [
+				{
+					kind: "set_track_matte",
+					trackId: "presenter",
+					routing: {
+						sourceTrackId: "presenter",
+						mode: "alpha",
+						inverted: false,
+						enabled: true,
+					},
+				},
+			],
+		});
+
+		expect(malformedKey.success).toBe(false);
+		expect(selfRoute.success).toBe(false);
+	});
+
 	test("accepts crop, cover focal point, and picture-in-picture layouts", () => {
 		const result = editPlanInputSchema.safeParse({
 			projectId: "project-1",

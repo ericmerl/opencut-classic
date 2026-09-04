@@ -112,8 +112,12 @@ describe("ManagedEditorWorker", () => {
 		expect(launchedCommand).toBe(browserPath);
 		expect(launchedArgs).toContain("--headless=new");
 		expect(launchedArgs).toContain("--use-webgpu-adapter=swiftshader");
-		expect(launchedArgs).toContain("--use-angle=swiftshader");
-		expect(launchedArgs).toContain("--enable-unsafe-swiftshader");
+		expect(launchedArgs).toContain("--enable-webgpu-developer-features");
+		expect(launchedArgs).toContain("--use-gpu-in-tests");
+		expect(launchedArgs).toContain("--enable-accelerated-2d-canvas");
+		expect(launchedArgs).not.toContain("--use-gl=angle");
+		expect(launchedArgs).not.toContain("--use-angle=swiftshader");
+		expect(launchedArgs).not.toContain("--use-vulkan=swiftshader");
 		const launchedUrl = new URL(launchedArgs.at(-1)!);
 		expect(launchedUrl.pathname).toBe("/editor/project-1");
 		expect(launchedUrl.searchParams.get("automationBootstrap")).toBe(

@@ -20,7 +20,12 @@ struct MaskUniforms {
 fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     let layer = textureSample(layer_texture, layer_sampler, input.tex_coord);
     let sample = textureSample(mask_texture, mask_sampler, input.tex_coord);
-    let mask = select(sample.a, sample.r, uniforms.channel > 0.5);
+    var mask = sample.a;
+    if (uniforms.channel > 1.5) {
+        mask = dot(sample.rgb, vec3f(0.2126, 0.7152, 0.0722));
+    } else if (uniforms.channel > 0.5) {
+        mask = sample.r;
+    }
     let alpha = select(mask, 1.0 - mask, uniforms.inverted > 0.5);
     return vec4f(layer.rgb, layer.a * alpha);
 }

@@ -13,6 +13,7 @@ import {
 	ReorderTracksCommand,
 	SetMainTrackCommand,
 	SplitElementsCommand,
+	TracksSnapshotCommand,
 	ToggleTrackMuteCommand,
 	ToggleTrackVisibilityCommand,
 	UpdateElementsCommand,
@@ -897,11 +898,15 @@ export class EditorAutomation {
 		return this.enqueue(() => this.getHistoryStateNow(request));
 	}
 
-	undo(request: AutomationHistoryMutationRequest): Promise<AutomationUndoResult> {
+	undo(
+		request: AutomationHistoryMutationRequest,
+	): Promise<AutomationUndoResult> {
 		return this.enqueue(() => this.undoNow(request));
 	}
 
-	redo(request: AutomationHistoryMutationRequest): Promise<AutomationRedoResult> {
+	redo(
+		request: AutomationHistoryMutationRequest,
+	): Promise<AutomationRedoResult> {
 		return this.enqueue(() => this.redoNow(request));
 	}
 
@@ -1664,7 +1669,8 @@ export class EditorAutomation {
 		const failure = await this.historySafetyFailure(request);
 		if (failure) return failure;
 		this.assertHistoryStepCount(request.steps);
-		const availableSteps = this.editor.command.getHistorySnapshot().history.length;
+		const availableSteps =
+			this.editor.command.getHistorySnapshot().history.length;
 		if (availableSteps < request.steps) {
 			return {
 				status: "nothing-to-undo",
@@ -1735,7 +1741,9 @@ export class EditorAutomation {
 		const beforeHistory = this.editor.command.getHistorySnapshot();
 		let movement: ReturnType<EditorCore["command"]["restoreHistorySnapshot"]>;
 		try {
-			movement = this.editor.command.restoreHistorySnapshot(request.nativeHistory);
+			movement = this.editor.command.restoreHistorySnapshot(
+				request.nativeHistory,
+			);
 		} catch (error) {
 			return {
 				status: "history-diverged",
@@ -1771,7 +1779,8 @@ export class EditorAutomation {
 			}
 			return {
 				status: "history-diverged",
-				reason: "native history reached a project hash that differs from the checkpoint",
+				reason:
+					"native history reached a project hash that differs from the checkpoint",
 				revision: this.revision,
 				contentIdentity: rolledBackIdentity,
 				nativeHistory: this.editor.command.getHistorySnapshot(),
@@ -2927,6 +2936,67 @@ export class EditorAutomation {
 		if (operation.kind === "set_main_track") {
 			return new SetMainTrackCommand({ trackId: operation.trackId });
 		}
+		if (
+			operation.kind === "set_track_matte" ||
+			operation.kind === "remove_track_matte"
+		) {
+			const before = this.editor.scenes.getActiveScene().tracks;
+			const allTracks: TimelineTrack[] = [
+				before.main,
+				...before.overlay,
+				...before.audio,
+			];
+			if (operation.kind === "set_track_matte") {
+				const source = allTracks.find(
+					(track) => track.id === operation.routing.sourceTrackId,
+				);
+				if (!source) {
+					throw new Error(
+						`track matte source not found: ${operation.routing.sourceTrackId}`,
+					);
+				}
+				if (source.id === operation.trackId) {
+					throw new Error("track matte source cannot be its destination");
+				}
+				if (source.type === "audio" || source.type === "effect") {
+					throw new Error("track matte source must be visual");
+				}
+				if (operation.routing.enabled && "hidden" in source && source.hidden) {
+					throw new Error("track matte source is hidden");
+				}
+			}
+			let found = false;
+			const nextTrackMatte = (track: TimelineTrack) => {
+				found = true;
+				if (
+					operation.kind === "remove_track_matte" &&
+					track.trackMatte === undefined
+				) {
+					throw new Error(`track matte routing not found: ${track.id}`);
+				}
+				return operation.kind === "set_track_matte"
+					? operation.routing
+					: undefined;
+			};
+			const after: SceneTracks = {
+				main:
+					before.main.id === operation.trackId
+						? { ...before.main, trackMatte: nextTrackMatte(before.main) }
+						: before.main,
+				overlay: before.overlay.map((track) =>
+					track.id === operation.trackId
+						? { ...track, trackMatte: nextTrackMatte(track) }
+						: track,
+				),
+				audio: before.audio.map((track) =>
+					track.id === operation.trackId
+						? { ...track, trackMatte: nextTrackMatte(track) }
+						: track,
+				),
+			};
+			if (!found) throw new Error(`track not found: ${operation.trackId}`);
+			return new TracksSnapshotCommand({ before, after });
+		}
 		if (operation.kind === "add_bookmark") {
 			return new AddBookmarkCommand({
 				bookmarkId: operation.bookmarkId,
@@ -3327,6 +3397,27 @@ export class EditorAutomation {
 		if (operation.kind === "set_reframe") {
 			return buildReframeControlCommand({ element, operation });
 		}
+		if (operation.kind === "set_key" || operation.kind === "remove_key") {
+			if (element.type !== "video" && element.type !== "image") {
+				throw new Error(
+					"only video and image elements support compositing keys",
+				);
+			}
+			if (operation.kind === "remove_key" && element.key === undefined) {
+				throw new Error("compositing key not found");
+			}
+			return new UpdateElementsCommand({
+				updates: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+						patch: {
+							key: operation.kind === "set_key" ? operation.key : undefined,
+						},
+					},
+				],
+			});
+		}
 		if (operation.kind === "set_mask" || operation.kind === "remove_mask") {
 			return buildAuthoredMaskCommand({ element, operation });
 		}
@@ -3596,6 +3687,7 @@ export class EditorAutomation {
 							: "overlay",
 				...("muted" in track ? { muted: track.muted } : {}),
 				...("hidden" in track ? { hidden: track.hidden } : {}),
+				...(track.trackMatte ? { trackMatte: track.trackMatte } : {}),
 			})),
 			transitions: tracks.flatMap((track) =>
 				getTrackTransitionStates({ track }).map((state) => ({
@@ -3695,6 +3787,9 @@ export class EditorAutomation {
 			sourceDuration: getElementSourceDuration({ element }),
 			params,
 			...(reframe ? { reframe } : {}),
+			...((element.type === "video" || element.type === "image") && element.key
+				? { key: element.key }
+				: {}),
 			...("mediaId" in element ? { mediaId: element.mediaId } : {}),
 			...("sourceType" in element ? { sourceType: element.sourceType } : {}),
 			...("sourceUrl" in element ? { sourceUrl: element.sourceUrl } : {}),
@@ -3788,6 +3883,7 @@ export class EditorAutomation {
 							: "overlay",
 				...("muted" in track ? { muted: track.muted } : {}),
 				...("hidden" in track ? { hidden: track.hidden } : {}),
+				...(track.trackMatte ? { trackMatte: track.trackMatte } : {}),
 			})),
 			transitions: orderedTracks.flatMap((track) =>
 				getTrackTransitionStates({ track }).map((state) => ({
@@ -3887,7 +3983,9 @@ export class EditorAutomation {
 	private async historySafetyFailure(
 		request: AutomationHistorySafetyRequest,
 	): Promise<
-		AutomationHistoryConflictResult | AutomationContentIdentityBlockedResult | null
+		| AutomationHistoryConflictResult
+		| AutomationContentIdentityBlockedResult
+		| null
 	> {
 		const identityBlock = await this.blockedProductionRequest(request);
 		if (identityBlock) return identityBlock;

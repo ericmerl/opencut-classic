@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::BlendMode;
+use crate::{BlendMode, LayerKeyDescriptor};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,13 +20,38 @@ pub struct CanvasClearDescriptor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum FrameItemDescriptor {
     Layer(LayerDescriptor),
     SceneEffect {
         #[serde(rename = "effectPassGroups")]
         effect_pass_groups: Vec<Vec<EffectPassDescriptor>>,
     },
+    Track {
+        track_id: String,
+        items: Vec<FrameItemDescriptor>,
+        #[serde(default)]
+        matte: Option<TrackMatteDescriptor>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrackMatteDescriptor {
+    pub source_track_id: String,
+    pub mode: TrackMatteMode,
+    pub inverted: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackMatteMode {
+    Alpha,
+    Luma,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +65,8 @@ pub struct LayerDescriptor {
     pub effect_pass_groups: Vec<Vec<EffectPassDescriptor>>,
     #[serde(default)]
     pub masks: Vec<LayerMaskDescriptor>,
+    #[serde(default)]
+    pub key: Option<LayerKeyDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +119,7 @@ pub enum MaskChannel {
     #[default]
     Alpha,
     Red,
+    Luma,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +214,73 @@ mod tests {
         assert_eq!(transform.source_rect.y, 0.1);
         assert_eq!(transform.source_rect.width, 0.5);
         assert_eq!(transform.source_rect.height, 0.8);
+    }
+
+    #[test]
+    fn deserializes_typed_layer_key_controls() {
+        let frame: FrameDescriptor = serde_json::from_value(serde_json::json!({
+            "width": 2,
+            "height": 2,
+            "clear": { "color": [0.0, 0.0, 0.0, 0.0] },
+            "items": [{
+                "type": "layer",
+                "textureId": "source",
+                "transform": {
+                    "centerX": 1.0, "centerY": 1.0, "width": 2.0, "height": 2.0,
+                    "rotationDegrees": 0.0, "flipX": false, "flipY": false
+                },
+                "opacity": 1.0,
+                "blendMode": "normal",
+                "effectPassGroups": [],
+                "masks": [],
+                "key": {
+                    "type": "chroma",
+                    "keyColor": [0.0, 1.0, 0.0],
+                    "similarity": 0.2,
+                    "softness": 0.1,
+                    "spillSuppression": 0.5
+                }
+            }]
+        }))
+        .expect("key descriptor should deserialize");
+        let FrameItemDescriptor::Layer(layer) = &frame.items[0] else {
+            panic!("expected a layer")
+        };
+        assert!(matches!(
+            layer.key,
+            Some(crate::LayerKeyDescriptor::Chroma { key_color, .. })
+                if key_color == [0.0, 1.0, 0.0]
+        ));
+    }
+
+    #[test]
+    fn deserializes_track_matte_render_groups() {
+        let frame: FrameDescriptor = serde_json::from_value(serde_json::json!({
+            "width": 2,
+            "height": 2,
+            "clear": { "color": [0.0, 0.0, 0.0, 0.0] },
+            "items": [
+                { "type": "track", "trackId": "source", "items": [] },
+                {
+                    "type": "track",
+                    "trackId": "destination",
+                    "matte": {
+                        "sourceTrackId": "source",
+                        "mode": "luma",
+                        "inverted": true
+                    },
+                    "items": []
+                }
+            ]
+        }))
+        .expect("track groups should deserialize");
+        assert!(matches!(
+            &frame.items[1],
+            FrameItemDescriptor::Track { track_id, matte: Some(matte), .. }
+                if track_id == "destination"
+                    && matte.source_track_id == "source"
+                    && matte.inverted
+        ));
     }
 
     #[test]

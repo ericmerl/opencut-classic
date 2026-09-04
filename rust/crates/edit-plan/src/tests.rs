@@ -38,6 +38,7 @@ fn empty_track(id: &str, role: &str, kind: &str, order: usize) -> CanonicalTrack
         track_type: kind.into(),
         muted: Some(false),
         hidden: Some(false),
+        track_matte: None,
         transitions: vec![],
         elements: vec![],
     }
@@ -782,7 +783,7 @@ fn adjust_mix_gain_rejects_projects_without_audible_timeline_elements() {
 }
 
 #[test]
-fn all_47_operation_variants_have_a_strict_typed_transport_shape() {
+fn all_51_operation_variants_have_a_strict_typed_transport_shape() {
     let reference = serde_json::json!({ "trackId": "main", "elementId": "element" });
     let operations = vec![
         serde_json::json!({ "kind": "insert_text", "content": "x", "startTime": 0, "duration": 1 }),
@@ -811,6 +812,10 @@ fn all_47_operation_variants_have_a_strict_typed_transport_shape() {
         serde_json::json!({ "kind": "move", "trackId": "t", "elementId": "e", "startTime": 0, "relationshipScope": "all" }),
         serde_json::json!({ "kind": "set_params", "trackId": "t", "elementId": "e", "params": { "x": 1 } }),
         serde_json::json!({ "kind": "set_reframe", "trackId": "t", "elementId": "e", "mode": "fit" }),
+        serde_json::json!({ "kind": "set_key", "trackId": "t", "elementId": "e", "key": { "type": "chroma", "keyColor": "#00ff00", "similarity": 0.2, "softness": 0.1, "spillSuppression": 0.8, "enabled": true } }),
+        serde_json::json!({ "kind": "remove_key", "trackId": "t", "elementId": "e" }),
+        serde_json::json!({ "kind": "set_track_matte", "trackId": "t", "routing": { "sourceTrackId": "matte", "mode": "luma", "inverted": false, "enabled": true } }),
+        serde_json::json!({ "kind": "remove_track_matte", "trackId": "t" }),
         serde_json::json!({ "kind": "set_audio", "trackId": "t", "elementId": "e", "muted": true }),
         serde_json::json!({ "kind": "separate_source_audio", "trackId": "t", "elementId": "e" }),
         serde_json::json!({ "kind": "duck_audio", "trackId": "t", "elementId": "e", "regions": [], "reductionDb": -6, "attackDuration": 0, "releaseDuration": 0 }),
@@ -833,7 +838,7 @@ fn all_47_operation_variants_have_a_strict_typed_transport_shape() {
         serde_json::json!({ "kind": "set_audio_replacement_state", "trackId": "t", "elementId": "e", "enabled": true }),
         serde_json::json!({ "kind": "remove_audio_replacement", "trackId": "t", "elementId": "e" }),
     ];
-    assert_eq!(operations.len(), 47);
+    assert_eq!(operations.len(), 51);
     for operation in operations {
         let expected_kind = operation["kind"].clone();
         let typed: EditOperation = serde_json::from_value(operation.clone()).unwrap();
@@ -842,7 +847,7 @@ fn all_47_operation_variants_have_a_strict_typed_transport_shape() {
 }
 
 #[test]
-fn all_57_operation_variants_have_valid_and_invalid_evaluator_coverage() {
+fn all_61_operation_variants_have_valid_and_invalid_evaluator_coverage() {
     let t = MediaTime::from_ticks;
     let reference = || ElementRef {
         track_id: "track-text".into(),
@@ -883,6 +888,30 @@ fn all_57_operation_variants_have_valid_and_invalid_evaluator_coverage() {
     second_caption.common_mut().order = 1;
     second_caption.common_mut().start_time = t(30_000);
     overlap_track.elements.push(second_caption);
+    let mut keyed_snapshot = full_snapshot();
+    if let CanonicalElement::Video { key, .. } =
+        &mut keyed_snapshot.project.scenes[0].tracks[0].elements[0]
+    {
+        *key = Some(Box::new(CompositingKey::Chroma {
+            key_color: "#00ff00".into(),
+            similarity: 0.2,
+            softness: 0.1,
+            spill_suppression: 0.8,
+            enabled: true,
+        }));
+    }
+    let mut routed_snapshot = snapshot_with_overlay_video();
+    routed_snapshot.project.scenes[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == "track-main")
+        .unwrap()
+        .track_matte = Some(TrackMatteRouting {
+        source_track_id: "overlay-video".into(),
+        mode: TrackMatteMode::Alpha,
+        inverted: false,
+        enabled: true,
+    });
     let cases: Vec<(&str, ProjectSnapshot, Vec<EditOperation>)> = vec![
         (
             "insert_text",
@@ -1212,6 +1241,49 @@ fn all_57_operation_variants_have_valid_and_invalid_evaluator_coverage() {
             }],
         ),
         (
+            "set_key",
+            full_snapshot(),
+            vec![EditOperation::SetKey {
+                track_id: "track-main".into(),
+                element_id: "video-1".into(),
+                key: CompositingKey::Luma {
+                    low: 0.2,
+                    high: 0.8,
+                    softness: 0.1,
+                    inverted: false,
+                    enabled: true,
+                },
+            }],
+        ),
+        (
+            "remove_key",
+            keyed_snapshot,
+            vec![EditOperation::RemoveKey {
+                track_id: "track-main".into(),
+                element_id: "video-1".into(),
+            }],
+        ),
+        (
+            "set_track_matte",
+            snapshot_with_overlay_video(),
+            vec![EditOperation::SetTrackMatte {
+                track_id: "track-main".into(),
+                routing: TrackMatteRouting {
+                    source_track_id: "overlay-video".into(),
+                    mode: TrackMatteMode::Luma,
+                    inverted: false,
+                    enabled: true,
+                },
+            }],
+        ),
+        (
+            "remove_track_matte",
+            routed_snapshot,
+            vec![EditOperation::RemoveTrackMatte {
+                track_id: "track-main".into(),
+            }],
+        ),
+        (
             "set_audio",
             full_snapshot(),
             vec![EditOperation::SetAudio {
@@ -1531,7 +1603,7 @@ fn all_57_operation_variants_have_valid_and_invalid_evaluator_coverage() {
             }],
         ),
     ];
-    assert_eq!(cases.len(), 57);
+    assert_eq!(cases.len(), 61);
     for (name, before, operations) in cases {
         let valid = evaluate(options_with_before(before.clone(), operations.clone()));
         if let Err(error) = valid {
@@ -1949,6 +2021,12 @@ fn invalid_operations_for(operations: &[EditOperation]) -> Vec<EditOperation> {
         }
         "adjust_mix_gain" => {
             object.insert("gainDb".into(), serde_json::json!(100));
+        }
+        "set_track_matte" => {
+            object["routing"]["sourceTrackId"] = serde_json::json!("missing");
+        }
+        "remove_track_matte" => {
+            object.insert("trackId".into(), serde_json::json!("missing"));
         }
         "upsert_transition" => {
             object.insert("fromElementId".into(), serde_json::json!("missing"));
@@ -2478,6 +2556,397 @@ fn freeform_mask_path_round_trips_without_stringification() {
         panic!("mask params changed shape");
     };
     assert!(matches!(params["path"], CanonicalValue::Array(_)));
+}
+
+#[test]
+fn chroma_key_controls_are_typed_persisted_and_fail_closed() {
+    let operation: EditOperation = serde_json::from_value(serde_json::json!({
+        "kind": "set_key",
+        "trackId": "track-main",
+        "elementId": "video-1",
+        "key": {
+            "type": "chroma",
+            "keyColor": "#00ff00",
+            "similarity": 0.42,
+            "softness": 0.08,
+            "spillSuppression": 0.65,
+            "enabled": true
+        }
+    }))
+    .expect("typed chroma operation should deserialize");
+    let result = evaluate(options_with_before(full_snapshot(), vec![operation])).unwrap();
+    let CanonicalElement::Video { key, .. } =
+        &result.predicted_after.project.scenes[0].tracks[0].elements[0]
+    else {
+        panic!("fixture video changed type");
+    };
+    assert_eq!(
+        serde_json::to_value(key).unwrap(),
+        serde_json::json!({
+            "type": "chroma",
+            "keyColor": "#00ff00",
+            "similarity": 0.42,
+            "softness": 0.08,
+            "spillSuppression": 0.65,
+            "enabled": true
+        })
+    );
+
+    for invalid_key in [
+        serde_json::json!({
+            "type": "chroma", "keyColor": "green", "similarity": 0.2,
+            "softness": 0.1, "spillSuppression": 0.5, "enabled": true
+        }),
+        serde_json::json!({
+            "type": "chroma", "keyColor": "#00ff00", "similarity": 1.1,
+            "softness": 0.1, "spillSuppression": 0.5, "enabled": true
+        }),
+    ] {
+        let invalid: EditOperation = serde_json::from_value(serde_json::json!({
+            "kind": "set_key",
+            "trackId": "track-main",
+            "elementId": "video-1",
+            "key": invalid_key
+        }))
+        .unwrap();
+        let error = evaluate(options_with_before(full_snapshot(), vec![invalid])).unwrap_err();
+        assert!(matches!(error.code, ErrorCode::InvalidValue));
+    }
+}
+
+#[test]
+fn luma_key_range_and_removal_are_deterministic() {
+    let set: EditOperation = serde_json::from_value(serde_json::json!({
+        "kind": "set_key",
+        "trackId": "track-main",
+        "elementId": "video-1",
+        "key": {
+            "type": "luma",
+            "low": 0.18,
+            "high": 0.82,
+            "softness": 0.04,
+            "inverted": true,
+            "enabled": true
+        }
+    }))
+    .unwrap();
+    let remove: EditOperation = serde_json::from_value(serde_json::json!({
+        "kind": "remove_key",
+        "trackId": "track-main",
+        "elementId": "video-1"
+    }))
+    .unwrap();
+    let result = evaluate(options_with_before(full_snapshot(), vec![set, remove])).unwrap();
+    let CanonicalElement::Video { key, .. } =
+        &result.predicted_after.project.scenes[0].tracks[0].elements[0]
+    else {
+        panic!("fixture video changed type");
+    };
+    assert!(key.is_none());
+
+    let reversed: EditOperation = serde_json::from_value(serde_json::json!({
+        "kind": "set_key",
+        "trackId": "track-main",
+        "elementId": "video-1",
+        "key": {
+            "type": "luma", "low": 0.9, "high": 0.2,
+            "softness": 0.1, "inverted": false, "enabled": true
+        }
+    }))
+    .unwrap();
+    let error = evaluate(options_with_before(full_snapshot(), vec![reversed])).unwrap_err();
+    assert!(matches!(error.code, ErrorCode::InvalidValue));
+
+    let nonvisual: EditOperation = serde_json::from_value(serde_json::json!({
+        "kind": "set_key",
+        "trackId": "track-text",
+        "elementId": "text-1",
+        "key": {
+            "type": "luma", "low": 0.1, "high": 0.9,
+            "softness": 0.1, "inverted": false, "enabled": true
+        }
+    }))
+    .unwrap();
+    let error = evaluate(options_with_before(full_snapshot(), vec![nonvisual])).unwrap_err();
+    assert!(matches!(error.code, ErrorCode::IncompatibleTrack));
+}
+
+#[test]
+fn track_matte_routing_uses_stable_track_identity_and_rejects_missing_sources() {
+    let set: EditOperation = serde_json::from_value(serde_json::json!({
+        "kind": "set_track_matte",
+        "trackId": "track-main",
+        "routing": {
+            "sourceTrackId": "overlay-video",
+            "mode": "alpha",
+            "inverted": false,
+            "enabled": true
+        }
+    }))
+    .expect("typed track matte operation should deserialize");
+    let result = evaluate(options_with_before(
+        snapshot_with_overlay_video(),
+        vec![set],
+    ))
+    .unwrap();
+    let destination = result.predicted_after.project.scenes[0]
+        .tracks
+        .iter()
+        .find(|track| track.id == "track-main")
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&destination.track_matte).unwrap(),
+        serde_json::json!({
+            "sourceTrackId": "overlay-video",
+            "mode": "alpha",
+            "inverted": false,
+            "enabled": true
+        })
+    );
+
+    let missing: EditOperation = serde_json::from_value(serde_json::json!({
+        "kind": "set_track_matte",
+        "trackId": "track-main",
+        "routing": {
+            "sourceTrackId": "missing",
+            "mode": "luma",
+            "inverted": true,
+            "enabled": true
+        }
+    }))
+    .unwrap();
+    let error = evaluate(options_with_before(
+        snapshot_with_overlay_video(),
+        vec![missing],
+    ))
+    .unwrap_err();
+    assert!(matches!(error.code, ErrorCode::UnknownReference));
+}
+
+#[test]
+fn track_matte_routing_rejects_nonvisual_sources_and_destinations() {
+    for (track_id, source_track_id) in [
+        ("track-main", "track-effect"),
+        ("track-audio", "track-main"),
+    ] {
+        let operation = EditOperation::SetTrackMatte {
+            track_id: track_id.into(),
+            routing: TrackMatteRouting {
+                source_track_id: source_track_id.into(),
+                mode: TrackMatteMode::Alpha,
+                inverted: false,
+                enabled: true,
+            },
+        };
+        let error = evaluate(options_with_before(full_snapshot(), vec![operation])).unwrap_err();
+        assert!(matches!(error.code, ErrorCode::IncompatibleTrack));
+    }
+}
+
+#[test]
+fn duplicated_track_drops_routing_and_reorder_keeps_identity_binding() {
+    let set = EditOperation::SetTrackMatte {
+        track_id: "track-main".into(),
+        routing: TrackMatteRouting {
+            source_track_id: "overlay-video".into(),
+            mode: TrackMatteMode::Luma,
+            inverted: true,
+            enabled: true,
+        },
+    };
+    let result = evaluate(options_with_before(
+        snapshot_with_overlay_video(),
+        vec![
+            set,
+            EditOperation::DuplicateTrack {
+                track_id: "overlay-video".into(),
+                new_track_id: Some("matte-copy".into()),
+                name: None,
+                resolved_allocations: None,
+            },
+            EditOperation::ReorderTracks {
+                overlay_track_ids: Some(vec![
+                    "matte-copy".into(),
+                    "overlay-video".into(),
+                    "track-text".into(),
+                    "track-graphic".into(),
+                    "track-effect".into(),
+                ]),
+                audio_track_ids: None,
+            },
+        ],
+    ))
+    .unwrap();
+    let scene = &result.predicted_after.project.scenes[0];
+    let destination = scene
+        .tracks
+        .iter()
+        .find(|track| track.id == "track-main")
+        .unwrap();
+    assert_eq!(
+        destination.track_matte.as_ref().unwrap().source_track_id,
+        "overlay-video"
+    );
+    let copy = scene
+        .tracks
+        .iter()
+        .find(|track| track.id == "matte-copy")
+        .unwrap();
+    assert!(copy.track_matte.is_none());
+}
+
+#[test]
+fn track_matte_dependency_cycles_are_rejected() {
+    let mut before = snapshot_with_overlay_video();
+    before.project.scenes[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == "overlay-video")
+        .unwrap()
+        .track_matte = Some(TrackMatteRouting {
+        source_track_id: "track-main".into(),
+        mode: TrackMatteMode::Alpha,
+        inverted: false,
+        enabled: true,
+    });
+    let operation: EditOperation = serde_json::from_value(serde_json::json!({
+        "kind": "set_track_matte",
+        "trackId": "track-main",
+        "routing": {
+            "sourceTrackId": "overlay-video",
+            "mode": "luma",
+            "inverted": true,
+            "enabled": true
+        }
+    }))
+    .unwrap();
+    let error = evaluate(options_with_before(before, vec![operation])).unwrap_err();
+    assert!(matches!(error.code, ErrorCode::InvalidValue));
+    assert!(error.message.contains("cycle"));
+}
+
+#[test]
+fn tampered_persisted_compositing_state_fails_closed_before_mutation() {
+    let mut dangling = full_snapshot();
+    dangling.project.scenes[0].tracks[0].track_matte = Some(TrackMatteRouting {
+        source_track_id: "missing".into(),
+        mode: TrackMatteMode::Alpha,
+        inverted: false,
+        enabled: true,
+    });
+    let error = evaluate(options_with_before(
+        dangling,
+        vec![EditOperation::SetTrackState {
+            track_id: "track-main".into(),
+            muted: Some(true),
+            hidden: None,
+        }],
+    ))
+    .unwrap_err();
+    assert!(matches!(error.code, ErrorCode::UnknownReference));
+
+    let mut invalid_key = full_snapshot();
+    if let CanonicalElement::Video { key, .. } =
+        &mut invalid_key.project.scenes[0].tracks[0].elements[0]
+    {
+        *key = Some(Box::new(CompositingKey::Luma {
+            low: 0.9,
+            high: 0.1,
+            softness: 0.1,
+            inverted: false,
+            enabled: true,
+        }));
+    }
+    let error = evaluate(options_with_before(
+        invalid_key,
+        vec![EditOperation::SetTrackState {
+            track_id: "track-main".into(),
+            muted: Some(true),
+            hidden: None,
+        }],
+    ))
+    .unwrap_err();
+    assert!(matches!(error.code, ErrorCode::InvalidValue));
+}
+
+#[test]
+fn removing_a_routed_track_matte_source_fails_closed() {
+    let mut before = snapshot_with_overlay_video();
+    before.project.scenes[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == "track-main")
+        .unwrap()
+        .track_matte = Some(TrackMatteRouting {
+        source_track_id: "overlay-video".into(),
+        mode: TrackMatteMode::Alpha,
+        inverted: false,
+        enabled: true,
+    });
+    let error = evaluate(options_with_before(
+        before,
+        vec![EditOperation::RemoveTrack {
+            track_id: "overlay-video".into(),
+            occupied: RemoveTrackOccupiedPolicy::Delete,
+            target_track_id: None,
+            resolved_cascade_element_ids: None,
+        }],
+    ))
+    .unwrap_err();
+    assert!(matches!(error.code, ErrorCode::InvalidValue));
+    assert!(error.message.contains("track matte source"));
+}
+
+#[test]
+fn hiding_an_enabled_track_matte_source_is_rejected() {
+    let mut before = snapshot_with_overlay_video();
+    before.project.scenes[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == "track-main")
+        .unwrap()
+        .track_matte = Some(TrackMatteRouting {
+        source_track_id: "overlay-video".into(),
+        mode: TrackMatteMode::Luma,
+        inverted: true,
+        enabled: true,
+    });
+    let error = evaluate(options_with_before(
+        before,
+        vec![EditOperation::SetTrackState {
+            track_id: "overlay-video".into(),
+            muted: None,
+            hidden: Some(true),
+        }],
+    ))
+    .unwrap_err();
+    assert!(matches!(error.code, ErrorCode::InvalidValue));
+    assert!(error.message.contains("track matte source"));
+}
+
+#[test]
+fn routing_to_a_hidden_track_matte_source_is_rejected() {
+    let mut before = snapshot_with_overlay_video();
+    before.project.scenes[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == "overlay-video")
+        .unwrap()
+        .hidden = Some(true);
+    let operation: EditOperation = serde_json::from_value(serde_json::json!({
+        "kind": "set_track_matte",
+        "trackId": "track-main",
+        "routing": {
+            "sourceTrackId": "overlay-video",
+            "mode": "alpha",
+            "inverted": false,
+            "enabled": true
+        }
+    }))
+    .unwrap();
+    let error = evaluate(options_with_before(before, vec![operation])).unwrap_err();
+    assert!(matches!(error.code, ErrorCode::InvalidValue));
+    assert!(error.message.contains("hidden"));
 }
 
 #[test]

@@ -199,6 +199,7 @@ pub(crate) fn merge_active(
                 track_type: track.track_type.clone(),
                 muted: track.muted,
                 hidden: track.hidden,
+                track_matte: track.track_matte.clone(),
                 transitions,
                 elements,
             }
@@ -424,6 +425,7 @@ fn active_track(track: &CanonicalTrack) -> Track {
         role: track.role.clone(),
         muted: track.muted,
         hidden: track.hidden,
+        track_matte: track.track_matte.clone(),
     }
 }
 
@@ -477,6 +479,7 @@ fn active_element_at(
         effects: vec![],
         keyframes: parse_keyframes(&common.animations),
         masks: vec![],
+        key: None,
         matte_enabled: None,
         audio_replacement_enabled: None,
         source_audio_separated: None,
@@ -502,6 +505,7 @@ fn active_element_at(
             retime,
             effects,
             masks,
+            key,
             matte,
             audio_replacement,
             ..
@@ -510,11 +514,21 @@ fn active_element_at(
             result.source_audio_separated = is_source_audio_enabled.map(|enabled| !enabled);
             result.effects = effects.iter().map(active_effect).collect();
             result.masks = masks.iter().map(active_mask).collect();
+            result.key = key.as_deref().cloned();
             result.matte_enabled = matte.as_ref().map(|a| a.enabled);
             result.audio_replacement_enabled = audio_replacement.as_ref().map(|a| a.enabled);
         }
-        CanonicalElement::Image { effects, masks, .. }
-        | CanonicalElement::Graphic { effects, masks, .. } => {
+        CanonicalElement::Image {
+            effects,
+            masks,
+            key,
+            ..
+        } => {
+            result.effects = effects.iter().map(active_effect).collect();
+            result.masks = masks.iter().map(active_mask).collect();
+            result.key = key.as_deref().cloned();
+        }
+        CanonicalElement::Graphic { effects, masks, .. } => {
             result.effects = effects.iter().map(active_effect).collect();
             result.masks = masks.iter().map(active_mask).collect();
         }
@@ -638,6 +652,7 @@ fn canonical_element(
             retime: write_retime(retime.clone(), element),
             effects: canonical_effects(&element.effects, effects),
             masks: canonical_masks(&element.masks, masks),
+            key: element.key.clone().map(Box::new),
             matte: update_attachment(matte.clone(), element.matte_enabled),
             audio_replacement: update_attachment(
                 audio_replacement.clone(),
@@ -659,6 +674,7 @@ fn canonical_element(
             hidden: *hidden,
             effects: canonical_effects(&element.effects, effects),
             masks: canonical_masks(&element.masks, masks),
+            key: element.key.clone().map(Box::new),
         },
         (
             "text",
@@ -767,6 +783,7 @@ fn canonical_element(
             retime: CanonicalValue::Null(()),
             effects: vec![],
             masks: vec![],
+            key: None,
             matte: None,
             audio_replacement: None,
         },
@@ -776,6 +793,7 @@ fn canonical_element(
             hidden: Some(false),
             effects: vec![],
             masks: vec![],
+            key: None,
         },
         _ => CanonicalElement::Text {
             common,
@@ -1340,6 +1358,7 @@ fn compound_tracks(
                 track_type: kind.into(),
                 muted: existing.and_then(|track| track.muted).or(Some(false)),
                 hidden: existing.and_then(|track| track.hidden).or(Some(false)),
+                track_matte: existing.and_then(|track| track.track_matte.clone()),
                 transitions: canonical_transitions,
                 elements,
             }
@@ -1358,6 +1377,7 @@ fn compound_tracks(
                 track_type: "video".into(),
                 muted: Some(false),
                 hidden: Some(false),
+                track_matte: None,
                 transitions: vec![],
                 elements: vec![],
             },

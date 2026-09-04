@@ -264,6 +264,7 @@ function projectTrack({
 		type: track.type,
 		muted: "muted" in track ? track.muted : null,
 		hidden: "hidden" in track ? track.hidden : null,
+		...(track.trackMatte ? { trackMatte: track.trackMatte } : {}),
 		transitions: track.elements.flatMap((element) => {
 			const transition = element.transitionIn;
 			if (!transition) return [];
@@ -327,6 +328,7 @@ function projectElement({
 				retime: toCanonicalValue(element.retime ?? null),
 				effects: projectEffects(element.effects),
 				masks: projectMasks(element.masks),
+				...(element.key ? { key: element.key } : {}),
 				matte: projectMatte(element.matte),
 				audioReplacement: projectAudioReplacement(element.audioReplacement),
 			};
@@ -338,6 +340,7 @@ function projectElement({
 				hidden: element.hidden ?? null,
 				effects: projectEffects(element.effects),
 				masks: projectMasks(element.masks),
+				...(element.key ? { key: element.key } : {}),
 			};
 		case "text":
 			return {

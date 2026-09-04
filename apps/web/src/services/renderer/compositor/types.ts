@@ -19,10 +19,21 @@ export type FrameItemDescriptor =
 			blendMode: BlendMode;
 			effectPassGroups: EffectPass[][];
 			masks: LayerMaskDescriptor[];
+			key?: LayerKeyDescriptor;
 	  }
 	| {
 			type: "sceneEffect";
 			effectPassGroups: EffectPass[][];
+	  }
+	| {
+			type: "track";
+			trackId: string;
+			items: FrameItemDescriptor[];
+			matte?: {
+				sourceTrackId: string;
+				mode: "alpha" | "luma";
+				inverted: boolean;
+			};
 	  };
 
 export type QuadTransformDescriptor = {
@@ -42,6 +53,22 @@ export type LayerMaskDescriptor = {
 	inverted: boolean;
 	channel: "alpha" | "red";
 };
+
+export type LayerKeyDescriptor =
+	| {
+			type: "chroma";
+			keyColor: [number, number, number];
+			similarity: number;
+			softness: number;
+			spillSuppression: number;
+	  }
+	| {
+			type: "luma";
+			low: number;
+			high: number;
+			softness: number;
+			inverted: boolean;
+	  };
 
 export type TextureCanvasDrawFn = (
 	ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,

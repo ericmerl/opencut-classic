@@ -15,6 +15,7 @@ import { BlurBackgroundNode } from "./nodes/blur-background-node";
 import { EffectLayerNode } from "./nodes/effect-layer-node";
 import { CompoundNode } from "./nodes/compound-node";
 import type { AnyBaseNode } from "./nodes/base-node";
+import { TrackNode } from "./nodes/track-node";
 import type { TBackground, TCanvasSize } from "@/project/types";
 import { DEFAULT_BACKGROUND_BLUR_INTENSITY } from "@/background/blur";
 import {
@@ -74,7 +75,7 @@ function buildTrackNodes({
 					),
 					...(!element.tracks.main.hidden ? [element.tracks.main] : []),
 				].reverse();
-				for (const child of buildTrackNodes({
+				for (const child of buildGroupedTrackNodes({
 					tracks: visibleNestedTracks,
 					mediaMap,
 					canvasSize,
@@ -142,6 +143,7 @@ function buildTrackNodes({
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							key: element.key,
 							transitionIn,
 							transitionOut,
 							matte,
@@ -163,6 +165,7 @@ function buildTrackNodes({
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							key: element.key,
 							transitionIn,
 							transitionOut,
 							...(isPreview && {
@@ -229,6 +232,45 @@ function buildTrackNodes({
 	}
 
 	return nodes;
+}
+
+function buildGroupedTrackNodes({
+	tracks,
+	mediaMap,
+	canvasSize,
+	isPreview,
+}: {
+	tracks: TimelineTrack[];
+	mediaMap: Map<string, MediaAsset>;
+	canvasSize: TCanvasSize;
+	isPreview?: boolean;
+}): AnyBaseNode[] {
+	const routedSourceIds = new Set(
+		tracks
+			.map((track) => track.trackMatte)
+			.filter((routing) => routing?.enabled)
+			.map((routing) => routing!.sourceTrackId),
+	);
+	return tracks.flatMap((track) => {
+		const children = buildTrackNodes({
+			tracks: [track],
+			mediaMap,
+			canvasSize,
+			isPreview,
+		});
+		if (
+			track.type === "effect" ||
+			(!track.trackMatte?.enabled && !routedSourceIds.has(track.id))
+		) {
+			return children;
+		}
+		const group = new TrackNode({
+			trackId: track.id,
+			trackMatte: track.trackMatte,
+		});
+		for (const child of children) group.add(child);
+		return [group];
+	});
 }
 
 function buildBlurBackgroundNodes({
@@ -307,7 +349,7 @@ export function buildScene({
 	const orderedTracksBottomToTop = visibleTracks.slice().reverse();
 	const mainTrack = tracks.main.hidden ? undefined : tracks.main;
 
-	const allNodes = buildTrackNodes({
+	const allNodes = buildGroupedTrackNodes({
 		tracks: orderedTracksBottomToTop,
 		mediaMap,
 		canvasSize,
