@@ -92,6 +92,23 @@ describe("CapabilitySnapshotService", () => {
 					maxFrames: 300,
 				},
 			},
+			reviewEvidence: {
+				status: "ready",
+				store: "sqlite-wal-append-versioned",
+				annotationTargets: ["preview-frame", "preview-range", "export"],
+				findingKinds: ["human", "automated"],
+				watermarkSamplingPolicy: {
+					fullFrameSamples: ["opening", "middle", "ending"],
+					corners: ["top-left", "top-right", "bottom-left", "bottom-right"],
+					requireFinalExportBytesInspection: true,
+					requireHumanReview: true,
+				},
+			},
+			schemas: {
+				reviewAnnotation: 1,
+				watermarkInspection: 1,
+				exportReviewSignoff: 1,
+			},
 		});
 		expect((snapshot.tools as Record<string, unknown>).registered).toEqual(
 			REGISTERED_TOOL_NAMES,
@@ -101,6 +118,13 @@ describe("CapabilitySnapshotService", () => {
 			"opencut_cancel_comparison",
 			"opencut_get_comparison",
 			"opencut_list_comparisons",
+			"opencut_create_review_annotation",
+			"opencut_get_review_annotation",
+			"opencut_list_review_annotations",
+			"opencut_update_review_annotation_status",
+			"opencut_record_watermark_inspection",
+			"opencut_get_watermark_inspection",
+			"opencut_sign_off_export_review",
 		] as const) {
 			expect(REGISTERED_TOOL_NAMES).toContain(name);
 		}
@@ -130,6 +154,10 @@ describe("CapabilitySnapshotService", () => {
 				OPENCUT_FFMPEG_PATH: "missing-ffmpeg-for-test",
 				OPENCUT_FFPROBE_PATH: "missing-ffprobe-for-test",
 				OPENCUT_AUDIO_CLEANER_COMMAND: process.execPath,
+				OPENCUT_WASM_ARTIFACT_PATH: join(
+					import.meta.dir,
+					"../../../rust/wasm/pkg-node/opencut_wasm_bg.wasm",
+				),
 			},
 		});
 

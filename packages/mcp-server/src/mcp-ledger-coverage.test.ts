@@ -220,6 +220,20 @@ function operationInput(
 		};
 	}
 	if (
+		toolName === "opencut_create_review_annotation" ||
+		toolName === "opencut_update_review_annotation_status" ||
+		toolName === "opencut_record_watermark_inspection" ||
+		toolName === "opencut_sign_off_export_review"
+	) {
+		return {
+			bridgeProtocolVersion: 2,
+			operationId,
+			projectId: "project-1",
+			sceneId: "scene-1",
+			projectContentHash: "b".repeat(64),
+		};
+	}
+	if (
 		toolName === "opencut_transcribe_source" ||
 		toolName === "opencut_correct_transcript" ||
 		toolName === "opencut_analyze_speech" ||
@@ -352,6 +366,30 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 		return {
 			receipt: { operationId: `export-${operationId}` },
 			path: "receipt.json",
+		};
+	}
+	if (toolName === "opencut_create_review_annotation") {
+		return {
+			status: "annotation-created",
+			annotation: { versionId: `annotation:${operationId}:1` },
+		};
+	}
+	if (toolName === "opencut_update_review_annotation_status") {
+		return {
+			status: "annotation-status-updated",
+			annotation: { versionId: `annotation:${operationId}:2` },
+		};
+	}
+	if (toolName === "opencut_record_watermark_inspection") {
+		return {
+			status: "watermark-inspection-recorded",
+			inspection: { inspectionId: `inspection:${operationId}` },
+		};
+	}
+	if (toolName === "opencut_sign_off_export_review") {
+		return {
+			status: "export-review-signed-off",
+			signoff: { signoffId: `signoff:${operationId}` },
 		};
 	}
 	if (toolName === "opencut_render_preview_frame") {

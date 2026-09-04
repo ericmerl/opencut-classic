@@ -55,6 +55,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_create_delivery_package",
 	"opencut_create_editorial_decision",
 	"opencut_create_project",
+	"opencut_create_review_annotation",
 	"opencut_create_scene",
 	"opencut_delete_project",
 	"opencut_delete_scene",
@@ -79,9 +80,11 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_get_preview_frame",
 	"opencut_get_preview_range",
 	"opencut_get_project",
+	"opencut_get_review_annotation",
 	"opencut_get_save_receipt",
 	"opencut_get_speech_analysis",
 	"opencut_get_transcript",
+	"opencut_get_watermark_inspection",
 	"opencut_import_editorial_decision_json",
 	"opencut_import_media",
 	"opencut_import_media_asset",
@@ -99,6 +102,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_list_preview_frames",
 	"opencut_list_preview_ranges",
 	"opencut_list_projects",
+	"opencut_list_review_annotations",
 	"opencut_list_scenes",
 	"opencut_list_transcripts",
 	"opencut_list_visual_assets",
@@ -112,6 +116,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_queue_export_batch",
 	"opencut_reapply_editorial_decision",
 	"opencut_record_export_inspection",
+	"opencut_record_watermark_inspection",
 	"opencut_redo",
 	"opencut_relink_media_asset",
 	"opencut_remove_media_asset",
@@ -129,6 +134,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_search_stickers",
 	"opencut_search_transcript",
 	"opencut_set_main_scene",
+	"opencut_sign_off_export_review",
 	"opencut_start_editor_worker",
 	"opencut_stop_editor_worker",
 	"opencut_switch_scene",
@@ -137,6 +143,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_transcribe_source",
 	"opencut_transcribe_timeline",
 	"opencut_undo",
+	"opencut_update_review_annotation_status",
 	"opencut_verify_delivery_package",
 ] as const;
 
@@ -323,6 +330,9 @@ export class CapabilitySnapshotService {
 				transcript: 1,
 				speechAnalysis: 1,
 				editorialDecision: 1,
+				reviewAnnotation: 1,
+				watermarkInspection: 1,
+				exportReviewSignoff: 1,
 			},
 			projections: {
 				projectContent: CURRENT_PROJECT_CONTENT_PROJECTION_VERSION,
@@ -393,6 +403,18 @@ export class CapabilitySnapshotService {
 				},
 				endpointPolicy: "start-inclusive-end-exclusive",
 				limits: previewRangeLimits,
+			},
+			reviewEvidence: {
+				status: "ready",
+				store: "sqlite-wal-append-versioned",
+				annotationTargets: ["preview-frame", "preview-range", "export"],
+				findingKinds: ["human", "automated"],
+				watermarkSamplingPolicy: {
+					fullFrameSamples: ["opening", "middle", "ending"],
+					corners: ["top-left", "top-right", "bottom-left", "bottom-right"],
+					requireFinalExportBytesInspection: true,
+					requireHumanReview: true,
+				},
 			},
 			instance: {
 				serverInstanceId: bridgeStatus.serverInstanceId,
@@ -633,7 +655,7 @@ export class CapabilitySnapshotService {
 			this.environment.OPENCUT_WASM_ARTIFACT_PATH ??
 				resolve(
 					import.meta.dir,
-					"../../../node_modules/opencut-wasm/opencut_wasm_bg.wasm",
+					"../../../rust/wasm/pkg-node/opencut_wasm_bg.wasm",
 				),
 		);
 		const packageMetadata = await readJsonRecord(

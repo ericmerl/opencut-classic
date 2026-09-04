@@ -430,7 +430,10 @@ describe("MCP ledger handler recovery", () => {
 				}
 				if (method === "save_project") {
 					expect(params.sceneId).toBe("scene-clone");
-					return { ...saveReceipt(input.operationId, "b"), sceneId: "scene-clone" };
+					return {
+						...saveReceipt(input.operationId, "b"),
+						sceneId: "scene-clone",
+					};
 				}
 				throw new Error(`unexpected bridge request: ${method}`);
 			},
@@ -554,25 +557,26 @@ describe("MCP ledger handler recovery", () => {
 			expectedRevision: 8,
 			expectedProjectContentHash: "a".repeat(64),
 		};
-		const result = await new McpLedgerBoundary(
-			ledger,
-			buildBridge(),
-		).execute("opencut_create_checkpoint", input, async () => ({
-			status: "checkpoint-created",
-			checkpointId: input.checkpointId,
-			projectId: input.projectId,
-			sceneId: input.sceneId,
-			revision: input.expectedRevision,
-			contentHash: input.expectedProjectContentHash,
-			contentHashProjectionVersion: 3,
-			affectedObjects: [
-				{
-					objectType: "checkpoint",
-					objectId: input.checkpointId,
-					action: "created",
-				},
-			],
-		}));
+		const result = await new McpLedgerBoundary(ledger, buildBridge()).execute(
+			"opencut_create_checkpoint",
+			input,
+			async () => ({
+				status: "checkpoint-created",
+				checkpointId: input.checkpointId,
+				projectId: input.projectId,
+				sceneId: input.sceneId,
+				revision: input.expectedRevision,
+				contentHash: input.expectedProjectContentHash,
+				contentHashProjectionVersion: 3,
+				affectedObjects: [
+					{
+						objectType: "checkpoint",
+						objectId: input.checkpointId,
+						action: "created",
+					},
+				],
+			}),
+		);
 		ledger.close();
 
 		expect(result).toMatchObject({
@@ -908,6 +912,70 @@ describe("comparison ledger policy", () => {
 				],
 			});
 			expect(bridgeRequests).toBe(0);
+		} finally {
+			ledger.close();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("preview range ledger projection", () => {
+	test("records the projection version carried by verified preview-range evidence", async () => {
+		const directory = await mkdtemp(
+			join(tmpdir(), "opencut-preview-range-ledger-"),
+		);
+		const ledger = new OperationLedger(directory);
+		const contentHash = "c".repeat(64);
+		const bridge = {
+			request: async (method: string) => {
+				if (method !== "read_project")
+					throw new Error(`unexpected bridge request: ${method}`);
+				return {
+					projectId: "project-1",
+					sceneId: "scene-1",
+					revision: 4,
+					contentIdentity: {
+						status: "hashed",
+						hash: { projectionVersion: 3, digest: contentHash },
+					},
+				};
+			},
+		} as unknown as EditorBridge;
+		try {
+			const result = await new McpLedgerBoundary(ledger, bridge).execute(
+				"opencut_render_preview_range",
+				{
+					bridgeProtocolVersion: 2,
+					operationId: "preview-range-ledger-1",
+					projectId: "project-1",
+					sceneId: "scene-1",
+					expectedRevision: 4,
+					expectedProjectContentHash: contentHash,
+				},
+				async () => ({
+					status: "rendered",
+					receiptId: "preview-range:preview-range-ledger-1",
+					projectId: "project-1",
+					sceneId: "scene-1",
+					revision: 4,
+					contentHash,
+					frames: [],
+					evidence: {
+						contentIdentity: {
+							status: "hashed",
+							hash: { projectionVersion: 3, digest: contentHash },
+						},
+					},
+				}),
+			);
+			expect(result).toMatchObject({
+				durableOperationStatus: "completed",
+				operationDisposition: "applied-verified",
+				operationRecord: {
+					contentHashAfter: contentHash,
+					contentHashProjectionVersionAfter: 3,
+				},
+			});
 		} finally {
 			ledger.close();
 			await rm(directory, { recursive: true, force: true });

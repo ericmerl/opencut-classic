@@ -113,6 +113,22 @@ export class ExportReceiptStore {
 		return { receipt: { ...receipt, inspection }, path };
 	}
 
+	async verifyForReview(
+		operationId: string,
+		expectedOutputSha256: string,
+	): Promise<ExportReceiptRecord> {
+		const receipt = await this.get(operationId);
+		if (!receipt) throw new Error(`export receipt not found: ${operationId}`);
+		if (
+			receipt.inspection.outputSha256 !== expectedOutputSha256 ||
+			receipt.result.sha256 !== expectedOutputSha256
+		) {
+			throw new Error("review target SHA-256 does not match the exported file");
+		}
+		await verifyInspectionEvidence(receipt);
+		return receipt;
+	}
+
 	async artifactsDirectory(operationId: string): Promise<string> {
 		const path = join(this.directory, "artifacts", operationKey(operationId));
 		await mkdir(path, { recursive: true });

@@ -67,6 +67,12 @@ export const operationRelationshipsSchema = z
 		checkpointId: identifierSchema.nullable(),
 		restoresCheckpointId: identifierSchema.nullable(),
 		nativeCommandId: identifierSchema.nullable(),
+		annotationId: identifierSchema.nullable().optional(),
+		evidenceOperationId: identifierSchema.nullable().optional(),
+		supersedesAnnotationVersionId: identifierSchema.nullable().optional(),
+		resolutionOperationId: identifierSchema.nullable().optional(),
+		inspectionId: identifierSchema.nullable().optional(),
+		signoffId: identifierSchema.nullable().optional(),
 	})
 	.strict();
 
@@ -99,6 +105,9 @@ export const operationAffectedObjectSchema = z
 			"speech-analysis",
 			"editorial-decision",
 			"checkpoint",
+			"review-annotation",
+			"watermark-inspection",
+			"export-review-signoff",
 		]),
 		objectId: identifierSchema,
 		action: z.enum([

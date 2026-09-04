@@ -22,6 +22,7 @@ pub use masks::*;
 #[cfg(target_arch = "wasm32")]
 pub use perf::*;
 pub use project_state::*;
+pub use review_evidence::*;
 pub use time::*;
 
 #[cfg(feature = "wasm")]

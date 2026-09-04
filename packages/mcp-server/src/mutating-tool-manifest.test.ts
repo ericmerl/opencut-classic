@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MUTATING_TOOL_MANIFEST } from "./mutating-tool-manifest";
 
 describe("mutating MCP tool manifest", () => {
-	test("defines the complete dependency-map set of 59 mutators", () => {
+	test("defines the complete dependency-map set of 63 mutators", () => {
 		expect(Object.keys(MUTATING_TOOL_MANIFEST).sort()).toEqual(
 			[
 				"opencut_apply_edit_plan",
@@ -18,6 +18,7 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_create_checkpoint",
 				"opencut_create_delivery_package",
 				"opencut_create_project",
+				"opencut_create_review_annotation",
 				"opencut_export_project",
 				"opencut_export_subtitles",
 				"opencut_evaluate_export_qc",
@@ -43,6 +44,7 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_queue_export",
 				"opencut_queue_export_batch",
 				"opencut_record_export_inspection",
+				"opencut_record_watermark_inspection",
 				"opencut_redo",
 				"opencut_resolve_job",
 				"opencut_restore_checkpoint",
@@ -54,9 +56,11 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_start_editor_worker",
 				"opencut_stop_editor_worker",
 				"opencut_sync_audio",
+				"opencut_sign_off_export_review",
 				"opencut_track_subject",
 				"opencut_transcribe_timeline",
 				"opencut_undo",
+				"opencut_update_review_annotation_status",
 				"opencut_transcribe_source",
 				"opencut_correct_transcript",
 				"opencut_analyze_speech",
@@ -66,7 +70,7 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_import_editorial_decision_json",
 			].sort(),
 		);
-		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(59);
+		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(63);
 	});
 
 	test("exempts only pre-affinity worker lifecycle controls from the v2 gate", () => {
@@ -85,7 +89,7 @@ describe("mutating MCP tool manifest", () => {
 			Object.values(MUTATING_TOOL_MANIFEST).filter(
 				(definition) => definition.protocolMutationPolicy === "v2-required",
 			),
-		).toHaveLength(57);
+		).toHaveLength(61);
 	});
 
 	test("declares target-specific persistence verification for project lifecycle mutations", () => {

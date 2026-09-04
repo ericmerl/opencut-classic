@@ -3903,6 +3903,7 @@ dependencies = [
  "masks",
  "num-traits",
  "project-state",
+ "review-evidence",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -4682,6 +4683,17 @@ dependencies = [
  "svgtypes",
  "tiny-skia",
  "usvg",
+]
+
+[[package]]
+name = "review-evidence"
+version = "0.1.0"
+dependencies = [
+ "bridge",
+ "serde",
+ "serde_json",
+ "tsify-next",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -33,12 +33,17 @@ import { NormalizeAudioOperation } from "./normalize-audio-operation";
 import { SubtitleFiles } from "./subtitle-files";
 import { SubtitleImportOperation } from "./subtitle-import-operation";
 import { SubjectTrackingService } from "./track-subject";
-import { OperationLedger } from "./operation-ledger";
+import { OperationLedger, OperationLedgerReuseError } from "./operation-ledger";
 import {
 	HistoryCheckpointStore,
 	HISTORY_CHECKPOINT_SCHEMA,
 	type HistoryCheckpointRecord,
 } from "./history-checkpoint-store";
+import {
+	ReviewEvidenceIntegrityError,
+	ReviewEvidenceStore,
+} from "./review-evidence-store";
+import { ReviewEvidenceService } from "./review-evidence-service";
 import { PreviewEvidenceStore } from "./preview-evidence-store";
 import { PreviewFrameService } from "./preview-frame-service";
 import { RangePreviewEvidenceStore } from "./range-preview-evidence-store";
@@ -160,6 +165,13 @@ import {
 	queueExportInputSchema,
 	queueExportBatchInputSchema,
 	recordExportInspectionInputSchema,
+	createReviewAnnotationInputSchema,
+	getReviewAnnotationInputSchema,
+	listReviewAnnotationsInputSchema,
+	updateReviewAnnotationStatusInputSchema,
+	recordWatermarkInspectionInputSchema,
+	getWatermarkInspectionInputSchema,
+	signOffExportReviewInputSchema,
 	runExportJobsInputSchema,
 	searchStickersInputSchema,
 	startEditorWorkerInputSchema,
@@ -426,6 +438,18 @@ const historyCheckpointStore = new HistoryCheckpointStore(
 		join(exportReceipts.directory, "history-checkpoints"),
 );
 await historyCheckpointStore.readiness();
+const reviewEvidenceStore = new ReviewEvidenceStore(
+	process.env.OPENCUT_REVIEW_EVIDENCE_DIR ??
+		join(exportReceipts.directory, "review-evidence"),
+);
+await reviewEvidenceStore.readiness();
+const reviewEvidence = new ReviewEvidenceService(
+	reviewEvidenceStore,
+	exportReceipts,
+	undefined,
+	previewEvidence,
+	rangePreviewEvidence,
+);
 const protocolCompatibility = readProtocolCompatibility();
 const ledgerBoundary = new McpLedgerBoundary(operationLedger, bridge, {
 	allowProtocolV1Mutation: protocolCompatibility.protocolV1Mutation.enabled,
@@ -1630,7 +1654,9 @@ function createServer(): McpServer {
 							params.expectedConnectionIdentity,
 						);
 						if (!identity) {
-							throw new Error("checkpoint creation requires v2 connection identity");
+							throw new Error(
+								"checkpoint creation requires v2 connection identity",
+							);
 						}
 						const checkpoint: HistoryCheckpointRecord = {
 							schemaVersion: HISTORY_CHECKPOINT_SCHEMA,
@@ -1717,7 +1743,9 @@ function createServer(): McpServer {
 							params.expectedConnectionIdentity,
 						);
 						if (!currentIdentity) {
-							throw new Error("checkpoint restore requires v2 connection identity");
+							throw new Error(
+								"checkpoint restore requires v2 connection identity",
+							);
 						}
 						const checkpoint = await historyCheckpointStore.get(
 							params.checkpointId,
@@ -2431,6 +2459,142 @@ function createServer(): McpServer {
 	);
 
 	server.registerTool(
+		"opencut_create_review_annotation",
+		{
+			description:
+				"Create an immutable structured review annotation tied to hash-locked evidence.",
+			inputSchema: createReviewAnnotationInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await reviewMutationResult(() =>
+					ledgerBoundary.execute(
+						"opencut_create_review_annotation",
+						input,
+						() => reviewEvidence.createAnnotation(input),
+						() => reviewEvidence.createAnnotation(input),
+					),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_review_annotation",
+		{
+			description:
+				"Read one checksum-verified immutable review annotation version.",
+			inputSchema: getReviewAnnotationInputSchema,
+		},
+		async ({ annotationId, version }) => {
+			return toolResult(
+				await reviewReadResult(async () => {
+					const annotation = await reviewEvidence.getAnnotation(
+						annotationId,
+						version,
+					);
+					return annotation
+						? { status: "found", annotation }
+						: { status: "not-found", annotationId, version: version ?? null };
+				}),
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_review_annotations",
+		{
+			description:
+				"List checksum-verified review annotation versions with bounded pagination.",
+			inputSchema: listReviewAnnotationsInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await reviewReadResult(async () => ({
+					status: "listed",
+					...(await reviewEvidence.listAnnotations(input)),
+				})),
+			),
+	);
+
+	server.registerTool(
+		"opencut_update_review_annotation_status",
+		{
+			description: "Append an immutable status version to a review annotation.",
+			inputSchema: updateReviewAnnotationStatusInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await reviewMutationResult(() =>
+					ledgerBoundary.execute(
+						"opencut_update_review_annotation_status",
+						input,
+						() => reviewEvidence.updateAnnotationStatus(input),
+						() => reviewEvidence.updateAnnotationStatus(input),
+					),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_record_watermark_inspection",
+		{
+			description:
+				"Record a declared opening, middle, ending, four-corner, and final-export-byte watermark inspection.",
+			inputSchema: recordWatermarkInspectionInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await reviewMutationResult(() =>
+					ledgerBoundary.execute(
+						"opencut_record_watermark_inspection",
+						input,
+						() => reviewEvidence.recordWatermarkInspection(input),
+						() => reviewEvidence.recordWatermarkInspection(input),
+					),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_watermark_inspection",
+		{
+			description: "Read a checksum-verified immutable watermark inspection.",
+			inputSchema: getWatermarkInspectionInputSchema,
+		},
+		async ({ inspectionId }) => {
+			return toolResult(
+				await reviewReadResult(async () => {
+					const inspection =
+						await reviewEvidence.getWatermarkInspection(inspectionId);
+					return inspection
+						? { status: "found", inspection }
+						: { status: "not-found", inspectionId };
+				}),
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_sign_off_export_review",
+		{
+			description:
+				"Record human final sign-off only after complete watermark and blocking-finding checks.",
+			inputSchema: signOffExportReviewInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await reviewMutationResult(() =>
+					ledgerBoundary.execute(
+						"opencut_sign_off_export_review",
+						input,
+						() => reviewEvidence.signOffExportReview(input),
+						() => reviewEvidence.signOffExportReview(input),
+					),
+				),
+			),
+	);
+
+	server.registerTool(
 		"opencut_evaluate_export_qc",
 		{
 			description:
@@ -2914,6 +3078,39 @@ async function jobToolResult(run: () => Promise<unknown>): Promise<unknown> {
 	} catch (error) {
 		if (error instanceof JobServiceError) {
 			return { status: "rejected", code: error.code, reason: error.message };
+		}
+		throw error;
+	}
+}
+
+async function reviewMutationResult(
+	run: () => Promise<unknown>,
+): Promise<unknown> {
+	try {
+		return await run();
+	} catch (error) {
+		if (error instanceof OperationLedgerReuseError) {
+			return {
+				status: "rejected",
+				code: error.code,
+				operationId: error.operationId,
+				reason: error.message,
+			};
+		}
+		throw error;
+	}
+}
+
+async function reviewReadResult(run: () => Promise<unknown>): Promise<unknown> {
+	try {
+		return await run();
+	} catch (error) {
+		if (error instanceof ReviewEvidenceIntegrityError) {
+			return {
+				status: "integrity-failed",
+				code: error.code,
+				reason: error.message,
+			};
 		}
 		throw error;
 	}

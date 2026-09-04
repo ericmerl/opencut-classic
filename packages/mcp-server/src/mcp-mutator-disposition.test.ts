@@ -9,6 +9,7 @@ const successes: Record<MutatingToolName, Record<string, unknown>> = {
 	opencut_start_editor_worker: { running: true, connected: true },
 	opencut_stop_editor_worker: { running: false, connected: false },
 	opencut_create_project: { status: "created" },
+	opencut_create_review_annotation: { status: "annotation-created" },
 	opencut_open_project: { status: "opened" },
 	opencut_rename_project: { status: "renamed" },
 	opencut_duplicate_project: { status: "duplicated" },
@@ -60,6 +61,13 @@ const successes: Record<MutatingToolName, Record<string, unknown>> = {
 	opencut_resolve_job: { status: "found", job: {} },
 	opencut_run_export_jobs: { connected: true, processed: [] },
 	opencut_record_export_inspection: { receipt: {}, path: "C:/receipt.json" },
+	opencut_record_watermark_inspection: {
+		status: "watermark-inspection-recorded",
+	},
+	opencut_sign_off_export_review: { status: "export-review-signed-off" },
+	opencut_update_review_annotation_status: {
+		status: "annotation-status-updated",
+	},
 	opencut_transcribe_source: { status: "transcribed" },
 	opencut_correct_transcript: { status: "corrected" },
 	opencut_analyze_speech: { status: "analyzed" },

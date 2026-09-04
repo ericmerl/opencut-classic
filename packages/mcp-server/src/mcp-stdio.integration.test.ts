@@ -65,9 +65,11 @@ integrationTest(
 	"lists native history and safely performs multi-step undo, redo, checkpoint, restore, and restart rejection",
 	async () => {
 		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
-		if (!baseUrl) throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		if (!baseUrl)
+			throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
 		const browserPath = process.env.OPENCUT_HEADLESS_BROWSER_PATH;
-		if (!browserPath) throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
+		if (!browserPath)
+			throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
 		const bridgePort = await availablePort();
 		const profileDirectory = join(directory, "history-profile");
 		const receiptDirectory = join(directory, "history-receipts");
@@ -91,7 +93,10 @@ integrationTest(
 		const projectId = requireString(initial.projectId, "projectId");
 		const sceneId = requireString(initial.sceneId, "sceneId");
 		const initialHash = requireProjectContentHash(initial);
-		const safety = (project: Record<string, unknown>, identity = firstIdentity) => ({
+		const safety = (
+			project: Record<string, unknown>,
+			identity = firstIdentity,
+		) => ({
 			...affinity(identity),
 			projectId,
 			sceneId,
@@ -182,7 +187,10 @@ integrationTest(
 					costPolicy: "require-exact",
 				},
 			});
-			const preflightResult = requireRecord(preflight.result, "preflight result");
+			const preflightResult = requireRecord(
+				preflight.result,
+				"preflight result",
+			);
 			const evaluation = requireRecord(
 				preflightResult.evaluation,
 				"preflight evaluation",
@@ -202,10 +210,7 @@ integrationTest(
 						evaluation.preflightFingerprint,
 						"preflightFingerprint",
 					),
-					planDiffHash: requireString(
-						evaluation.planDiffHash,
-						"planDiffHash",
-					),
+					planDiffHash: requireString(evaluation.planDiffHash, "planDiffHash"),
 				},
 			});
 			expect(applied.status).toBe("applied");
@@ -232,7 +237,10 @@ integrationTest(
 				requireRecord(afterEditsHistory.nativeHistory, "nativeHistory").history,
 				"history",
 			).length,
-		).toBe(requireRecords(baselineNativeHistory.history, "baseline history").length + 2);
+		).toBe(
+			requireRecords(baselineNativeHistory.history, "baseline history").length +
+				2,
+		);
 
 		const undone = await first.callTool("opencut_undo", {
 			...safety(afterSecondEdit),
@@ -291,9 +299,10 @@ integrationTest(
 			projectId,
 			limit: 100,
 		});
-		const historyRecords = requireRecords(history.entries, "history entries").map(
-			(entry) => requireRecord(entry.record, "operation record"),
-		);
+		const historyRecords = requireRecords(
+			history.entries,
+			"history entries",
+		).map((entry) => requireRecord(entry.record, "operation record"));
 		for (const operationId of [
 			"history-create-checkpoint",
 			"history-undo-two",
@@ -304,7 +313,9 @@ integrationTest(
 				(candidate) => candidate.operationId === operationId,
 			);
 			expect(record).toBeDefined();
-			expect(requireString(record!.description, "description").length).toBeGreaterThan(0);
+			expect(
+				requireString(record!.description, "description").length,
+			).toBeGreaterThan(0);
 			expect(Array.isArray(record!.affectedObjects)).toBe(true);
 		}
 
@@ -568,20 +579,28 @@ integrationTest(
 			{ path: mediaPath, assetName: "Lifecycle bin asset" },
 		);
 		const assetId = requireString(importedAsset.assetId, "assetId");
-		await mediaMutation("opencut_rename_media_asset", "mcp-lifecycle-bin-rename", {
-			assetId,
-			name: "Lifecycle bin asset renamed",
-		});
+		await mediaMutation(
+			"opencut_rename_media_asset",
+			"mcp-lifecycle-bin-rename",
+			{
+				assetId,
+				name: "Lifecycle bin asset renamed",
+			},
+		);
 		const relinkedAsset = await mediaMutation(
 			"opencut_relink_media_asset",
 			"mcp-lifecycle-bin-relink",
 			{ assetId, path: mediaPath },
 		);
 		expect(relinkedAsset.differences).toEqual([]);
-		await mediaMutation("opencut_remove_media_asset", "mcp-lifecycle-bin-remove", {
-			assetId,
-			policy: "unused-only",
-		});
+		await mediaMutation(
+			"opencut_remove_media_asset",
+			"mcp-lifecycle-bin-remove",
+			{
+				assetId,
+				policy: "unused-only",
+			},
+		);
 		expect(
 			requireRecords(
 				requireRecord(
@@ -740,7 +759,10 @@ integrationTest(
 			status: "ready",
 			families: ["TikTok Sans"],
 		});
-		const descriptor = requireRecords(fontReadiness.descriptors, "descriptors")[0];
+		const descriptor = requireRecords(
+			fontReadiness.descriptors,
+			"descriptors",
+		)[0];
 		if (!descriptor) throw new Error("expected a font descriptor");
 		expect(descriptor).toMatchObject({ family: "TikTok Sans", weight: "bold" });
 		const faces = requireRecords(descriptor.matchedFaces, "matchedFaces");
@@ -754,7 +776,10 @@ integrationTest(
 					"0e7f0a3e924c9a86478fc6fc2946de2e4ab8fc704ed72ee40434ade94bb9b0c6",
 			});
 		}
-		const [captionEvidence] = requireRecords(captionLayout.captions, "captions");
+		const [captionEvidence] = requireRecords(
+			captionLayout.captions,
+			"captions",
+		);
 		if (!captionEvidence) throw new Error("expected caption evidence");
 		const geometry = requireRecord(captionEvidence.geometry, "geometry");
 		expect(geometry).toMatchObject({
@@ -772,9 +797,9 @@ integrationTest(
 		expect(requireRecords(geometry.lineBubbles, "lineBubbles")).toHaveLength(
 			requireNumber(geometry.lineCount, "lineCount"),
 		);
-		expect(requireString(captionLayout.geometrySha256, "geometrySha256")).toMatch(
-			/^[a-f0-9]{64}$/,
-		);
+		expect(
+			requireString(captionLayout.geometrySha256, "geometrySha256"),
+		).toMatch(/^[a-f0-9]{64}$/);
 
 		// Apply the preflighted plan, then export the captions as ASS so the
 		// styled subset round-trips and the loss report is durable.
@@ -854,15 +879,19 @@ integrationTest(
 		// Restructure the inserted caption: split it at a word boundary and
 		// restyle the left half from a preset, all resolved by Rust.
 		const appliedSnapshot = requireRecord(applied.snapshot, "snapshot");
-		const captionElement = requireRecords(appliedSnapshot.elements, "elements").find(
-			(element) => element.type === "text",
-		);
+		const captionElement = requireRecords(
+			appliedSnapshot.elements,
+			"elements",
+		).find((element) => element.type === "text");
 		if (!captionElement) throw new Error("expected the inserted caption");
 		expect(requireRecord(captionElement.params, "params")).toMatchObject({
 			"caption.speaker": "host",
 		});
 		const captionTrackId = requireString(captionElement.trackId, "trackId");
-		const captionElementId = requireString(captionElement.elementId, "elementId");
+		const captionElementId = requireString(
+			captionElement.elementId,
+			"elementId",
+		);
 		const restructureOperations = [
 			{
 				kind: "split_caption",
@@ -1014,10 +1043,250 @@ integrationTest(
 			});
 		}
 		expect(
-			requireProjectContentHash(requireRecord(restructured.snapshot, "snapshot")),
-		).toBe(requireString(restructureEvaluation.predictedProjectHash, "predicted"));
+			requireProjectContentHash(
+				requireRecord(restructured.snapshot, "snapshot"),
+			),
+		).toBe(
+			requireString(restructureEvaluation.predictedProjectHash, "predicted"),
+		);
 	},
 	120_000,
+);
+
+integrationTest(
+	"records structured review evidence and human sign-off through managed Chrome",
+	async () => {
+		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
+		if (!baseUrl)
+			throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		const browserPath = process.env.OPENCUT_HEADLESS_BROWSER_PATH;
+		if (!browserPath)
+			throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
+		const sourcePath = join(directory, "review-source.mp4");
+		await createSyntheticVideo(sourcePath);
+		const harness = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort: await availablePort(),
+			profileDirectory: join(directory, "review-profile"),
+			receiptDirectory: join(directory, "review-receipts"),
+		});
+		await harness.callTool("opencut_start_editor_worker", {});
+		const connection = await harness.callTool("opencut_connection_status", {});
+		const identity = requireRecord(
+			connection.connectionIdentity,
+			"connection identity",
+		);
+		const initial = await harness.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		const projectId = requireString(initial.projectId, "projectId");
+		const imported = await harness.callTool("opencut_import_media", {
+			...affinity(identity),
+			projectId,
+			operationId: "managed-review-import",
+			expectedRevision: requireNumber(initial.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(initial),
+			path: sourcePath,
+			startTime: 0,
+			adoptMediaSettings: true,
+		});
+		const snapshot = requireRecord(imported.snapshot, "imported snapshot");
+		const sceneId = requireString(snapshot.sceneId, "sceneId");
+		const contentHash = requireProjectContentHash(snapshot);
+		const saved = await harness.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "managed-review-save",
+			expectedRevision: requireNumber(imported.revision, "revision"),
+			expectedContentHash: contentHash,
+		});
+		const evidenceEnvelope = {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(imported.revision, "revision"),
+			expectedProjectContentHash: contentHash,
+			expectedWriteVersion: requireNumber(saved.writeVersion, "writeVersion"),
+			saveReceiptOperationId: "managed-review-save",
+			expectedSaveReceiptId: requireString(saved.receiptId, "save receiptId"),
+		};
+		const frame = await harness.callTool(
+			"opencut_render_preview_frame",
+			{
+				...evidenceEnvelope,
+				contractVersion: 2,
+				operationId: "managed-review-frame",
+				time: { kind: "media-time", ticks: 60_000, rounding: "exact" },
+				canvasSize: { width: 160, height: 120 },
+				format: "png",
+			},
+			5 * 60_000,
+		);
+		expect(frame).toMatchObject({ status: "rendered" });
+		const range = await harness.callTool(
+			"opencut_render_preview_range",
+			{
+				...evidenceEnvelope,
+				contractVersion: 1,
+				operationId: "managed-review-range",
+				range: {
+					kind: "media-time",
+					startTicks: 0,
+					endTicksExclusive: MEDIA_TICKS_PER_SECOND,
+				},
+				canvasSize: { width: 16, height: 16 },
+				output: {
+					kind: "frame-sequence",
+					frameFormat: "png",
+					includeAudio: false,
+				},
+			},
+			5 * 60_000,
+		);
+		expect(range).toMatchObject({
+			status: "rendered",
+			execution: { status: "succeeded" },
+		});
+		const outputPath = join(directory, "managed-review.webm");
+		const exported = await harness.callTool(
+			"opencut_export_project",
+			{
+				...affinity(identity),
+				projectId,
+				operationId: "managed-review-export",
+				expectedRevision: requireNumber(imported.revision, "revision"),
+				expectedProjectContentHash: contentHash,
+				outputPath,
+				format: "webm",
+				quality: "high",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: false,
+				canvasSize: { width: 160, height: 120 },
+			},
+			5 * 60_000,
+		);
+		expect(exported).toMatchObject({
+			status: "exported",
+			validation: { status: "validated", fullDecode: true },
+		});
+		const reviewEnvelope = {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			projectContentHash: contentHash,
+		};
+		const frameTarget = {
+			kind: "preview-frame",
+			evidenceOperationId: "managed-review-frame",
+			evidenceReceiptId: requireString(frame.receiptId, "frame receiptId"),
+			artifactSha256: requireString(frame.sha256, "frame sha256"),
+		};
+		const rangeTarget = {
+			kind: "preview-range",
+			evidenceOperationId: "managed-review-range",
+			evidenceReceiptId: requireString(range.receiptId, "range receiptId"),
+			artifactSha256: requireString(range.checksum, "range checksum"),
+		};
+		const automated = await harness.callTool(
+			"opencut_create_review_annotation",
+			{
+				...reviewEnvelope,
+				operationId: "managed-review-annotation",
+				annotationId: "managed-review-annotation",
+				target: rangeTarget,
+				location: {
+					kind: "range",
+					startTicks: 0,
+					endTicksExclusive: MEDIA_TICKS_PER_SECOND,
+				},
+				region: { x: 0, y: 0, width: 1, height: 1 },
+				category: "continuity",
+				severity: "warning",
+				finding: {
+					kind: "automated",
+					detector: {
+						provider: "managed-review-detector",
+						modelId: "continuity-check",
+						modelVersion: "1.0.0",
+					},
+				},
+				reviewer: "managed-review-detector",
+				notes: "Automated evidence retained separately from human approval.",
+			},
+		);
+		expect(automated).toMatchObject({
+			status: "annotation-created",
+			annotation: { finding: { kind: "automated" } },
+		});
+		const cleanCorners = {
+			"top-left": "clean",
+			"top-right": "clean",
+			"bottom-left": "clean",
+			"bottom-right": "clean",
+		};
+		const inspection = await harness.callTool(
+			"opencut_record_watermark_inspection",
+			{
+				...reviewEnvelope,
+				operationId: "managed-review-inspection",
+				inspectionId: "managed-review-inspection",
+				exportEvidence: {
+					evidenceOperationId: "managed-review-export",
+					evidenceReceiptId: "managed-review-export",
+					artifactSha256: requireString(exported.sha256, "export sha256"),
+				},
+				renderEvidence: [frameTarget, rangeTarget],
+				policy: {
+					schemaVersion: "opencut.watermark-sampling-policy.v1",
+					fullFrameSamples: ["opening", "middle", "ending"],
+					corners: ["top-left", "top-right", "bottom-left", "bottom-right"],
+					requireFinalExportBytesInspection: true,
+					requireHumanReview: true,
+				},
+				review: { kind: "human", reviewer: "managed-chrome-reviewer" },
+				samples: (["opening", "middle", "ending"] as const).map((position) => ({
+					position,
+					fullFrame: "clean",
+					corners: cleanCorners,
+				})),
+				finalExportBytes: { status: "clean" },
+				notes: "Human inspected renderer evidence and final exported bytes.",
+			},
+		);
+		expect(inspection).toMatchObject({
+			status: "watermark-inspection-recorded",
+			inspection: {
+				status: "verified-clean",
+				review: { kind: "human" },
+				renderEvidence: [{ kind: "preview-frame" }, { kind: "preview-range" }],
+			},
+		});
+		const signoff = await harness.callTool("opencut_sign_off_export_review", {
+			...reviewEnvelope,
+			operationId: "managed-review-signoff",
+			signoffId: "managed-review-signoff",
+			inspectionId: "managed-review-inspection",
+			exportOperationId: "managed-review-export",
+			outputSha256: requireString(exported.sha256, "export sha256"),
+			reviewer: "managed-chrome-reviewer",
+			notes: "Human final export review approved.",
+		});
+		expect(signoff).toMatchObject({
+			status: "export-review-signed-off",
+			signoff: { humanReview: true, unresolvedBlockingFindings: 0 },
+			operationRecord: {
+				relationships: {
+					inspectionId: "managed-review-inspection",
+					evidenceOperationId: "managed-review-export",
+				},
+			},
+		});
+		await harness.callTool("opencut_stop_editor_worker", {});
+	},
+	5 * 60_000,
 );
 
 integrationTest(

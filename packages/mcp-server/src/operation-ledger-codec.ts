@@ -93,6 +93,12 @@ export function relationships(
 		checkpointId: value.checkpointId ?? null,
 		restoresCheckpointId: value.restoresCheckpointId ?? null,
 		nativeCommandId: value.nativeCommandId ?? null,
+		annotationId: value.annotationId ?? null,
+		evidenceOperationId: value.evidenceOperationId ?? null,
+		supersedesAnnotationVersionId: value.supersedesAnnotationVersionId ?? null,
+		resolutionOperationId: value.resolutionOperationId ?? null,
+		inspectionId: value.inspectionId ?? null,
+		signoffId: value.signoffId ?? null,
 	};
 }
 
@@ -204,7 +210,12 @@ function redactPayload(value: unknown, key = ""): unknown {
 
 function isSecretKey(key: string): boolean {
 	const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-	if (normalized === "editorsessionid") return false;
+	if (
+		normalized === "editorsessionid" ||
+		normalized === "signoff" ||
+		normalized === "signoffid"
+	)
+		return false;
 	return /(?:authorization|proxyauthorization|cookie|setcookie|password|passwd|passphrase|secret|token|apikey|privatekey|credential|sessionid|clientsecret|signature|sig)/i.test(
 		normalized,
 	);

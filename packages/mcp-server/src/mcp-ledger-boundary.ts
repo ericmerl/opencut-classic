@@ -693,6 +693,10 @@ function operationUsesProjectPreconditions(
 		"opencut_reapply_editorial_decision",
 		"opencut_export_editorial_decision_json",
 		"opencut_import_editorial_decision_json",
+		"opencut_create_review_annotation",
+		"opencut_update_review_annotation_status",
+		"opencut_record_watermark_inspection",
+		"opencut_sign_off_export_review",
 	]).has(toolName);
 }
 
@@ -729,9 +733,19 @@ const SCENE_TARGET_TOOLS = new Set<MutatingToolName>([
 function projectLifecycleTarget(
 	toolName: MutatingToolName,
 	input: ToolInput,
-): { projectId?: string } {
+): {
+	projectId?: string;
+	sceneId?: string;
+} {
 	return PROJECT_TARGET_TOOLS.has(toolName)
-		? { projectId: stringField(input, "projectId") ?? undefined }
+		? {
+				projectId: stringField(input, "projectId") ?? undefined,
+				...(REVIEW_EVIDENCE_TOOLS.has(toolName)
+					? {
+							sceneId: stringField(input, "sceneId") ?? undefined,
+						}
+					: {}),
+			}
 		: {};
 }
 
@@ -740,6 +754,17 @@ const PROJECT_TARGET_TOOLS = new Set<MutatingToolName>([
 	"opencut_rename_project",
 	"opencut_duplicate_project",
 	"opencut_delete_project",
+	"opencut_create_review_annotation",
+	"opencut_update_review_annotation_status",
+	"opencut_record_watermark_inspection",
+	"opencut_sign_off_export_review",
+]);
+
+const REVIEW_EVIDENCE_TOOLS = new Set<MutatingToolName>([
+	"opencut_create_review_annotation",
+	"opencut_update_review_annotation_status",
+	"opencut_record_watermark_inspection",
+	"opencut_sign_off_export_review",
 ]);
 
 function browserReceiptIsTerminal(toolName: MutatingToolName): boolean {
@@ -850,6 +875,33 @@ function inputRelationships(
 		} else if (toolName === "opencut_restore_checkpoint") {
 			relationships.restoresCheckpointId = input.checkpointId;
 		}
+	}
+	if (REVIEW_EVIDENCE_TOOLS.has(toolName)) {
+		relationships.annotationId = stringField(input, "annotationId");
+		const target = isRecord(input.target) ? input.target : null;
+		relationships.evidenceOperationId = target
+			? stringField(target, "evidenceOperationId")
+			: null;
+		relationships.supersedesAnnotationVersionId = stringField(
+			input,
+			"expectedVersionId",
+		);
+		relationships.resolutionOperationId = stringField(
+			input,
+			"resolutionOperationId",
+		);
+	}
+	if (toolName === "opencut_record_watermark_inspection") {
+		relationships.inspectionId = stringField(input, "inspectionId");
+		const target = isRecord(input.exportEvidence) ? input.exportEvidence : null;
+		relationships.evidenceOperationId = target
+			? stringField(target, "evidenceOperationId")
+			: null;
+	}
+	if (toolName === "opencut_sign_off_export_review") {
+		relationships.signoffId = stringField(input, "signoffId");
+		relationships.inspectionId = stringField(input, "inspectionId");
+		relationships.evidenceOperationId = stringField(input, "exportOperationId");
 	}
 	return Object.keys(relationships).length > 0 ? relationships : undefined;
 }
@@ -1006,6 +1058,12 @@ function verifiedAffectedObjects(
 		result.exportReceiptId,
 		toolName === "opencut_record_export_inspection" ? "inspected" : "exported",
 	);
+	const annotation = isRecord(result.annotation) ? result.annotation : null;
+	add("review-annotation", annotation?.versionId, action);
+	const inspection = isRecord(result.inspection) ? result.inspection : null;
+	add("watermark-inspection", inspection?.inspectionId, "inspected");
+	const signoff = isRecord(result.signoff) ? result.signoff : null;
+	add("export-review-signoff", signoff?.signoffId, "created");
 	if (isRecord(result.job)) add("export-job", result.job.jobId, "queued");
 	if (isRecord(result.summary)) {
 		const batchId = isRecord(result.summary.batch)
@@ -1088,6 +1146,10 @@ function operationAction(
 	)
 		return "cancelled";
 	if (toolName === "opencut_record_export_inspection") return "inspected";
+	if (toolName === "opencut_create_review_annotation") return "created";
+	if (toolName === "opencut_update_review_annotation_status") return "updated";
+	if (toolName === "opencut_record_watermark_inspection") return "inspected";
+	if (toolName === "opencut_sign_off_export_review") return "created";
 	if (toolName === "opencut_undo") return "undone";
 	if (toolName === "opencut_redo") return "redone";
 	if (toolName === "opencut_restore_checkpoint") return "restored";
@@ -1418,6 +1480,7 @@ function immutableResultState(value: unknown): {
 } | null {
 	if (!isRecord(value)) return null;
 	const snapshot = isRecord(value.snapshot) ? value.snapshot : null;
+	const evidence = isRecord(value.evidence) ? value.evidence : null;
 	const projectId =
 		stringField(value, "projectId") ??
 		(snapshot ? stringField(snapshot, "projectId") : null);
@@ -1436,7 +1499,9 @@ function immutableResultState(value: unknown): {
 			? value.contentHashProjectionVersion
 			: snapshot
 				? contentHashProjectionVersionOf(snapshot)
-				: null;
+				: evidence && contentHashOf(evidence) === contentHash
+					? contentHashProjectionVersionOf(evidence)
+					: null;
 	return projectId && sceneId && revision !== null && contentHash
 		? {
 				projectId,
@@ -1691,6 +1756,19 @@ const MUTATOR_RESULT_CONTRACTS = {
 		[],
 		rejectedOrMissing,
 		(value) => isRecord(value.receipt) && typeof value.path === "string",
+	),
+	opencut_create_review_annotation: contract(["annotation-created"], rejected),
+	opencut_update_review_annotation_status: contract(
+		["annotation-status-updated"],
+		rejected,
+	),
+	opencut_record_watermark_inspection: contract(
+		["watermark-inspection-recorded"],
+		rejected,
+	),
+	opencut_sign_off_export_review: contract(
+		["export-review-signed-off"],
+		rejected,
 	),
 	opencut_transcribe_source: contract(["transcribed", "replayed"], rejected),
 	opencut_correct_transcript: contract(["corrected", "replayed"], rejected),

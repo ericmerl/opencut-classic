@@ -2081,6 +2081,245 @@ export const getExportReceiptInputSchema = z.object({
 	operationId: z.string().min(1),
 });
 
+const reviewEvidenceTargetSchema = z
+	.object({
+		kind: z.enum(["preview-frame", "preview-range", "export"]),
+		evidenceOperationId: operationIdSchema,
+		evidenceReceiptId: operationIdSchema,
+		artifactSha256: z.string().regex(/^[a-f0-9]{64}$/),
+	})
+	.strict();
+const reviewLocationSchema = z.discriminatedUnion("kind", [
+	z.object({ kind: z.literal("time"), ticks: z.number().int().nonnegative() }),
+	z.object({
+		kind: z.literal("range"),
+		startTicks: z.number().int().nonnegative(),
+		endTicksExclusive: z.number().int().positive(),
+	}),
+]);
+const normalizedRegionSchema = z
+	.object({
+		x: z.number().finite().min(0).max(1),
+		y: z.number().finite().min(0).max(1),
+		width: z.number().finite().positive().max(1),
+		height: z.number().finite().positive().max(1),
+	})
+	.strict();
+const reviewFindingSchema = z.discriminatedUnion("kind", [
+	z.object({ kind: z.literal("human") }).strict(),
+	z
+		.object({
+			kind: z.literal("automated"),
+			detector: z
+				.object({
+					provider: operationIdSchema,
+					modelId: operationIdSchema,
+					modelVersion: operationIdSchema,
+					optionsFingerprint: z
+						.string()
+						.regex(/^[a-f0-9]{64}$/)
+						.optional(),
+				})
+				.strict(),
+		})
+		.strict(),
+]);
+
+export const createReviewAnnotationInputSchema = withMutationOperationId(
+	z
+		.object({
+			operationId: operationIdSchema,
+			annotationId: operationIdSchema,
+			projectId: operationIdSchema,
+			sceneId: operationIdSchema,
+			projectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+			target: reviewEvidenceTargetSchema,
+			location: reviewLocationSchema,
+			region: normalizedRegionSchema,
+			category: operationIdSchema,
+			severity: z.enum(["info", "warning", "blocking"]),
+			finding: reviewFindingSchema,
+			reviewer: z.string().trim().min(1).max(256),
+			notes: z.string().trim().min(1).max(16_384),
+			bookmarkId: operationIdSchema.optional(),
+		})
+		.strict(),
+);
+
+export const getReviewAnnotationInputSchema = z
+	.object({
+		annotationId: operationIdSchema,
+		version: z.number().int().positive().optional(),
+	})
+	.strict();
+
+export const listReviewAnnotationsInputSchema = z
+	.object({
+		limit: z.number().int().min(1).max(100).default(50),
+		cursor: z
+			.string()
+			.regex(/^[1-9]\d*$/)
+			.optional(),
+		projectId: operationIdSchema.optional(),
+		sceneId: operationIdSchema.optional(),
+	})
+	.strict();
+
+export const updateReviewAnnotationStatusInputSchema = withMutationOperationId(
+	z
+		.object({
+			operationId: operationIdSchema,
+			annotationId: operationIdSchema,
+			expectedVersionId: operationIdSchema,
+			projectId: operationIdSchema,
+			sceneId: operationIdSchema,
+			projectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+			status: z.enum(["open", "resolved", "dismissed"]),
+			reviewer: z.string().trim().min(1).max(256),
+			notes: z.string().trim().min(1).max(16_384),
+			resolutionOperationId: operationIdSchema.optional(),
+			replacementEvidence: reviewEvidenceTargetSchema.optional(),
+			bookmarkId: operationIdSchema.nullable().optional(),
+		})
+		.strict()
+		.superRefine((value, context) => {
+			if (value.status === "resolved" && !value.resolutionOperationId) {
+				context.addIssue({
+					code: "custom",
+					path: ["resolutionOperationId"],
+					message: "resolved annotations require a resolution operation link",
+				});
+			}
+		}),
+);
+
+const watermarkOutcomeSchema = z.enum([
+	"clean",
+	"watermark-found",
+	"unable-to-determine",
+]);
+const watermarkCornersSchema = z
+	.object({
+		"top-left": watermarkOutcomeSchema,
+		"top-right": watermarkOutcomeSchema,
+		"bottom-left": watermarkOutcomeSchema,
+		"bottom-right": watermarkOutcomeSchema,
+	})
+	.strict();
+const watermarkSamplingPolicySchema = z
+	.object({
+		schemaVersion: z.literal("opencut.watermark-sampling-policy.v1"),
+		fullFrameSamples: z.tuple([
+			z.literal("opening"),
+			z.literal("middle"),
+			z.literal("ending"),
+		]),
+		corners: z.tuple([
+			z.literal("top-left"),
+			z.literal("top-right"),
+			z.literal("bottom-left"),
+			z.literal("bottom-right"),
+		]),
+		requireFinalExportBytesInspection: z.literal(true),
+		requireHumanReview: z.literal(true),
+	})
+	.strict();
+const watermarkReviewSchema = z.discriminatedUnion("kind", [
+	z
+		.object({
+			kind: z.literal("human"),
+			reviewer: z.string().trim().min(1).max(256),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("automated"),
+			reviewer: z.string().trim().min(1).max(256),
+			detector: z
+				.object({
+					provider: operationIdSchema,
+					modelId: operationIdSchema,
+					modelVersion: operationIdSchema,
+					optionsFingerprint: z
+						.string()
+						.regex(/^[a-f0-9]{64}$/)
+						.optional(),
+				})
+				.strict(),
+		})
+		.strict(),
+]);
+
+export const recordWatermarkInspectionInputSchema = withMutationOperationId(
+	z
+		.object({
+			operationId: operationIdSchema,
+			inspectionId: operationIdSchema,
+			projectId: operationIdSchema,
+			sceneId: operationIdSchema,
+			projectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+			exportEvidence: z
+				.object({
+					evidenceOperationId: operationIdSchema,
+					evidenceReceiptId: operationIdSchema,
+					artifactSha256: z.string().regex(/^[a-f0-9]{64}$/),
+				})
+				.strict(),
+			renderEvidence: z.array(reviewEvidenceTargetSchema).max(100).default([]),
+			policy: watermarkSamplingPolicySchema,
+			review: watermarkReviewSchema,
+			samples: z
+				.array(
+					z
+						.object({
+							position: z.enum(["opening", "middle", "ending"]),
+							fullFrame: watermarkOutcomeSchema,
+							corners: watermarkCornersSchema,
+						})
+						.strict(),
+				)
+				.length(3),
+			finalExportBytes: z.object({ status: watermarkOutcomeSchema }).strict(),
+			notes: z.string().trim().min(1).max(16_384),
+		})
+		.strict()
+		.superRefine((value, context) => {
+			const positions = new Set(value.samples.map((sample) => sample.position));
+			if (
+				!["opening", "middle", "ending"].every((position) =>
+					positions.has(position as "opening" | "middle" | "ending"),
+				)
+			) {
+				context.addIssue({
+					code: "custom",
+					path: ["samples"],
+					message: "opening, middle, and ending samples are required",
+				});
+			}
+		}),
+);
+
+export const getWatermarkInspectionInputSchema = z
+	.object({ inspectionId: operationIdSchema })
+	.strict();
+
+export const signOffExportReviewInputSchema = withMutationOperationId(
+	z
+		.object({
+			operationId: operationIdSchema,
+			signoffId: operationIdSchema,
+			inspectionId: operationIdSchema,
+			exportOperationId: operationIdSchema,
+			outputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+			projectId: operationIdSchema,
+			sceneId: operationIdSchema,
+			projectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+			reviewer: z.string().trim().min(1).max(256),
+			notes: z.string().trim().min(1).max(16_384),
+		})
+		.strict(),
+);
+
 export const recordExportInspectionInputSchema = withMutationOperationId(
 	z.object({
 		operationId: operationIdSchema,

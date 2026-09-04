@@ -262,6 +262,26 @@ export const MUTATING_TOOL_MANIFEST = {
 		requiresSaveVerification: false,
 		protocolMutationPolicy: "v2-required",
 	},
+	opencut_create_review_annotation: {
+		operationKind: "create-review-annotation",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_update_review_annotation_status: {
+		operationKind: "update-review-annotation-status",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_record_watermark_inspection: {
+		operationKind: "record-watermark-inspection",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_sign_off_export_review: {
+		operationKind: "sign-off-export-review",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
 	opencut_transcribe_source: {
 		operationKind: "transcribe-source",
 		requiresSaveVerification: false,
