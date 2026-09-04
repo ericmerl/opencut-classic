@@ -577,13 +577,18 @@ function validateFontReadiness(fonts: Record<string, unknown>): void {
 				"unicodeRange",
 				"featureSettings",
 				"display",
+				...("byteSha256" in face ? ["byteSha256"] : []),
 				"identitySha256",
 			]);
 			const identity = { ...face };
 			delete identity.identitySha256;
+			const bundled = face.provenance === "bundled-font-bytes";
 			if (
 				(face.provenance !== "font-face-set" &&
-					face.provenance !== "system-local-font-face") ||
+					face.provenance !== "system-local-font-face" &&
+					!bundled) ||
+				(bundled && !/^[a-f0-9]{64}$/.test(String(face.byteSha256))) ||
+				(!bundled && "byteSha256" in face) ||
 				![
 					"family",
 					"style",

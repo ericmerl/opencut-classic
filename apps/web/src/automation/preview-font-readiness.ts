@@ -1,39 +1,55 @@
 import type { SceneTracks } from "@/timeline";
+import { bundledFaceEvidence, ensureBundledFonts } from "@/fonts/bundled-fonts";
 import { sha256Bytes } from "./preview-render-common";
 
 const FONT_READY_TIMEOUT_MS = 30_000;
 
-export async function waitForFonts(
-	tracks: SceneTracks | readonly SceneTracks[],
-): Promise<{
+export type FontFaceProvenance =
+	| "bundled-font-bytes"
+	| "font-face-set"
+	| "system-local-font-face";
+
+export interface FontDescriptorRequest {
+	family: string;
+	style: string;
+	weight: string;
+	stretch: string;
+	css: string;
+}
+
+export interface FontReadinessEvidence {
 	status: "ready";
 	families: string[];
-	descriptors: Array<{
-		family: string;
-		style: string;
-		weight: string;
-		stretch: string;
-		css: string;
-		identitySha256: string;
-		matchedFaceIdentities: string[];
-		matchedFaces: Array<{
-			provenance: "font-face-set" | "system-local-font-face";
-			family: string;
-			style: string;
-			weight: string;
-			stretch: string;
-			unicodeRange: string;
-			featureSettings: string;
-			display: string;
+	descriptors: Array<
+		FontDescriptorRequest & {
 			identitySha256: string;
-		}>;
-	}>;
+			matchedFaceIdentities: string[];
+			matchedFaces: FontFaceEvidence[];
+		}
+	>;
 	descriptorsSha256: string;
-}> {
-	if (!document.fonts) throw new Error("font readiness API is unavailable");
-	const requested = collectFontDescriptors(
-		Array.isArray(tracks) ? tracks : [tracks],
+}
+
+/** Readiness for every font descriptor the given scene tracks reference. */
+export function waitForFonts(
+	tracks: SceneTracks | readonly SceneTracks[],
+): Promise<FontReadinessEvidence> {
+	return waitForFontDescriptors(
+		collectFontDescriptors(Array.isArray(tracks) ? tracks : [tracks]),
 	);
+}
+
+/**
+ * The one readiness procedure every receipt shares: register the bundled
+ * faces, load and check each descriptor, then record the exact loaded faces
+ * that match it. Preview, export, comparison, and caption preflight all call
+ * this so their evidence is comparable.
+ */
+export async function waitForFontDescriptors(
+	requested: readonly FontDescriptorRequest[],
+): Promise<FontReadinessEvidence> {
+	if (!document.fonts) throw new Error("font readiness API is unavailable");
+	await ensureBundledFonts();
 	const loadedByDescriptor = await Promise.race([
 		Promise.all([
 			document.fonts.ready.then(() => [] as FontFace[]),
@@ -119,45 +135,42 @@ export async function waitForFonts(
 	};
 }
 
-function collectFontDescriptors(trackSets: readonly SceneTracks[]): Array<{
-	family: string;
-	style: string;
-	weight: string;
-	stretch: string;
-	css: string;
-}> {
-	const values = new Map<
-		string,
-		{
-			family: string;
-			style: string;
-			weight: string;
-			stretch: string;
-			css: string;
-		}
-	>();
+/** The descriptor a text element's font params request, in readiness form. */
+export function fontDescriptorFromParams(params: {
+	fontFamily?: unknown;
+	fontStyle?: unknown;
+	fontWeight?: unknown;
+	fontStretch?: unknown;
+}): FontDescriptorRequest {
+	const family =
+		typeof params.fontFamily === "string" && params.fontFamily
+			? params.fontFamily
+			: "Arial";
+	const style =
+		typeof params.fontStyle === "string" ? params.fontStyle : "normal";
+	const weight =
+		typeof params.fontWeight === "string" ||
+		typeof params.fontWeight === "number"
+			? String(params.fontWeight)
+			: "normal";
+	const stretch =
+		typeof params.fontStretch === "string" ? params.fontStretch : "normal";
+	const escapedFamily = family.replaceAll('"', '\\"');
+	const css = `${style} ${weight} ${stretch === "normal" ? "" : `${stretch} `}16px "${escapedFamily}"`;
+	return { family, style, weight, stretch, css };
+}
+
+function collectFontDescriptors(
+	trackSets: readonly SceneTracks[],
+): FontDescriptorRequest[] {
+	const values = new Map<string, FontDescriptorRequest>();
 	const add = (params: {
 		fontFamily?: unknown;
 		fontStyle?: unknown;
 		fontWeight?: unknown;
 		fontStretch?: unknown;
 	}) => {
-		const family =
-			typeof params.fontFamily === "string" && params.fontFamily
-				? params.fontFamily
-				: "Arial";
-		const style =
-			typeof params.fontStyle === "string" ? params.fontStyle : "normal";
-		const weight =
-			typeof params.fontWeight === "string" ||
-			typeof params.fontWeight === "number"
-				? String(params.fontWeight)
-				: "normal";
-		const stretch =
-			typeof params.fontStretch === "string" ? params.fontStretch : "normal";
-		const escapedFamily = family.replaceAll('"', '\\"');
-		const css = `${style} ${weight} ${stretch === "normal" ? "" : `${stretch} `}16px "${escapedFamily}"`;
-		const descriptor = { family, style, weight, stretch, css };
+		const descriptor = fontDescriptorFromParams(params);
 		values.set(JSON.stringify(descriptor), descriptor);
 	};
 	const visit = (sceneTracks: SceneTracks) => {
@@ -208,15 +221,22 @@ function exactFontFaces({
 			normalizeFontFamily(face.family).toLocaleLowerCase() !==
 				normalizeFontFamily(descriptor.family).toLocaleLowerCase() ||
 			normalizeFontStyle(face.style) !== normalizeFontStyle(descriptor.style) ||
-			normalizeFontWeight(face.weight) !==
-				normalizeFontWeight(descriptor.weight) ||
-			normalizeFontStretch(face.stretch) !==
-				normalizeFontStretch(descriptor.stretch)
+			!axisCovers(
+				normalizeFontWeight(face.weight),
+				normalizeFontWeight(descriptor.weight),
+			) ||
+			!axisCovers(
+				normalizeFontStretch(face.stretch),
+				normalizeFontStretch(descriptor.stretch),
+			)
 		) {
 			continue;
 		}
+		// A face registered from bundled bytes carries its byte hash so the
+		// receipt proves which audited file rendered the text.
+		const bundled = provenance === "font-face-set" ? bundledFaceEvidence(face) : null;
 		const evidence = {
-			provenance,
+			provenance: bundled ? ("bundled-font-bytes" as const) : provenance,
 			family: normalizeFontFamily(face.family),
 			style: normalizeFontStyle(face.style),
 			weight: normalizeFontWeight(face.weight),
@@ -224,14 +244,15 @@ function exactFontFaces({
 			unicodeRange: face.unicodeRange,
 			featureSettings: face.featureSettings,
 			display: face.display,
+			...(bundled ? { byteSha256: bundled.byteSha256 } : {}),
 		};
 		unique.set(JSON.stringify(evidence), evidence);
 	}
 	return [...unique.values()];
 }
 
-type FontFaceEvidence = {
-	provenance: "font-face-set" | "system-local-font-face";
+export type FontFaceEvidence = {
+	provenance: FontFaceProvenance;
 	family: string;
 	style: string;
 	weight: string;
@@ -239,8 +260,30 @@ type FontFaceEvidence = {
 	unicodeRange: string;
 	featureSettings: string;
 	display: string;
+	byteSha256?: string;
 	identitySha256: string;
 };
+
+/**
+ * A variable face declares an axis as a range ("300 900", "75% 125%"), so it
+ * matches every single value inside that range; a static face must match the
+ * requested value exactly.
+ */
+function axisCovers(faceValue: string, requestedValue: string): boolean {
+	const requested = Number.parseFloat(requestedValue);
+	const parts = faceValue.split(/\s+/).filter(Boolean);
+	if (parts.length === 2) {
+		const [low, high] = parts.map((part) => Number.parseFloat(part));
+		return (
+			Number.isFinite(low) &&
+			Number.isFinite(high) &&
+			Number.isFinite(requested) &&
+			requested >= Math.min(low, high) &&
+			requested <= Math.max(low, high)
+		);
+	}
+	return faceValue === requestedValue;
+}
 
 function normalizeFontStyle(value: string): string {
 	return value.trim().toLocaleLowerCase() || "normal";

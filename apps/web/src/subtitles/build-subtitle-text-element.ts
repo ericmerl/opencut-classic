@@ -1,9 +1,13 @@
 import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 import {
-	getTextVisualRect,
-	measureTextBlock,
-	setCanvasLetterSpacing,
-} from "@/text/layout";
+	measureCaptionLocalLayout,
+	placeCaptionGeometry,
+	wrapTextToWidth,
+	type CaptionGeometry,
+	type CaptionLocalLayout,
+	type Rect,
+} from "@/text/caption-layout";
+import type { TextCanvasContext } from "@/text/layout";
 import { DEFAULTS } from "@/timeline/defaults";
 import { mediaTimeFromSeconds } from "@/wasm";
 import type { CreateTextElement } from "@/timeline";
@@ -13,6 +17,7 @@ import type {
 	TextDecoration,
 	TextFontStyle,
 	TextFontWeight,
+	TextLayoutParams,
 } from "@/text/primitives";
 import type { SubtitleCue, SubtitleStyleOverrides } from "./types";
 
@@ -21,113 +26,29 @@ const SUBTITLE_BOTTOM_MARGIN_RATIO = 0.05;
 const SUBTITLE_FONT_SIZE = 5;
 const MEASUREMENT_CANVAS_SIZE = 4096;
 
-function quoteFontFamily({ fontFamily }: { fontFamily: string }): string {
-	return `"${fontFamily.replace(/"/g, '\\"')}"`;
-}
-
-function createMeasurementContext(): CanvasRenderingContext2D | null {
+/** A large scratch context; captions are measured, never drawn, on it. */
+export function createCaptionMeasurementContext(): CanvasRenderingContext2D | null {
 	const canvas = document.createElement("canvas");
 	canvas.width = MEASUREMENT_CANVAS_SIZE;
 	canvas.height = MEASUREMENT_CANVAS_SIZE;
 	return canvas.getContext("2d");
 }
 
-function measureLineWidth({
-	ctx,
-	text,
-}: {
-	ctx: CanvasRenderingContext2D;
-	text: string;
-}): number {
-	return ctx.measureText(text).width;
-}
-
-function wrapSubtitleText({
-	ctx,
-	text,
-	maxWidth,
-}: {
-	ctx: CanvasRenderingContext2D;
-	text: string;
-	maxWidth: number;
-}): string {
-	const normalized = text.trim().replace(/\r\n/g, "\n");
-	const paragraphs = normalized.split("\n");
-	const wrappedParagraphs: string[] = [];
-
-	for (const paragraph of paragraphs) {
-		const trimmedParagraph = paragraph.trim();
-		if (!trimmedParagraph) {
-			wrappedParagraphs.push("");
-			continue;
-		}
-
-		const words = trimmedParagraph.split(/\s+/);
-		let currentLine = words[0] ?? "";
-		const lines: string[] = [];
-
-		for (let i = 1; i < words.length; i++) {
-			const nextLine = `${currentLine} ${words[i]}`;
-			if (measureLineWidth({ ctx, text: nextLine }) <= maxWidth) {
-				currentLine = nextLine;
-				continue;
-			}
-
-			lines.push(currentLine);
-			currentLine = words[i];
-		}
-
-		lines.push(currentLine);
-		wrappedParagraphs.push(lines.join("\n"));
-	}
-
-	return wrappedParagraphs.join("\n");
-}
-
-function measureWrappedTextBlock({
-	ctx,
-	content,
-	canvasHeight,
-	textAlign,
-	background,
-	fontSize,
-	lineHeight,
-}: {
-	ctx: CanvasRenderingContext2D;
-	content: string;
-	canvasHeight: number;
-	textAlign: TextAlign;
-	background: TextBackground;
-	fontSize: number;
-	lineHeight: number;
-}) {
-	const scaledFontSize = fontSize * (canvasHeight / FONT_SIZE_SCALE_REFERENCE);
-	const lineHeightPx = lineHeight * scaledFontSize;
-	const lines = content.split("\n");
-	const lineMetrics = lines.map((line) => ctx.measureText(line));
-
-	const block = measureTextBlock({
-		lineMetrics,
-		lineHeightPx,
-	});
-	const visualRect = getTextVisualRect({
-		textAlign,
-		block,
-		background,
-		fontSizeRatio: fontSize / 15,
-	});
-
-	return {
-		block,
-		visualRect,
-	};
-}
-
-function resolveSubtitleStyle({
+/** The font a caption style resolves to, before anything is measured. */
+export function resolveSubtitleFontParams({
 	style,
 }: {
 	style: SubtitleStyleOverrides | undefined;
-}): {
+}): { fontFamily: string; fontWeight: TextFontWeight; fontStyle: TextFontStyle } {
+	const resolved = resolveSubtitleStyle({ style });
+	return {
+		fontFamily: resolved.fontFamily,
+		fontWeight: resolved.fontWeight,
+		fontStyle: resolved.fontStyle,
+	};
+}
+
+type ResolvedSubtitleStyle = {
 	fontFamily: string;
 	fontSize: number;
 	color: string;
@@ -139,7 +60,13 @@ function resolveSubtitleStyle({
 	lineHeight: number;
 	background: TextBackground;
 	placement: NonNullable<SubtitleStyleOverrides["placement"]>;
-} {
+};
+
+function resolveSubtitleStyle({
+	style,
+}: {
+	style: SubtitleStyleOverrides | undefined;
+}): ResolvedSubtitleStyle {
 	const fontSize =
 		style?.fontSizeRatioOfPlayHeight != null
 			? style.fontSizeRatioOfPlayHeight * FONT_SIZE_SCALE_REFERENCE
@@ -169,22 +96,51 @@ function resolveSubtitleStyle({
 	};
 }
 
+function resolveHorizontalMargins({
+	placement,
+}: {
+	placement: ResolvedSubtitleStyle["placement"];
+}): { leftRatio: number; rightRatio: number } {
+	const leftRatio = placement.marginLeftRatio ?? 0;
+	const rightRatio = placement.marginRightRatio ?? 0;
+	if (leftRatio > 0 || rightRatio > 0) return { leftRatio, rightRatio };
+	const sideRatio = (1 - SUBTITLE_MAX_WIDTH_RATIO) / 2;
+	return { leftRatio: sideRatio, rightRatio: sideRatio };
+}
+
 function resolveTargetWidth({
 	canvasWidth,
 	placement,
 }: {
 	canvasWidth: number;
-	placement: ReturnType<typeof resolveSubtitleStyle>["placement"];
+	placement: ResolvedSubtitleStyle["placement"];
 }): number {
-	const leftRatio = placement.marginLeftRatio ?? 0;
-	const rightRatio = placement.marginRightRatio ?? 0;
-	const hasExplicitMargins = leftRatio > 0 || rightRatio > 0;
-	if (!hasExplicitMargins) {
-		return canvasWidth * SUBTITLE_MAX_WIDTH_RATIO;
-	}
+	const { leftRatio, rightRatio } = resolveHorizontalMargins({ placement });
+	return Math.max(0, canvasWidth * (1 - leftRatio - rightRatio));
+}
 
-	const availableWidth = canvasWidth * (1 - leftRatio - rightRatio);
-	return Math.max(0, availableWidth);
+/**
+ * The area the caption's own placement policy keeps it inside: the horizontal
+ * margins it wraps within and the vertical margin it sits away from the edge,
+ * mirrored to the opposite edge. Geometry evidence reports intersections with
+ * this box rather than with a zone the browser would have to invent.
+ */
+function resolveSafeZone({
+	canvasSize,
+	placement,
+}: {
+	canvasSize: { width: number; height: number };
+	placement: ResolvedSubtitleStyle["placement"];
+}): Rect {
+	const { leftRatio, rightRatio } = resolveHorizontalMargins({ placement });
+	const verticalRatio =
+		placement.marginVerticalRatio ?? SUBTITLE_BOTTOM_MARGIN_RATIO;
+	return {
+		left: canvasSize.width * leftRatio,
+		top: canvasSize.height * verticalRatio,
+		width: Math.max(0, canvasSize.width * (1 - leftRatio - rightRatio)),
+		height: Math.max(0, canvasSize.height * (1 - 2 * verticalRatio)),
+	};
 }
 
 function resolvePositionX({
@@ -195,7 +151,7 @@ function resolvePositionX({
 }: {
 	canvasWidth: number;
 	textAlign: TextAlign;
-	placement: ReturnType<typeof resolveSubtitleStyle>["placement"];
+	placement: ResolvedSubtitleStyle["placement"];
 	visualRect: { left: number; width: number };
 }): number {
 	const leftMargin = canvasWidth * (placement.marginLeftRatio ?? 0);
@@ -228,7 +184,7 @@ function resolvePositionY({
 	visualRect,
 }: {
 	canvasHeight: number;
-	placement: ReturnType<typeof resolveSubtitleStyle>["placement"];
+	placement: ResolvedSubtitleStyle["placement"];
 	visualRect: { top: number; height: number };
 }): number {
 	const margin =
@@ -252,71 +208,21 @@ function resolvePositionY({
 	);
 }
 
-export function buildSubtitleTextElement({
+function buildElement({
 	index,
 	caption,
-	canvasSize,
-	requireMeasurement = false,
+	style,
+	content,
+	positionX,
+	positionY,
 }: {
 	index: number;
 	caption: SubtitleCue;
-	canvasSize: { width: number; height: number };
-	requireMeasurement?: boolean;
+	style: ResolvedSubtitleStyle;
+	content: string;
+	positionX: number;
+	positionY: number;
 }): CreateTextElement {
-	const ctx = createMeasurementContext();
-	if (requireMeasurement && !ctx) {
-		throw new Error("caption layout requires a Canvas 2D measurement context");
-	}
-	const style = resolveSubtitleStyle({
-		style: caption.style,
-	});
-	const fontFamily = quoteFontFamily({
-		fontFamily: style.fontFamily,
-	});
-	const fontWeight = style.fontWeight;
-	const fontStyle = style.fontStyle === "italic" ? "italic" : "normal";
-	const scaledFontSize =
-		style.fontSize * (canvasSize.height / FONT_SIZE_SCALE_REFERENCE);
-	const fontString = `${fontStyle} ${fontWeight} ${scaledFontSize}px ${fontFamily}, sans-serif`;
-	const maxWidth = resolveTargetWidth({
-		canvasWidth: canvasSize.width,
-		placement: style.placement,
-	});
-
-	let content = caption.text;
-	let positionX = 0;
-	let positionY = 0;
-
-	if (ctx) {
-		ctx.font = fontString;
-		setCanvasLetterSpacing({ ctx, letterSpacingPx: style.letterSpacing });
-		content = wrapSubtitleText({
-			ctx,
-			text: caption.text,
-			maxWidth,
-		});
-		const measurement = measureWrappedTextBlock({
-			ctx,
-			content,
-			canvasHeight: canvasSize.height,
-			textAlign: style.textAlign,
-			background: style.background,
-			fontSize: style.fontSize,
-			lineHeight: style.lineHeight,
-		});
-		positionX = resolvePositionX({
-			canvasWidth: canvasSize.width,
-			textAlign: style.textAlign,
-			placement: style.placement,
-			visualRect: measurement.visualRect,
-		});
-		positionY = resolvePositionY({
-			canvasHeight: canvasSize.height,
-			placement: style.placement,
-			visualRect: measurement.visualRect,
-		});
-	}
-
 	return {
 		...DEFAULTS.text.element,
 		name: `Caption ${index + 1}`,
@@ -350,4 +256,126 @@ export function buildSubtitleTextElement({
 			"transform.positionY": positionY,
 		},
 	};
+}
+
+export interface MeasuredSubtitleCaption {
+	element: CreateTextElement;
+	/** The font the element will be drawn with, in text-param form. */
+	fontParams: {
+		fontFamily: string;
+		fontWeight: TextFontWeight;
+		fontStyle: TextFontStyle;
+	};
+	local: CaptionLocalLayout;
+	geometry: CaptionGeometry;
+}
+
+/**
+ * Wraps, measures, and places one caption through the renderer's own
+ * measurement function, returning the element together with the geometry the
+ * renderer will reproduce when it draws that element.
+ */
+export function measureSubtitleCaption({
+	index,
+	caption,
+	canvasSize,
+	ctx,
+}: {
+	index: number;
+	caption: SubtitleCue;
+	canvasSize: { width: number; height: number };
+	ctx: TextCanvasContext;
+}): MeasuredSubtitleCaption {
+	const style = resolveSubtitleStyle({ style: caption.style });
+	const text: TextLayoutParams = {
+		content: caption.text,
+		fontSize: style.fontSize,
+		fontFamily: style.fontFamily,
+		fontWeight: style.fontWeight,
+		fontStyle: style.fontStyle,
+		textAlign: style.textAlign,
+		textDecoration: style.textDecoration,
+		letterSpacing: style.letterSpacing,
+		lineHeight: style.lineHeight,
+	};
+	const content = wrapTextToWidth({
+		text,
+		canvasHeight: canvasSize.height,
+		maxWidth: resolveTargetWidth({
+			canvasWidth: canvasSize.width,
+			placement: style.placement,
+		}),
+		ctx,
+	});
+	const local = measureCaptionLocalLayout({
+		text: { ...text, content },
+		background: style.background,
+		canvasHeight: canvasSize.height,
+		ctx,
+	});
+	const positionX = resolvePositionX({
+		canvasWidth: canvasSize.width,
+		textAlign: style.textAlign,
+		placement: style.placement,
+		visualRect: local.visual,
+	});
+	const positionY = resolvePositionY({
+		canvasHeight: canvasSize.height,
+		placement: style.placement,
+		visualRect: local.visual,
+	});
+	const geometry = placeCaptionGeometry({
+		local,
+		canvasSize,
+		position: { x: positionX, y: positionY },
+		safeZone: resolveSafeZone({ canvasSize, placement: style.placement }),
+	});
+	return {
+		element: buildElement({
+			index,
+			caption,
+			style,
+			content,
+			positionX,
+			positionY,
+		}),
+		fontParams: {
+			fontFamily: style.fontFamily,
+			fontWeight: style.fontWeight,
+			fontStyle: style.fontStyle,
+		},
+		local,
+		geometry,
+	};
+}
+
+export function buildSubtitleTextElement({
+	index,
+	caption,
+	canvasSize,
+	requireMeasurement = false,
+}: {
+	index: number;
+	caption: SubtitleCue;
+	canvasSize: { width: number; height: number };
+	requireMeasurement?: boolean;
+}): CreateTextElement {
+	const ctx = createCaptionMeasurementContext();
+	if (requireMeasurement && !ctx) {
+		throw new Error("caption layout requires a Canvas 2D measurement context");
+	}
+	if (ctx) {
+		return measureSubtitleCaption({ index, caption, canvasSize, ctx }).element;
+	}
+	// Without a measurement context the caption keeps its source text and the
+	// default placement; callers that need exact layout pass requireMeasurement.
+	const style = resolveSubtitleStyle({ style: caption.style });
+	return buildElement({
+		index,
+		caption,
+		style,
+		content: caption.text,
+		positionX: 0,
+		positionY: 0,
+	});
 }

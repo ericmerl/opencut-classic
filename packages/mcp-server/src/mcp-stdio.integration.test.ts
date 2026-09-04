@@ -300,6 +300,146 @@ integrationTest(
 );
 
 integrationTest(
+	"materializes caption layout evidence with bundled fonts at preflight",
+	async () => {
+		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
+		if (!baseUrl) {
+			throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		}
+		const browserPath = process.env.OPENCUT_HEADLESS_BROWSER_PATH;
+		if (!browserPath) {
+			throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
+		}
+		const harness = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort: await availablePort(),
+			profileDirectory: join(directory, "caption-profile"),
+			receiptDirectory: join(directory, "caption-receipts"),
+		});
+		await harness.callTool("opencut_start_editor_worker", {});
+		const status = await harness.callTool("opencut_connection_status", {});
+		const identity = requireRecord(
+			status.connectionIdentity,
+			"connectionIdentity",
+		);
+		const capabilities = await harness.callTool("opencut_capabilities", {});
+		expect(requireRecord(capabilities.fonts, "fonts")).toMatchObject({
+			status: "ready",
+			presets: [
+				{ id: "tiktok-sans-caption", status: "ready" },
+				{ id: "montserrat-caption", status: "ready" },
+			],
+		});
+		const project = await harness.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		const projectId = requireString(project.projectId, "projectId");
+		const sceneId = requireString(project.sceneId, "sceneId");
+		const contentHash = requireProjectContentHash(project);
+		const saved = await harness.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "caption-evidence-save",
+			expectedRevision: requireNumber(project.revision, "revision"),
+			expectedContentHash: contentHash,
+		});
+		expect(saved).toMatchObject({ status: "saved", contentHash });
+		const preflight = await harness.callTool(
+			"opencut_preflight_edit_plan",
+			{
+				contractVersion: 2,
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: identity,
+				preflightId: "caption-evidence-preflight",
+				projectId,
+				sceneId,
+				expectedRevision: requireNumber(project.revision, "revision"),
+				expectedProjectContentHash: contentHash,
+				expectedWriteVersion: requireNumber(saved.writeVersion, "writeVersion"),
+				saveReceiptOperationId: "caption-evidence-save",
+				expectedSaveReceiptId: requireString(saved.receiptId, "receiptId"),
+				description: "Add a wrapped TikTok Sans caption",
+				operations: [
+					{
+						kind: "insert_captions",
+						captions: [
+							{
+								text: "This is the part of the video where the hook has to land in the first three seconds",
+								startTime: 0,
+								duration: 240_000,
+							},
+						],
+						style: {
+							fontFamily: "TikTok Sans",
+							fontWeight: "bold",
+							fontSize: 6,
+							background: { enabled: true, color: "#000000" },
+						},
+					},
+				],
+				policy: {
+					warningPolicy: "allow",
+					providerExecution: "forbidden",
+					costPolicy: "require-exact",
+				},
+			},
+			5 * 60_000,
+		);
+		expect(preflight).toMatchObject({
+			disposition: "evaluated",
+			result: { status: "validated" },
+		});
+		const captionLayout = requireRecord(
+			requireRecord(preflight.result, "result").captionLayout,
+			"captionLayout",
+		);
+		const fontReadiness = requireRecord(
+			captionLayout.fontReadiness,
+			"fontReadiness",
+		);
+		expect(fontReadiness).toMatchObject({
+			status: "ready",
+			families: ["TikTok Sans"],
+		});
+		const descriptor = requireRecords(fontReadiness.descriptors, "descriptors")[0];
+		if (!descriptor) throw new Error("expected a font descriptor");
+		expect(descriptor).toMatchObject({ family: "TikTok Sans", weight: "bold" });
+		const faces = requireRecords(descriptor.matchedFaces, "matchedFaces");
+		expect(faces.length).toBeGreaterThan(0);
+		for (const face of faces) {
+			expect(face).toMatchObject({
+				provenance: "bundled-font-bytes",
+				family: "TikTok Sans",
+				weight: "300 900",
+				byteSha256:
+					"0e7f0a3e924c9a86478fc6fc2946de2e4ab8fc704ed72ee40434ade94bb9b0c6",
+			});
+		}
+		const [captionEvidence] = requireRecords(captionLayout.captions, "captions");
+		if (!captionEvidence) throw new Error("expected caption evidence");
+		const geometry = requireRecord(captionEvidence.geometry, "geometry");
+		expect(geometry).toMatchObject({
+			version: "opencut.caption-geometry.v1",
+			measurement: "opencut.text.measureTextLayout",
+			clipped: false,
+			safeZone: { inside: true },
+		});
+		expect(requireNumber(geometry.lineCount, "lineCount")).toBeGreaterThan(1);
+		expect(requireRecords(geometry.lines, "lines")).toHaveLength(
+			requireNumber(geometry.lineCount, "lineCount"),
+		);
+		expect(requireRecord(geometry.bubble, "bubble").cornerRadius).toBeNumber();
+		expect(requireString(captionLayout.geometrySha256, "geometrySha256")).toMatch(
+			/^[a-f0-9]{64}$/,
+		);
+	},
+	120_000,
+);
+
+integrationTest(
 	"drives save, restart replay, and verified export through public MCP tools",
 	async () => {
 		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
@@ -513,7 +653,25 @@ integrationTest(
 		);
 		expect(preflightProbe).toMatchObject({
 			disposition: "evaluated",
-			result: { status: "validated" },
+			result: {
+				status: "validated",
+				captionLayout: {
+					layoutVersion: "opencut.caption-layout.v1",
+					layoutEngine: "browser-canvas-2d",
+					geometryVersion: "opencut.caption-geometry.v1",
+					measurement: "opencut.text.measureTextLayout",
+					fontReadiness: { status: "ready", families: ["Arial"] },
+					captions: [
+						{
+							operationIndex: 1,
+							captionIndex: 0,
+							elementName: "Caption 1",
+							fontDescriptorCss: 'italic bold 16px "Arial"',
+							geometry: { lineCount: 1, clipped: false },
+						},
+					],
+				},
+			},
 		});
 		const interruptedPreflightCall = first
 			.callTool("opencut_preflight_edit_plan", preflightRequest, 5 * 60_000)
@@ -1060,7 +1218,7 @@ integrationTest(
 			expect(face.weight).toBe("700");
 			expect(face.stretch).toBe("100%");
 			expect(face.provenance).toMatch(
-				/^(font-face-set|system-local-font-face)$/,
+				/^(bundled-font-bytes|font-face-set|system-local-font-face)$/,
 			);
 			expect(identitySha256).toBe(
 				createHash("sha256")

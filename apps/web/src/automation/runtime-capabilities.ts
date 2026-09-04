@@ -1,10 +1,23 @@
+import { ensureBundledFonts } from "@/fonts/bundled-fonts";
+
+/**
+ * Mirrors NAMED_FONT_PRESETS in packages/mcp-server/src/capability-snapshot.ts.
+ * Both faces ship with the editor (apps/web/src/fonts/bundled-fonts.ts).
+ */
 const CAPTION_FONT_PRESETS = [
 	{
-		id: "default-caption",
+		id: "tiktok-sans-caption",
 		descriptors: [
-			'normal 400 16px "Arial"',
-			'normal 700 16px "Arial"',
-			'italic 700 16px "Arial"',
+			'normal 400 16px "TikTok Sans"',
+			'normal 700 16px "TikTok Sans"',
+		],
+	},
+	{
+		id: "montserrat-caption",
+		descriptors: [
+			'normal 400 16px "Montserrat"',
+			'normal 700 16px "Montserrat"',
+			'italic 700 16px "Montserrat"',
 		],
 	},
 ] as const;
@@ -57,7 +70,7 @@ async function readFontReadiness() {
 	}
 	try {
 		await Promise.race([
-			document.fonts.ready,
+			ensureBundledFonts().then(() => document.fonts.ready),
 			new Promise<never>((_, reject) =>
 				setTimeout(() => reject(new Error("font readiness timed out")), 5_000),
 			),

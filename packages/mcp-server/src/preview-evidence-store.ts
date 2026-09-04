@@ -101,7 +101,7 @@ const rendererSchema = z
 		executionIdentity: connectionSchema,
 	})
 	.strict();
-const fontReadinessSchema = z
+export const fontReadinessSchema = z
 	.object({
 		status: z.literal("ready"),
 		families: z.array(z.string()),
@@ -120,6 +120,7 @@ const fontReadinessSchema = z
 							z
 								.object({
 									provenance: z.enum([
+										"bundled-font-bytes",
 										"font-face-set",
 										"system-local-font-face",
 									]),
@@ -130,6 +131,7 @@ const fontReadinessSchema = z
 									unicodeRange: z.string(),
 									featureSettings: z.string(),
 									display: z.string(),
+									byteSha256: digestSchema.optional(),
 									identitySha256: digestSchema,
 								})
 								.strict(),

@@ -1,6 +1,9 @@
 /// <reference types="bun" />
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { createHash } from "node:crypto";
+
+const calls: string[] = [];
 
 const buildSubtitleTextElement = mock(
 	({
@@ -25,8 +28,54 @@ const buildSubtitleTextElement = mock(
 	}),
 );
 
+const geometryFixture = {
+	version: "opencut.caption-geometry.v1",
+	measurement: "opencut.text.measureTextLayout",
+	canvas: { width: 1080, height: 1920 },
+	position: { x: 0, y: 700 },
+	lineCount: 2,
+	lines: [],
+	block: { left: -100, top: -40, width: 200, height: 80 },
+	bubble: null,
+	visual: { left: 440, top: 1620, width: 200, height: 80 },
+	overflow: { left: 0, top: 0, right: 0, bottom: 0 },
+	clipped: false,
+	safeZone: {
+		rect: { left: 108, top: 96, width: 864, height: 1728 },
+		inside: true,
+		overflow: { left: 0, top: 0, right: 0, bottom: 0 },
+	},
+};
+
+const measureSubtitleCaption = mock(
+	(input: {
+		index: number;
+		caption: { text: string; startTime: number; duration: number };
+		canvasSize: { width: number; height: number };
+	}) => {
+		calls.push("measure");
+		return {
+			element: buildSubtitleTextElement(input),
+			fontParams: { fontFamily: "Arial", fontWeight: "bold", fontStyle: "normal" },
+			local: null,
+			geometry: { ...geometryFixture, canvas: input.canvasSize },
+		};
+	},
+);
+
 mock.module("@/subtitles/build-subtitle-text-element", () => ({
 	buildSubtitleTextElement,
+	measureSubtitleCaption,
+	createCaptionMeasurementContext: () => ({ fake: "context" }),
+	resolveSubtitleFontParams: ({
+		style,
+	}: {
+		style?: { fontFamily?: string; fontWeight?: string; fontStyle?: string };
+	}) => ({
+		fontFamily: style?.fontFamily ?? "Arial",
+		fontWeight: style?.fontWeight ?? "bold",
+		fontStyle: style?.fontStyle ?? "normal",
+	}),
 }));
 mock.module("@/wasm", () => ({
 	ZERO_MEDIA_TIME: 0,
@@ -38,8 +87,24 @@ mock.module("@/wasm", () => ({
 	roundMediaTime: ({ time }: { time: number }) => time,
 	subMediaTime: ({ a, b }: { a: number; b: number }) => a - b,
 }));
+mock.module("./preview-render-common", () => ({
+	sha256Bytes: async (bytes: Uint8Array) =>
+		createHash("sha256").update(bytes).digest("hex"),
+}));
+
+const readinessFixture = {
+	status: "ready" as const,
+	families: ["Arial"],
+	descriptors: [],
+	descriptorsSha256: "f".repeat(64),
+};
+const waitForFonts = mock(async (descriptors: readonly { css: string }[]) => {
+	calls.push(`fonts:${descriptors.map((descriptor) => descriptor.css).join("|")}`);
+	return readinessFixture;
+});
 
 const { mediaTime } = await import("@/wasm");
+const { canonicalSerialize } = await import("./project-content-hash");
 const {
 	CAPTION_LAYOUT_ENGINE,
 	CAPTION_LAYOUT_VERSION,
@@ -54,12 +119,18 @@ const caption = {
 };
 
 describe("edit-plan caption materialization", () => {
-	beforeEach(() => buildSubtitleTextElement.mockClear());
+	beforeEach(() => {
+		buildSubtitleTextElement.mockClear();
+		measureSubtitleCaption.mockClear();
+		waitForFonts.mockClear();
+		calls.length = 0;
+	});
 
-	test("pins browser layout bytes and provenance on the resolved operation", () => {
-		const operations = materializeEditPlanCaptions({
+	test("pins browser layout, verifies fonts first, and returns hash-bound geometry evidence", async () => {
+		const { operations, captionLayout } = await materializeEditPlanCaptions({
 			operations: [{ kind: "insert_captions", captions: [caption] }],
 			canvasSize: { width: 1080, height: 1920 },
+			waitForFonts,
 		});
 
 		expect(operations).toEqual([
@@ -82,11 +153,33 @@ describe("edit-plan caption materialization", () => {
 				],
 			},
 		]);
-		expect(buildSubtitleTextElement).toHaveBeenCalledTimes(1);
+		expect(calls).toEqual(['fonts:normal bold 16px "Arial"', "measure"]);
+		if (!captionLayout) throw new Error("expected caption layout evidence");
+		expect(captionLayout).toMatchObject({
+			layoutVersion: CAPTION_LAYOUT_VERSION,
+			layoutEngine: CAPTION_LAYOUT_ENGINE,
+			geometryVersion: "opencut.caption-geometry.v1",
+			measurement: "opencut.text.measureTextLayout",
+			fontReadiness: readinessFixture,
+			captions: [
+				{
+					operationIndex: 0,
+					captionIndex: 0,
+					elementName: "Caption 1",
+					fontDescriptorCss: 'normal bold 16px "Arial"',
+					geometry: geometryFixture,
+				},
+			],
+		});
+		expect(captionLayout.geometrySha256).toBe(
+			createHash("sha256")
+				.update(canonicalSerialize(captionLayout.captions))
+				.digest("hex"),
+		);
 	});
 
-	test("uses the canvas established by earlier operations in the same plan", () => {
-		materializeEditPlanCaptions({
+	test("uses the canvas established by earlier operations in the same plan", async () => {
+		const { captionLayout } = await materializeEditPlanCaptions({
 			operations: [
 				{
 					kind: "set_project_settings",
@@ -95,14 +188,34 @@ describe("edit-plan caption materialization", () => {
 				{ kind: "insert_captions", captions: [caption] },
 			],
 			canvasSize: { width: 1920, height: 1080 },
+			waitForFonts,
 		});
-		expect(buildSubtitleTextElement).toHaveBeenCalledWith(
+		expect(measureSubtitleCaption).toHaveBeenCalledWith(
 			expect.objectContaining({ canvasSize: { width: 720, height: 1280 } }),
 		);
+		expect(captionLayout?.captions[0]).toMatchObject({
+			operationIndex: 1,
+			geometry: { canvas: { width: 720, height: 1280 } },
+		});
 	});
 
-	test("does not accept caller-supplied resolved layout in public operations", () => {
-		expect(() =>
+	test("leaves plans without captions untouched and reads no fonts", async () => {
+		const result = await materializeEditPlanCaptions({
+			operations: [
+				{
+					kind: "set_project_settings",
+					canvasSize: { width: 720, height: 1280 },
+				},
+			],
+			canvasSize: { width: 1920, height: 1080 },
+			waitForFonts,
+		});
+		expect(result.captionLayout).toBeNull();
+		expect(waitForFonts).not.toHaveBeenCalled();
+	});
+
+	test("does not accept caller-supplied resolved layout in public operations", async () => {
+		await expect(
 			materializeEditPlanCaptions({
 				operations: [
 					{
@@ -111,8 +224,21 @@ describe("edit-plan caption materialization", () => {
 					},
 				],
 				canvasSize: { width: 1080, height: 1920 },
+				waitForFonts,
 			}),
-		).toThrow("cannot provide resolved layout fields");
+		).rejects.toThrow("cannot provide resolved layout fields");
+		expect(waitForFonts).not.toHaveBeenCalled();
+	});
+
+	test("fails closed without a Canvas 2D measurement context", async () => {
+		await expect(
+			materializeEditPlanCaptions({
+				operations: [{ kind: "insert_captions", captions: [caption] }],
+				canvasSize: { width: 1080, height: 1920 },
+				waitForFonts,
+				createContext: () => null,
+			}),
+		).rejects.toThrow("requires a Canvas 2D measurement context");
 	});
 
 	test("native apply consumes pinned values without measuring again", () => {

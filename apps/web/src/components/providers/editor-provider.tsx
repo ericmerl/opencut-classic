@@ -15,6 +15,7 @@ import {
 	isGpuAvailable,
 } from "@/services/renderer/gpu-renderer";
 import { AutomationBridgeClient, EditorAutomation } from "@/automation";
+import { ensureBundledFonts } from "@/fonts/bundled-fonts";
 
 interface EditorProviderProps {
 	projectId: string;
@@ -65,6 +66,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 				}
 				await initializeGpuRenderer();
 				editor.renderer.setDegraded(!isGpuAvailable());
+				await ensureBundledFonts();
 				await editor.project.loadProject({ id: projectId });
 
 				if (cancelled) return;

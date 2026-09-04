@@ -70,7 +70,10 @@ describe("capability snapshot public MCP transport", () => {
 			},
 			fonts: {
 				status: "unavailable",
-				presets: [{ id: "default-caption", status: "unknown" }],
+				presets: [
+					{ id: "tiktok-sans-caption", status: "unknown" },
+					{ id: "montserrat-caption", status: "unknown" },
+				],
 			},
 			mediaTools: {
 				ffmpeg: { status: "ready", version: expect.any(String) },

@@ -1117,6 +1117,27 @@ export interface AutomationNoMutationObservation {
 	persistenceFingerprint: string;
 }
 
+/**
+ * Browser-materialized caption layout (spec 12.3): font readiness for every
+ * face the captions name, and per-line geometry measured by the renderer's own
+ * measurement function, bound to the plan by hash.
+ */
+export interface AutomationCaptionLayoutEvidence {
+	layoutVersion: "opencut.caption-layout.v1";
+	layoutEngine: "browser-canvas-2d";
+	geometryVersion: "opencut.caption-geometry.v1";
+	measurement: "opencut.text.measureTextLayout";
+	fontReadiness: AutomationRenderPreviewFrameCompletedResult["fontReadiness"];
+	captions: Array<{
+		operationIndex: number;
+		captionIndex: number;
+		elementName: string;
+		fontDescriptorCss: string;
+		geometry: import("@/text/caption-layout").CaptionGeometry;
+	}>;
+	geometrySha256: string;
+}
+
 export type AutomationEditPlanPreflightResult =
 	| {
 			status: "validated";
@@ -1128,6 +1149,7 @@ export type AutomationEditPlanPreflightResult =
 				before: AutomationNoMutationObservation;
 				after: AutomationNoMutationObservation;
 			};
+			captionLayout?: AutomationCaptionLayoutEvidence;
 	  }
 	| {
 			status: "conflict";
@@ -1463,7 +1485,10 @@ export interface AutomationRenderPreviewFrameCompletedResult {
 			identitySha256: string;
 			matchedFaceIdentities: string[];
 			matchedFaces: Array<{
-				provenance: "font-face-set" | "system-local-font-face";
+				provenance:
+					| "bundled-font-bytes"
+					| "font-face-set"
+					| "system-local-font-face";
 				family: string;
 				style: string;
 				weight: string;
@@ -1471,6 +1496,7 @@ export interface AutomationRenderPreviewFrameCompletedResult {
 				unicodeRange: string;
 				featureSettings: string;
 				display: string;
+				byteSha256?: string;
 				identitySha256: string;
 			}>;
 		}>;

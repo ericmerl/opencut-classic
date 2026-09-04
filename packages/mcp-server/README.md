@@ -204,10 +204,12 @@ configuration and token, start the web editor, reconnect MCP, call
 
 Provider model caches are owned by their configured provider commands, not by
 OpenCut. Record their locations with those provider installations and retain
-them under the same 90-day policy when replay depends on a model. The selected
-caption font bundle and local AI models are deliberately deferred to issues #21
-and #29; capability readiness reports their current state rather than assuming
-an untracked cache.
+them under the same 90-day policy when replay depends on a model. The caption
+font bundle ships with the editor (TikTok Sans and Montserrat under the SIL Open
+Font License in `apps/web/public/fonts/bundled`, pinned by SHA-256 and reported
+as `bundled-font-bytes` provenance in receipts); local AI models remain deferred
+to issue #29, and capability readiness reports their current state rather than
+assuming an untracked cache.
 
 ### Upgrade
 

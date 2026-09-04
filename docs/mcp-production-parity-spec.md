@@ -634,7 +634,7 @@ Production parity MUST include:
 - SRT and WebVTT behavior already present, plus ASS round-trip for the supported style subset enumerated in the audit row `Subtitle import`, with a structured loss report for every feature that row lists as dropped.
 - Sidecar and transcript JSON output when required by a delivery package.
 
-Fonts required by named presets MUST be bundled with the service, served from local files, and hashed by bytes; the managed editor MUST NOT fetch fonts from third-party hosts at run time. The owner has not yet chosen a font set. The implementing agent MUST ask the owner for the font set before starting caption-preset work and MUST NOT substitute a default (audit owner decision 6).
+Fonts required by named presets MUST be bundled with the service, served from local files, and hashed by bytes; the managed editor MUST NOT fetch fonts from third-party hosts at run time. The owner chose the font set on 2026-09-04 (issues #14 and #21): TikTok Sans and Montserrat, both under the SIL Open Font License, bundled under `apps/web/public/fonts/bundled` and pinned by SHA-256 in `apps/web/src/fonts/bundled-fonts.ts` (audit owner decision 6). No commercial face is bundled.
 
 Preview and export MUST use the same font descriptors, wrapping rules, line geometry, and bubble geometry. Browser-materialized preflight evidence in section 12.3 is required before a caption-heavy plan can be considered deterministic.
 

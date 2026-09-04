@@ -11,13 +11,25 @@ import { readPreviewRangeLimits } from "./range-preview-config";
 
 export const CAPABILITY_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
+/**
+ * Caption presets whose faces ship with the editor as audited bundled bytes
+ * (apps/web/src/fonts/bundled-fonts.ts); the web runtime reports readiness
+ * for the same list.
+ */
 export const NAMED_FONT_PRESETS = [
 	{
-		id: "default-caption",
+		id: "tiktok-sans-caption",
 		descriptors: [
-			'normal 400 16px "Arial"',
-			'normal 700 16px "Arial"',
-			'italic 700 16px "Arial"',
+			'normal 400 16px "TikTok Sans"',
+			'normal 700 16px "TikTok Sans"',
+		],
+	},
+	{
+		id: "montserrat-caption",
+		descriptors: [
+			'normal 400 16px "Montserrat"',
+			'normal 700 16px "Montserrat"',
+			'italic 700 16px "Montserrat"',
 		],
 	},
 ] as const;

@@ -246,7 +246,10 @@ function connectedRuntime() {
 		},
 		fonts: {
 			status: "ready",
-			presets: [{ id: "default-caption", status: "ready" }],
+			presets: [
+				{ id: "tiktok-sans-caption", status: "ready" },
+				{ id: "montserrat-caption", status: "ready" },
+			],
 		},
 		timelineTranscription: {
 			status: "ready",

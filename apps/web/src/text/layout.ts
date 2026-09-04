@@ -75,7 +75,8 @@ export function measureTextBlock({
 	return { visualCenterOffset, height, maxWidth };
 }
 
-function getTextRect({
+/** The text block rectangle relative to the element anchor. */
+export function getTextRect({
 	textAlign,
 	block,
 }: {

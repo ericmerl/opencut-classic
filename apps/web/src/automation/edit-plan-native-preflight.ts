@@ -134,9 +134,9 @@ export async function evaluateNativeEditPlanPreflight({
 			}),
 		);
 	}
-	let materializedOperations: AutomationEditPlanPreflightRequest["operations"];
+	let materialized: Awaited<ReturnType<typeof materializeEditPlanCaptions>>;
 	try {
-		materializedOperations = materializeCaptions({
+		materialized = await materializeCaptions({
 			operations: request.operations,
 			canvasSize: before.readback.project.settings.canvasSize,
 		});
@@ -162,7 +162,7 @@ export async function evaluateNativeEditPlanPreflight({
 		capabilitySnapshot,
 		policy: request.policy,
 		description: request.description,
-		operations: toNativeEditOperations(materializedOperations),
+		operations: toNativeEditOperations(materialized.operations),
 		before: beforeSnapshot,
 	};
 	const evaluated = evaluateSafely({ evaluate, options });
@@ -241,6 +241,9 @@ export async function evaluateNativeEditPlanPreflight({
 			before: before.observation,
 			after: after.observation,
 		},
+		...(materialized.captionLayout
+			? { captionLayout: materialized.captionLayout }
+			: {}),
 	});
 }
 

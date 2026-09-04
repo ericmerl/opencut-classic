@@ -359,8 +359,10 @@ function isPreflightResult(
 					"evaluation",
 					"sourceObservation",
 					"noMutationProof",
+					"captionLayout",
 				],
 			}) &&
+			(value.captionLayout === undefined || isRecord(value.captionLayout)) &&
 			isRecord(value.evaluation) &&
 			isEvaluationEnvelope(value.evaluation) &&
 			isNoMutationObservation(value.sourceObservation) &&

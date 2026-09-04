@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { fontReadinessSchema } from "./preview-evidence-store";
 import * as z from "zod/v4";
 import {
 	allocationRoleSchema,
@@ -557,6 +558,89 @@ export const preflightNoMutationObservationSchema = z
 const editPlanErrorSchema =
 	editPlanEvaluationResponseSchema.options[1].shape.error;
 
+const captionRectSchema = z
+	.object({
+		left: z.number(),
+		top: z.number(),
+		width: z.number().nonnegative(),
+		height: z.number().nonnegative(),
+	})
+	.strict();
+const captionEdgeOverflowSchema = z
+	.object({
+		left: z.number().nonnegative(),
+		top: z.number().nonnegative(),
+		right: z.number().nonnegative(),
+		bottom: z.number().nonnegative(),
+	})
+	.strict();
+const captionGeometrySchema = z
+	.object({
+		version: z.literal("opencut.caption-geometry.v1"),
+		measurement: z.literal("opencut.text.measureTextLayout"),
+		canvas: z
+			.object({ width: z.number().positive(), height: z.number().positive() })
+			.strict(),
+		position: z.object({ x: z.number(), y: z.number() }).strict(),
+		lineCount: z.number().int().positive(),
+		lines: z
+			.array(
+				z
+					.object({
+						index: z.number().int().nonnegative(),
+						text: z.string(),
+						width: z.number().nonnegative(),
+						ascent: z.number(),
+						descent: z.number(),
+						anchorY: z.number(),
+						box: captionRectSchema,
+					})
+					.strict(),
+			)
+			.min(1),
+		block: captionRectSchema,
+		bubble: captionRectSchema
+			.extend({ cornerRadius: z.number().nonnegative() })
+			.strict()
+			.nullable(),
+		visual: captionRectSchema,
+		overflow: captionEdgeOverflowSchema,
+		clipped: z.boolean(),
+		safeZone: z
+			.object({
+				rect: captionRectSchema,
+				inside: z.boolean(),
+				overflow: captionEdgeOverflowSchema,
+			})
+			.strict(),
+	})
+	.strict();
+
+/** Browser-materialized caption layout evidence (spec 12.3). */
+export const captionLayoutEvidenceSchema = z
+	.object({
+		layoutVersion: z.literal("opencut.caption-layout.v1"),
+		layoutEngine: z.literal("browser-canvas-2d"),
+		geometryVersion: z.literal("opencut.caption-geometry.v1"),
+		measurement: z.literal("opencut.text.measureTextLayout"),
+		fontReadiness: fontReadinessSchema,
+		captions: z
+			.array(
+				z
+					.object({
+						operationIndex: z.number().int().nonnegative(),
+						captionIndex: z.number().int().nonnegative(),
+						elementName: z.string().min(1),
+						fontDescriptorCss: z.string().min(1),
+						geometry: captionGeometrySchema,
+					})
+					.strict(),
+			)
+			.min(1),
+		geometrySha256: digestSchema,
+	})
+	.strict();
+
 export const browserEditPlanPreflightResponseSchema = z.union([
 	z
 		.object({
@@ -571,6 +655,7 @@ export const browserEditPlanPreflightResponseSchema = z.union([
 					after: preflightNoMutationObservationSchema,
 				})
 				.strict(),
+			captionLayout: captionLayoutEvidenceSchema.optional(),
 		})
 		.strict(),
 	z.union([

@@ -1,5 +1,6 @@
 import type { FontAtlas } from "@/fonts/types";
 import { SYSTEM_FONTS } from "@/fonts/system-fonts";
+import { ensureBundledFonts, isBundledFontFamily } from "@/fonts/bundled-fonts";
 
 const GOOGLE_FONTS_CSS = "https://fonts.googleapis.com/css2";
 const FONT_ATLAS_PATH = "/fonts/font-atlas.json";
@@ -60,6 +61,11 @@ export async function loadFullFont({
 	weights?: number[];
 }): Promise<void> {
 	if (fullLoaded.has(family)) return;
+	if (isBundledFontFamily(family)) {
+		await ensureBundledFonts();
+		fullLoaded.add(family);
+		return;
+	}
 
 	const url = `${GOOGLE_FONTS_CSS}?family=${encodeGoogleFontsFamily(family)}:wght@${weights.join(";")}&display=swap`;
 	const link = document.createElement("link");
