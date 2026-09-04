@@ -1,6 +1,15 @@
 import type { FrameRate } from "opencut-wasm";
 import type { TCanvasSize } from "@/project/types";
 import { EXPORT_MIME_TYPES } from "./mime-types";
+import type {
+	ExportRenderOverlay,
+	ResolvedExportRenderSpecification,
+} from "./render-overlay";
+
+export type {
+	ExportRenderOverlay,
+	ResolvedExportRenderSpecification,
+} from "./render-overlay";
 
 export const EXPORT_QUALITY_VALUES = [
 	"low",
@@ -16,10 +25,12 @@ export type ExportQuality = (typeof EXPORT_QUALITY_VALUES)[number];
 
 export interface ExportOptions {
 	format: ExportFormat;
+	videoCodec?: "avc" | "vp9";
 	quality: ExportQuality;
 	fps?: FrameRate;
 	includeAudio?: boolean;
 	canvasSize?: TCanvasSize;
+	renderOverlay?: ExportRenderOverlay;
 }
 
 export interface ExportResult {
@@ -27,6 +38,7 @@ export interface ExportResult {
 	buffer?: ArrayBuffer;
 	error?: string;
 	cancelled?: boolean;
+	resolvedRenderSpecification?: ResolvedExportRenderSpecification;
 }
 
 export interface ExportState {

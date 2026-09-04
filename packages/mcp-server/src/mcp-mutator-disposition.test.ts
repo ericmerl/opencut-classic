@@ -45,7 +45,9 @@ const successes: Record<MutatingToolName, Record<string, unknown>> = {
 	opencut_cancel_preview_range: { status: "cancellation-requested" },
 	opencut_cancel_comparison: { status: "cancellation-requested" },
 	opencut_queue_export: { job: { jobId: "job-1" } },
-	opencut_queue_export_batch: { summary: { batchId: "batch-1" } },
+	opencut_queue_export_batch: {
+		summary: { batch: { batchId: "batch-1" }, status: "queued" },
+	},
 	opencut_cancel_export_batch: { status: "found" },
 	opencut_cancel_export_job: { status: "cancelled" },
 	opencut_cancel_job: { status: "found", job: {} },

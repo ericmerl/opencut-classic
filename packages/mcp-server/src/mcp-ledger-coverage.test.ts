@@ -287,7 +287,9 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 		return { job: { jobId: "job-1", status: "queued", storeRevision: 1 } };
 	}
 	if (toolName === "opencut_queue_export_batch") {
-		return { summary: { batchId: "batch-1", status: "queued" } };
+		return {
+			summary: { batch: { batchId: "batch-1" }, status: "queued" },
+		};
 	}
 	if (toolName === "opencut_cancel_export_job") {
 		return { status: "cancelled", jobId: "job-1", storeRevision: 1 };

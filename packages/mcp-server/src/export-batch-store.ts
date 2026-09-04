@@ -40,7 +40,7 @@ export class ExportBatchStore {
 			return { record: existing, replayed: true };
 		}
 		await mkdir(this.directory, { recursive: true });
-		const path = this.path(record.batchId);
+		const path = this.manifestPath(record.batchId);
 		const temporaryPath = `${path}.${randomBytes(12).toString("hex")}.tmp`;
 		await writeFile(temporaryPath, `${JSON.stringify(record, null, 2)}\n`, {
 			flag: "wx",
@@ -58,7 +58,7 @@ export class ExportBatchStore {
 	}
 
 	async get(batchId: string): Promise<ExportBatchRecord | null> {
-		return readFile(this.path(batchId), "utf8")
+		return readFile(this.manifestPath(batchId), "utf8")
 			.then((text) => parseRecord(JSON.parse(text), batchId))
 			.catch((error: unknown) => {
 				if (isMissingFile(error)) return null;
@@ -82,7 +82,7 @@ export class ExportBatchStore {
 		);
 	}
 
-	private path(batchId: string): string {
+	manifestPath(batchId: string): string {
 		const key = createHash("sha256").update(batchId).digest("hex");
 		return resolve(this.directory, `${key}.json`);
 	}

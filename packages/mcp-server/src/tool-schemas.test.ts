@@ -556,6 +556,61 @@ describe("OpenCut persistent export job contract", () => {
 		expect(runExportJobsInputSchema.safeParse({ limit: 5 }).success).toBe(true);
 	});
 
+	test("accepts an immutable variant render overlay and rejects ambiguous encoding", () => {
+		const request = {
+			projectId: "project-1",
+			operationId: "export-overlay-1",
+			expectedRevision: 3,
+			outputPath: "C:\\exports\\vertical.mp4",
+			format: "mp4",
+			videoCodec: "avc",
+			renderOverlay: {
+				version: 1,
+				canvasSize: { width: 1080, height: 1920 },
+				safeZones: [
+					{ id: "subject", x: 0.1, y: 0.1, width: 0.8, height: 0.6 },
+					{ id: "captions", x: 0.1, y: 0.72, width: 0.8, height: 0.18 },
+				],
+				tracks: { include: ["main", "captions"], exclude: ["watermark"] },
+				elements: [
+					{
+						elementId: "hero",
+						layout: { scaleX: 1.1, targetSafeZoneId: "subject" },
+						reframe: { mode: "cover" },
+						subjectSafeFocalPolicy: {
+							kind: "safe-zone-center",
+							safeZoneId: "subject",
+						},
+					},
+				],
+				captions: {
+					mode: "on",
+					trackIds: ["captions"],
+					style: {
+						fontFamily: "TikTok Sans",
+						fontWeight: "bold",
+						backgroundPerLine: true,
+					},
+					positionSafeZoneId: "captions",
+				},
+				coverFrame: { kind: "frame-index", frameIndex: 15 },
+			},
+		};
+		expect(exportProjectInputSchema.safeParse(request).success).toBe(true);
+		expect(
+			exportProjectInputSchema.safeParse({
+				...request,
+				videoCodec: "vp9",
+			}).success,
+		).toBe(false);
+		expect(
+			exportProjectInputSchema.safeParse({
+				...request,
+				canvasSize: { width: 1920, height: 1080 },
+			}).success,
+		).toBe(false);
+	});
+
 	test("accepts a bounded platform export matrix with canvas overrides", () => {
 		const batch = {
 			batchId: "campaign-1",

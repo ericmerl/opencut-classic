@@ -1743,7 +1743,7 @@ function createServer(): McpServer {
 		"opencut_export_project",
 		{
 			description:
-				"Render the active project to a new absolute local file, fully decode and probe it, extract hash-locked opening, middle, and ending frame samples, and persist a durable receipt for watermark inspection.",
+				"Render the verified persisted project readback with an optional immutable variant overlay to a new absolute local file, fully decode and probe it, extract hash-locked frame samples, and persist the requested overlay and resolved render specification for inspection.",
 			inputSchema: withProjectMutationSafety(exportProjectInputSchema),
 		},
 		async (input) =>
@@ -1823,7 +1823,7 @@ function createServer(): McpServer {
 		"opencut_queue_export_batch",
 		{
 			description:
-				"Persist and enqueue a restart-safe matrix of platform-specific export variants. Each variant gets an independent durable job, validation receipt, canvas override, and output path.",
+				"Persist and enqueue a restart-safe matrix of platform-specific export variants. Each variant gets an independent durable job, immutable render overlay, validation receipt, resolved frame schedule, manifest entry, and output path.",
 			inputSchema: withProjectMutationSafety(queueExportBatchInputSchema),
 		},
 		async (input) =>

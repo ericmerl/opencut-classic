@@ -7,6 +7,9 @@ import { buildScene } from "@/services/renderer/scene-builder";
 import { createTimelineAudioBuffer } from "@/media/audio";
 import { formatTimecode } from "opencut-wasm";
 import { downloadBlob } from "@/utils/browser";
+import type { FreshProjectReadback } from "@/services/storage/types";
+import { calculateTotalDuration } from "@/timeline";
+import { resolveExportRenderOverlay } from "@/export/render-overlay";
 
 type SnapshotResult =
 	| { success: true; blob: Blob; filename: string }
@@ -142,32 +145,53 @@ export class RendererManager {
 
 	async exportProject({
 		options,
+		source,
 		onProgress,
 		onCancel,
 	}: {
 		options: ExportOptions;
+		source?: FreshProjectReadback;
 		onProgress?: ({ progress }: { progress: number }) => void;
 		onCancel?: () => boolean;
 	}): Promise<ExportResult> {
-		const { format, quality, fps, includeAudio } = options;
+		const { format, quality, fps, includeAudio, videoCodec } = options;
+		const objectUrls: string[] = [];
 
 		try {
-			const tracks = this.editor.scenes.getActiveScene().tracks;
-			const mediaAssets = this.editor.media.getAssets();
-			const activeProject = this.editor.project.getActive();
+			const activeProject = source?.project ?? this.editor.project.getActive();
 
 			if (!activeProject) {
 				return { success: false, error: "No active project" };
 			}
-
-			const duration = this.editor.timeline.getTotalDuration();
-			if (duration === 0) {
-				return { success: false, error: "Project is empty" };
-			}
+			const scene = source
+				? activeProject.scenes.find(
+						(candidate) => candidate.id === activeProject.currentSceneId,
+					)
+				: this.editor.scenes.getActiveScene();
+			if (!scene) return { success: false, error: "Active scene is missing" };
+			const mediaAssets = source
+				? source.mediaAssets.map((asset) => {
+						const url = URL.createObjectURL(asset.file);
+						objectUrls.push(url);
+						return { ...asset, url };
+					})
+				: this.editor.media.getAssets();
 
 			const exportFps = fps ?? activeProject.settings.fps;
-			const canvasSize =
-				options.canvasSize ?? activeProject.settings.canvasSize;
+			const resolved = resolveExportRenderOverlay({
+				tracks: scene.tracks,
+				sourceCanvasSize:
+					options.canvasSize ?? activeProject.settings.canvasSize,
+				sourceFps: exportFps,
+				format,
+				videoCodec: videoCodec ?? (format === "webm" ? "vp9" : "avc"),
+				quality,
+				includeAudio: !!includeAudio,
+				overlay: options.renderOverlay,
+			});
+			const tracks = resolved.tracks;
+			const duration = calculateTotalDuration({ tracks });
+			const canvasSize = resolved.specification.canvasSize;
 
 			let audioBuffer: AudioBuffer | null = null;
 			if (includeAudio) {
@@ -179,7 +203,7 @@ export class RendererManager {
 				});
 			}
 
-			const scene = buildScene({
+			const renderTree = buildScene({
 				tracks,
 				mediaAssets,
 				duration,
@@ -193,6 +217,7 @@ export class RendererManager {
 				fps: exportFps,
 				format,
 				quality,
+				videoCodec: resolved.specification.output.videoCodec,
 				shouldIncludeAudio: !!includeAudio,
 				audioBuffer: audioBuffer || undefined,
 			});
@@ -215,7 +240,7 @@ export class RendererManager {
 			const cancelInterval = setInterval(checkCancel, 100);
 
 			try {
-				const buffer = await exporter.export({ rootNode: scene });
+				const buffer = await exporter.export({ rootNode: renderTree });
 				clearInterval(cancelInterval);
 
 				if (cancelled) {
@@ -229,6 +254,7 @@ export class RendererManager {
 				return {
 					success: true,
 					buffer,
+					resolvedRenderSpecification: resolved.specification,
 				};
 			} finally {
 				clearInterval(cancelInterval);
@@ -239,6 +265,8 @@ export class RendererManager {
 				success: false,
 				error: error instanceof Error ? error.message : "Unknown export error",
 			};
+		} finally {
+			for (const url of objectUrls) URL.revokeObjectURL(url);
 		}
 	}
 

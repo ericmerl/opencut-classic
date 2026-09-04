@@ -64,6 +64,12 @@ describe("ExportProjectService", () => {
 						bytesWritten: 123,
 						sha256: "a".repeat(64),
 						contentIdentity: hashedContentIdentity("b", 2),
+						resolvedRenderSpecification: resolvedRenderSpecification(),
+						sourceReadback: {
+							writeVersion: 1,
+							saveReceiptId: "save-receipt-1",
+							contentHash: "b".repeat(64),
+						},
 						renderEnvironment: renderEnvironment(),
 					};
 				}
@@ -115,6 +121,19 @@ describe("ExportProjectService", () => {
 
 		expect(first).toMatchObject({
 			status: "exported",
+			requestedRenderOverlay: {
+				version: 1,
+				captions: { mode: "off" },
+			},
+			resolvedRenderSpecification: {
+				version: 1,
+				output: { videoCodec: "avc" },
+				frameSchedule: { frameCount: 30 },
+			},
+			sourceReadback: {
+				writeVersion: 1,
+				saveReceiptId: "save-receipt-1",
+			},
 			capabilitySnapshotHash: "c".repeat(64),
 			renderer: {
 				environment: {
@@ -134,6 +153,8 @@ describe("ExportProjectService", () => {
 		expect(verifyCount).toBe(2);
 		expect(exportRequest).toMatchObject({
 			canvasSize: { width: 1080, height: 1080 },
+			videoCodec: "avc",
+			renderOverlay: { version: 1, captions: { mode: "off" } },
 			capabilitySnapshotHash: "c".repeat(64),
 			wasmSha256: "e".repeat(64),
 		});
@@ -377,9 +398,11 @@ function input(directory: string): ExportProjectInput {
 		expectedRevision: 2,
 		outputPath: join(directory, "video.mp4"),
 		format: "mp4",
+		videoCodec: "avc",
 		quality: "high",
 		includeAudio: true,
 		canvasSize: { width: 1080, height: 1080 },
+		renderOverlay: { version: 1, captions: { mode: "off" } },
 	};
 }
 
@@ -433,5 +456,38 @@ function renderEnvironment() {
 		surfaceFormat: "bgra8unorm",
 		browser: "test-browser",
 		wasmPackageVersion: "0.2.10",
+	};
+}
+
+function resolvedRenderSpecification() {
+	return {
+		version: 1,
+		canvasSize: { width: 1080, height: 1080 },
+		safeZones: [],
+		tracks: { includedTrackIds: [], excludedTrackIds: [] },
+		elements: [],
+		captions: {
+			mode: "preserve",
+			trackIds: [],
+			elementIds: [],
+			style: null,
+			position: null,
+			positionSafeZoneId: null,
+		},
+		coverFrame: null,
+		output: {
+			format: "mp4",
+			videoCodec: "avc",
+			quality: "high",
+			fps: { numerator: 30, denominator: 1 },
+			includeAudio: true,
+		},
+		frameSchedule: {
+			durationTicks: 120_000,
+			ticksPerFrame: 4_000,
+			frameCount: 30,
+			firstFrameTicks: 0,
+			lastFrameTicks: 116_000,
+		},
 	};
 }

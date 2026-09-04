@@ -25,6 +25,7 @@ type ExportParams = {
 	height: number;
 	fps: FrameRate;
 	format: ExportFormat;
+	videoCodec: "avc" | "vp9";
 	quality: ExportQuality;
 	shouldIncludeAudio?: boolean;
 	audioBuffer?: AudioBuffer;
@@ -47,6 +48,7 @@ export type SceneExporterEvents = {
 export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 	private renderer: CanvasRenderer;
 	private format: ExportFormat;
+	private videoCodec: "avc" | "vp9";
 	private quality: ExportQuality;
 	private shouldIncludeAudio: boolean;
 	private audioBuffer?: AudioBuffer;
@@ -58,6 +60,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		height,
 		fps,
 		format,
+		videoCodec,
 		quality,
 		shouldIncludeAudio,
 		audioBuffer,
@@ -70,6 +73,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		});
 
 		this.format = format;
+		this.videoCodec = videoCodec;
 		this.quality = quality;
 		this.shouldIncludeAudio = shouldIncludeAudio ?? false;
 		this.audioBuffer = audioBuffer;
@@ -98,7 +102,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		});
 
 		const videoSource = new CanvasSource(this.renderer.getOutputCanvas(), {
-			codec: this.format === "webm" ? "vp9" : "avc",
+			codec: this.videoCodec,
 			bitrate: qualityMap[this.quality],
 		});
 

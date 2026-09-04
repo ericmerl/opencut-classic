@@ -19,6 +19,20 @@ export interface ExportBatchSummary {
 	status: ExportBatchStatus;
 	counts: Record<ExportJobRecord["status"] | "missing", number>;
 	jobs: Array<ExportJobRecord | null>;
+	manifest: {
+		schemaVersion: 1;
+		batchId: string;
+		manifestPath: string;
+		variants: Array<{
+			variantId: string;
+			preset: string;
+			jobId: string;
+			status: ExportJobRecord["status"] | "missing";
+			requested: ExportJobRecord["input"];
+			result: Record<string, unknown> | null;
+			error: string | null;
+		}>;
+	};
 }
 
 export class ExportBatchQueue {
@@ -91,7 +105,29 @@ export class ExportBatchQueue {
 			missing: 0,
 		};
 		for (const job of jobs) counts[job?.status ?? "missing"]++;
-		return { batch, status: deriveStatus(counts, jobs.length), counts, jobs };
+		return {
+			batch,
+			status: deriveStatus(counts, jobs.length),
+			counts,
+			jobs,
+			manifest: {
+				schemaVersion: 1,
+				batchId: batch.batchId,
+				manifestPath: this.store.manifestPath(batch.batchId),
+				variants: batch.variants.map((variant, index) => {
+					const job = jobs[index];
+					return {
+						variantId: variant.variantId,
+						preset: variant.preset,
+						jobId: variant.jobId,
+						status: job?.status ?? "missing",
+						requested: variant.input,
+						result: job?.result ?? null,
+						error: job?.lastError ?? null,
+					};
+				}),
+			},
+		};
 	}
 }
 

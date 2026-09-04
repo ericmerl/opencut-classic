@@ -965,7 +965,9 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 				.array(z.string().min(1))
 				.min(1)
 				.optional()
-				.describe("Captions to move; omitted moves every caption on the track."),
+				.describe(
+					"Captions to move; omitted moves every caption on the track.",
+				),
 		})
 		.strict()
 		.refine((value) => value.delta !== 0, { message: "delta cannot be zero" }),
@@ -1008,7 +1010,9 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 				.trim()
 				.min(1)
 				.optional()
-				.describe("Restyle only the captions whose caption.speaker equals this."),
+				.describe(
+					"Restyle only the captions whose caption.speaker equals this.",
+				),
 			style: captionStyleSchema.describe(
 				"Style to apply; placement and play-height sizing are refused because restyle does not move captions.",
 			),
@@ -1911,21 +1915,195 @@ export const recordExportInspectionInputSchema = withMutationOperationId(
 	"inspectionOperationId",
 );
 
-export const exportProjectInputSchema = z.object({
-	projectId: z.string().min(1),
-	operationId: legacyCompatibleOperationIdSchema,
-	expectedRevision: z.number().int().nonnegative(),
-	expectedProjectContentHash: z
-		.string()
-		.regex(/^[a-f0-9]{64}$/)
-		.optional(),
-	outputPath: z.string().min(1),
-	format: z.enum(["mp4", "webm"]),
-	quality: z.enum(["low", "medium", "high", "very_high"]).default("high"),
-	fps: frameRateSchema.optional(),
-	includeAudio: z.boolean().default(true),
-	canvasSize: canvasSizeSchema.optional(),
-});
+const normalizedPointSchema = z
+	.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+	.strict();
+
+const exportRenderOverlaySchema = z
+	.object({
+		version: z.literal(1),
+		canvasSize: canvasSizeSchema.optional(),
+		safeZones: z
+			.array(
+				normalizedRectSchema
+					.safeExtend({ id: z.string().trim().min(1) })
+					.strict(),
+			)
+			.max(20)
+			.optional(),
+		tracks: z
+			.object({
+				include: z.array(z.string().trim().min(1)).max(100).optional(),
+				exclude: z.array(z.string().trim().min(1)).max(100).optional(),
+			})
+			.strict()
+			.optional(),
+		elements: z
+			.array(
+				z
+					.object({
+						elementId: z.string().trim().min(1),
+						layout: z
+							.object({
+								positionX: z.number().finite().optional(),
+								positionY: z.number().finite().optional(),
+								scaleX: z
+									.number()
+									.finite()
+									.refine((value) => value !== 0, "scaleX must not be zero")
+									.optional(),
+								scaleY: z
+									.number()
+									.finite()
+									.refine((value) => value !== 0, "scaleY must not be zero")
+									.optional(),
+								rotate: z.number().finite().optional(),
+								targetSafeZoneId: z.string().trim().min(1).optional(),
+							})
+							.strict()
+							.optional(),
+						reframe: z
+							.object({
+								mode: z.enum(["contain", "cover", "stretch"]).optional(),
+								crop: normalizedRectSchema.optional(),
+								focalPoint: normalizedPointSchema.optional(),
+								targetRect: normalizedRectSchema.optional(),
+							})
+							.strict()
+							.optional(),
+						subjectSafeFocalPolicy: z
+							.discriminatedUnion("kind", [
+								z.object({ kind: z.literal("preserve") }).strict(),
+								z
+									.object({
+										kind: z.literal("fixed"),
+										focalPoint: normalizedPointSchema,
+									})
+									.strict(),
+								z
+									.object({
+										kind: z.literal("safe-zone-center"),
+										safeZoneId: z.string().trim().min(1),
+									})
+									.strict(),
+							])
+							.optional(),
+					})
+					.strict(),
+			)
+			.max(500)
+			.optional(),
+		captions: z
+			.object({
+				mode: z.enum(["preserve", "on", "off"]),
+				trackIds: z.array(z.string().trim().min(1)).max(100).optional(),
+				elementIds: z.array(z.string().trim().min(1)).max(500).optional(),
+				style: z
+					.object({
+						fontFamily: z.string().trim().min(1).optional(),
+						fontSize: z.number().positive().finite().optional(),
+						fontWeight: z.enum(["normal", "bold"]).optional(),
+						fontStyle: z.enum(["normal", "italic"]).optional(),
+						color: z.string().trim().min(1).optional(),
+						textAlign: z.enum(["left", "center", "right"]).optional(),
+						backgroundEnabled: z.boolean().optional(),
+						backgroundColor: z.string().trim().min(1).optional(),
+						backgroundPerLine: z.boolean().optional(),
+						highlightEnabled: z.boolean().optional(),
+						highlightColor: z.string().trim().min(1).optional(),
+					})
+					.strict()
+					.optional(),
+				position: z
+					.object({ x: z.number().finite(), y: z.number().finite() })
+					.strict()
+					.optional(),
+				positionSafeZoneId: z.string().trim().min(1).optional(),
+			})
+			.strict()
+			.optional(),
+		coverFrame: z
+			.discriminatedUnion("kind", [
+				z
+					.object({
+						kind: z.literal("frame-index"),
+						frameIndex: z.number().int().nonnegative(),
+					})
+					.strict(),
+				z
+					.object({
+						kind: z.literal("media-time"),
+						ticks: z.number().int().nonnegative(),
+						rounding: z.enum(["exact", "floor", "nearest", "ceil"]),
+					})
+					.strict(),
+			])
+			.optional(),
+	})
+	.strict()
+	.superRefine((value, context) => {
+		for (const [path, values] of [
+			["safeZones", value.safeZones?.map((zone) => zone.id)],
+			["elements", value.elements?.map((element) => element.elementId)],
+			["tracks.include", value.tracks?.include],
+			["tracks.exclude", value.tracks?.exclude],
+			["captions.trackIds", value.captions?.trackIds],
+			["captions.elementIds", value.captions?.elementIds],
+		] as const) {
+			if (values && new Set(values).size !== values.length) {
+				context.addIssue({
+					code: "custom",
+					path: path.split("."),
+					message: "IDs must be unique",
+				});
+			}
+		}
+	});
+
+export const exportProjectInputSchema = z
+	.object({
+		projectId: z.string().min(1),
+		operationId: legacyCompatibleOperationIdSchema,
+		expectedRevision: z.number().int().nonnegative(),
+		expectedProjectContentHash: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.optional(),
+		outputPath: z.string().min(1),
+		format: z.enum(["mp4", "webm"]),
+		videoCodec: z.enum(["avc", "vp9"]).optional(),
+		quality: z.enum(["low", "medium", "high", "very_high"]).default("high"),
+		fps: frameRateSchema.optional(),
+		includeAudio: z.boolean().default(true),
+		canvasSize: canvasSizeSchema.optional(),
+		renderOverlay: exportRenderOverlaySchema.optional(),
+	})
+	.superRefine((value, context) => {
+		if (
+			value.videoCodec &&
+			((value.format === "mp4" && value.videoCodec !== "avc") ||
+				(value.format === "webm" && value.videoCodec !== "vp9"))
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["videoCodec"],
+				message: `video codec ${value.videoCodec} is not supported for ${value.format}`,
+			});
+		}
+		if (
+			value.canvasSize &&
+			value.renderOverlay?.canvasSize &&
+			(value.canvasSize.width !== value.renderOverlay.canvasSize.width ||
+				value.canvasSize.height !== value.renderOverlay.canvasSize.height)
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["renderOverlay", "canvasSize"],
+				message:
+					"render overlay canvasSize conflicts with the legacy canvasSize",
+			});
+		}
+	});
 
 export const queueExportInputSchema = exportProjectInputSchema.extend({
 	jobId: z.string().min(1),
@@ -1944,10 +2122,12 @@ const exportBatchVariantSchema = z.object({
 	preset: platformExportPresetSchema,
 	outputPath: z.string().min(1),
 	format: z.enum(["mp4", "webm"]).optional(),
+	videoCodec: z.enum(["avc", "vp9"]).optional(),
 	quality: z.enum(["low", "medium", "high", "very_high"]).optional(),
 	fps: frameRateSchema.optional(),
 	includeAudio: z.boolean().optional(),
 	canvasSize: canvasSizeSchema.optional(),
+	renderOverlay: exportRenderOverlaySchema.optional(),
 });
 
 export const queueExportBatchInputSchema = z

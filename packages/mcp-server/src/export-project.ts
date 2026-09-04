@@ -16,13 +16,86 @@ export interface ExportProjectInput {
 	expectedRevision: number;
 	outputPath: string;
 	format: "mp4" | "webm";
+	videoCodec?: "avc" | "vp9";
 	quality: "low" | "medium" | "high" | "very_high";
 	fps?: { numerator: number; denominator: number };
 	includeAudio: boolean;
 	canvasSize?: { width: number; height: number };
+	renderOverlay?: ExportRenderOverlay;
 	expectedProjectContentHash?: string;
 	queuedProjectPersistence?: QueuedProjectPersistence;
 	capabilitySnapshotHash?: string;
+}
+
+export interface ExportRenderOverlay {
+	version: 1;
+	canvasSize?: { width: number; height: number };
+	safeZones?: Array<{
+		id: string;
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	}>;
+	tracks?: { include?: string[]; exclude?: string[] };
+	elements?: Array<{
+		elementId: string;
+		layout?: {
+			positionX?: number;
+			positionY?: number;
+			scaleX?: number;
+			scaleY?: number;
+			rotate?: number;
+			targetSafeZoneId?: string;
+		};
+		reframe?: {
+			mode?: "contain" | "cover" | "stretch";
+			crop?: NormalizedRect;
+			focalPoint?: NormalizedPoint;
+			targetRect?: NormalizedRect;
+		};
+		subjectSafeFocalPolicy?:
+			| { kind: "preserve" }
+			| { kind: "fixed"; focalPoint: NormalizedPoint }
+			| { kind: "safe-zone-center"; safeZoneId: string };
+	}>;
+	captions?: {
+		mode: "preserve" | "on" | "off";
+		trackIds?: string[];
+		elementIds?: string[];
+		style?: {
+			fontFamily?: string;
+			fontSize?: number;
+			fontWeight?: "normal" | "bold";
+			fontStyle?: "normal" | "italic";
+			color?: string;
+			textAlign?: "left" | "center" | "right";
+			backgroundEnabled?: boolean;
+			backgroundColor?: string;
+			backgroundPerLine?: boolean;
+			highlightEnabled?: boolean;
+			highlightColor?: string;
+		};
+		position?: { x: number; y: number };
+		positionSafeZoneId?: string;
+	};
+	coverFrame?:
+		| { kind: "frame-index"; frameIndex: number }
+		| {
+				kind: "media-time";
+				ticks: number;
+				rounding: "exact" | "floor" | "nearest" | "ceil";
+		  };
+}
+
+interface NormalizedPoint {
+	x: number;
+	y: number;
+}
+
+interface NormalizedRect extends NormalizedPoint {
+	width: number;
+	height: number;
 }
 
 export interface QueuedProjectPersistence {
@@ -219,10 +292,14 @@ export class ExportProjectService {
 					operationId: input.operationId,
 					expectedRevision: input.expectedRevision,
 					format: input.format,
+					...(input.videoCodec ? { videoCodec: input.videoCodec } : {}),
 					quality: input.quality,
 					...(input.fps ? { fps: input.fps } : {}),
 					includeAudio: input.includeAudio,
 					...(input.canvasSize ? { canvasSize: input.canvasSize } : {}),
+					...(input.renderOverlay
+						? { renderOverlay: input.renderOverlay }
+						: {}),
 					outputPath: ticket.outputPath,
 					url: ticket.url,
 					expectedProjectContentHash: pinnedContentHash,
@@ -259,6 +336,16 @@ export class ExportProjectService {
 		}
 
 		const outputIdentity = readOutputIdentity(editorResult);
+		const resolvedRenderSpecification = readRecordField(
+			editorResult,
+			"resolvedRenderSpecification",
+		);
+		const sourceReadback = readRecordField(editorResult, "sourceReadback");
+		if (!resolvedRenderSpecification || !sourceReadback) {
+			throw new Error(
+				"editor export did not report its resolved render specification and persisted readback",
+			);
+		}
 		let validation: ExportMediaValidation | { status: "failed"; error: string };
 		try {
 			options.onPhase?.("validating");
@@ -267,8 +354,14 @@ export class ExportProjectService {
 				operationId: input.operationId,
 				outputPath: outputIdentity.outputPath,
 				format: input.format,
-				expectedWidth: input.canvasSize?.width ?? snapshot.width,
-				expectedHeight: input.canvasSize?.height ?? snapshot.height,
+				expectedWidth:
+					input.renderOverlay?.canvasSize?.width ??
+					input.canvasSize?.width ??
+					snapshot.width,
+				expectedHeight:
+					input.renderOverlay?.canvasSize?.height ??
+					input.canvasSize?.height ??
+					snapshot.height,
 				expectedFps: frameRateValue(input.fps ?? snapshot.fps),
 				includeAudio: input.includeAudio,
 			});
@@ -299,6 +392,9 @@ export class ExportProjectService {
 			projectContentIdentity: snapshot.contentIdentity,
 			saveReceiptId: saveBarrier.receiptId,
 			savedContentHash: saveBarrier.contentHash,
+			requestedRenderOverlay: input.renderOverlay ?? null,
+			resolvedRenderSpecification,
+			sourceReadback,
 			requestConnectionIdentity: requestIdentity,
 			bridgeProtocolVersion: editorResult.bridgeProtocolVersion,
 			status:

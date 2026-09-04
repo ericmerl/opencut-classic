@@ -91,6 +91,61 @@ describe("platform export batches", () => {
 		);
 	});
 
+	test("keeps every independent result in the manifest after a partial failure", async () => {
+		const batches = new ExportBatchQueue(
+			jobs,
+			new ExportBatchStore(join(directory, "partial-batches")),
+		);
+		await batches.enqueue(batchInput(directory));
+		const completed = jobs.store.jobs.claim(
+			"batch:campaign-1:vertical",
+			"fixture-owner",
+		)!;
+		jobs.store.jobs.start(completed.record.jobId, completed);
+		jobs.store.jobs.succeed(completed.record.jobId, completed, {
+			result: {
+				status: "exported",
+				resolvedRenderSpecification: {
+					version: 1,
+					canvasSize: { width: 1080, height: 1920 },
+				},
+			},
+		});
+		const failed = jobs.store.jobs.claim(
+			"batch:campaign-1:square",
+			"fixture-owner",
+		)!;
+		jobs.store.jobs.start(failed.record.jobId, failed);
+		jobs.store.jobs.fail(failed.record.jobId, failed, {
+			error: "square encoder failed",
+		});
+
+		const summary = await batches.get("campaign-1");
+		expect(summary).toMatchObject({
+			status: "partial",
+			counts: { completed: 1, failed: 1, missing: 0 },
+			manifest: {
+				schemaVersion: 1,
+				batchId: "campaign-1",
+				manifestPath: expect.stringContaining(".json"),
+				variants: [
+					{
+						variantId: "vertical",
+						status: "completed",
+						result: { status: "exported" },
+						error: null,
+					},
+					{
+						variantId: "square",
+						status: "failed",
+						result: null,
+						error: "square encoder failed",
+					},
+				],
+			},
+		});
+	});
+
 	test("rejects an unpinned v2 batch before persisting any batch or jobs", async () => {
 		const batchDirectory = join(directory, "unpinned-batches");
 		const jobDirectory = join(directory, "unpinned-jobs");

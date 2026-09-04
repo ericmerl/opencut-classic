@@ -1,5 +1,10 @@
 import type { MediaTime } from "@/wasm";
-import type { ExportFormat, ExportQuality } from "@/export";
+import type {
+	ExportFormat,
+	ExportQuality,
+	ExportRenderOverlay,
+	ResolvedExportRenderSpecification,
+} from "@/export";
 import type { TBackground, TCanvasSize } from "@/project/types";
 import type { SubtitleStyleOverrides } from "@/subtitles/types";
 import type {
@@ -1440,10 +1445,12 @@ export interface AutomationExportRequest {
 	url: string;
 	outputPath: string;
 	format: ExportFormat;
+	videoCodec?: "avc" | "vp9";
 	quality: ExportQuality;
 	fps?: FrameRate;
 	includeAudio: boolean;
 	canvasSize?: TCanvasSize;
+	renderOverlay?: ExportRenderOverlay;
 	expectedProjectContentHash?: string;
 	bridgeProtocolVersion?: 1 | 2;
 	capabilitySnapshotHash?: string;
@@ -1462,6 +1469,13 @@ export interface AutomationExportCompletedResult {
 	contentIdentity: ProjectContentHashResult;
 	saveReceiptId: string;
 	savedContentHash: string;
+	requestedRenderOverlay: ExportRenderOverlay | null;
+	resolvedRenderSpecification: ResolvedExportRenderSpecification;
+	sourceReadback: {
+		writeVersion: number;
+		saveReceiptId: string;
+		contentHash: string;
+	};
 	renderEnvironment: RenderEnvironmentIdentity & {
 		capabilitySnapshotHash?: string;
 		wasmSha256?: string;

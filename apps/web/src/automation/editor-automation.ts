@@ -270,6 +270,10 @@ import {
 	parsePersistedSaveProjectResult,
 	type PersistedAutomationSaveResult,
 } from "./save-project-receipt";
+import {
+	loadVerifiedDurableSource,
+	saveReceiptMatches,
+} from "./preview-render-common";
 
 async function retainVerifiedProjectSnapshot({
 	readback,
@@ -2520,6 +2524,40 @@ export class EditorAutomation {
 				reason: `verified save barrier failed: ${"reason" in saveResult ? saveResult.reason : saveResult.status}`,
 			};
 		}
+		const saveReceiptOperationId = `${request.operationId}:save-barrier`;
+		const sourceBinding = {
+			projectId: request.projectId,
+			sceneId: this.editor.scenes.getActiveScene().id,
+			expectedProjectContentHash: saveResult.contentHash,
+			expectedWriteVersion: saveResult.writeVersion,
+			saveReceiptOperationId,
+			expectedSaveReceiptId: saveResult.receiptId,
+		};
+		const saveEnvelope = await storageService.loadSaveReceipt({
+			operationId: saveReceiptOperationId,
+			parseResult: parsePersistedSaveProjectResult,
+		});
+		if (
+			!saveEnvelope?.result ||
+			!saveReceiptMatches({
+				request: sourceBinding,
+				receipt: saveEnvelope.result,
+			})
+		) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "verified save receipt is not bound to the export readback",
+			};
+		}
+		const durableSource = await loadVerifiedDurableSource(sourceBinding);
+		if (!durableSource) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "persisted project readback no longer matches the save receipt",
+			};
+		}
 
 		const { readRenderEnvironment } =
 			await import("@/services/renderer/render-environment");
@@ -2536,18 +2574,19 @@ export class EditorAutomation {
 		// ticket status keeps that callback synchronous and bounds observation
 		// to one poll interval plus the local status round trip.
 		const cancellation = watchExportCancellation(request.url);
-		let exported: Awaited<
-			ReturnType<typeof this.editor.renderer.exportProject>
-		>;
+		let exported: import("@/export").ExportResult;
 		try {
 			exported = await this.editor.renderer.exportProject({
 				options: {
 					format: request.format,
+					videoCodec: request.videoCodec,
 					quality: request.quality,
 					fps: request.fps,
 					includeAudio: request.includeAudio,
 					canvasSize: request.canvasSize,
+					renderOverlay: request.renderOverlay,
 				},
+				source: durableSource,
 				onCancel: () => cancellation.requested(),
 			});
 		} finally {
@@ -2562,6 +2601,13 @@ export class EditorAutomation {
 					: (exported.error ?? "OpenCut did not produce an export buffer"),
 			};
 		}
+		if (!exported.resolvedRenderSpecification) {
+			return {
+				status: "rejected",
+				operationId: request.operationId,
+				reason: "renderer did not return a resolved render specification",
+			};
+		}
 		this.reconcileExternalChanges();
 		const verifiedContentIdentity = await this.refreshContentIdentity();
 		const verifiedContentHash =
@@ -2570,7 +2616,8 @@ export class EditorAutomation {
 				: null;
 		if (
 			this.revision !== renderRevision ||
-			verifiedContentHash !== renderContentHash
+			verifiedContentHash !== renderContentHash ||
+			!(await loadVerifiedDurableSource(sourceBinding))
 		) {
 			return {
 				status: "rejected",
@@ -2608,6 +2655,13 @@ export class EditorAutomation {
 			contentIdentity: this.requireContentIdentity(),
 			saveReceiptId: saveResult.receiptId,
 			savedContentHash: saveResult.contentHash,
+			requestedRenderOverlay: request.renderOverlay ?? null,
+			resolvedRenderSpecification: exported.resolvedRenderSpecification,
+			sourceReadback: {
+				writeVersion: saveResult.writeVersion,
+				saveReceiptId: saveResult.receiptId,
+				contentHash: saveResult.contentHash,
+			},
 			renderEnvironment: {
 				...renderEnvironment,
 				...(request.capabilitySnapshotHash
@@ -3867,7 +3921,7 @@ function operationReceiptAfterState(value: unknown): {
 			? value.activeSceneId
 			: typeof value.sceneId === "string"
 				? value.sceneId
-			: snapshot && typeof snapshot.sceneId === "string"
+				: snapshot && typeof snapshot.sceneId === "string"
 					? snapshot.sceneId
 					: null;
 	const revisionAfter =

@@ -911,8 +911,12 @@ function verifiedAffectedObjects(
 		toolName === "opencut_record_export_inspection" ? "inspected" : "exported",
 	);
 	if (isRecord(result.job)) add("export-job", result.job.jobId, "queued");
-	if (isRecord(result.summary))
-		add("export-batch", result.summary.batchId, action);
+	if (isRecord(result.summary)) {
+		const batchId = isRecord(result.summary.batch)
+			? result.summary.batch.batchId
+			: result.summary.batchId;
+		add("export-batch", batchId, action);
+	}
 
 	return [...values.values()];
 }
@@ -1471,7 +1475,10 @@ const MUTATOR_RESULT_CONTRACTS = {
 	opencut_create_project: contract(["created", "replayed"], rejected),
 	opencut_open_project: contract(["opened", "replayed"], rejectedOrMissing),
 	opencut_rename_project: contract(["renamed", "replayed"], rejectedOrMissing),
-	opencut_duplicate_project: contract(["duplicated", "replayed"], rejectedOrMissing),
+	opencut_duplicate_project: contract(
+		["duplicated", "replayed"],
+		rejectedOrMissing,
+	),
 	opencut_delete_project: contract(["deleted", "replayed"], rejectedOrMissing),
 	opencut_create_scene: contract(["applied", "replayed"], rejected),
 	opencut_clone_scene: contract(["applied", "replayed"], rejected),
@@ -1541,10 +1548,16 @@ const MUTATOR_RESULT_CONTRACTS = {
 		[],
 		rejected,
 		(value) =>
-			isRecord(value.summary) && typeof value.summary.batchId === "string",
+			isRecord(value.summary) &&
+			((isRecord(value.summary.batch) &&
+				typeof value.summary.batch.batchId === "string") ||
+				typeof value.summary.batchId === "string"),
 	),
 	opencut_cancel_export_batch: contract(["found"], rejectedOrMissing),
-	opencut_cancel_export_job: contract(["cancelled", "cancelling"], rejectedOrMissing),
+	opencut_cancel_export_job: contract(
+		["cancelled", "cancelling"],
+		rejectedOrMissing,
+	),
 	opencut_cancel_job: contract(["found"], rejected),
 	opencut_retry_job: contract(["found"], rejected),
 	opencut_resolve_job: contract(["found"], rejected),

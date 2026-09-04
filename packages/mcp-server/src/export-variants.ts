@@ -1,5 +1,5 @@
 import { extname, isAbsolute, resolve } from "node:path";
-import type { ExportProjectInput } from "./export-project";
+import type { ExportProjectInput, ExportRenderOverlay } from "./export-project";
 import type { BridgeConnectionIdentity } from "./editor-bridge";
 
 export const PLATFORM_EXPORT_PRESETS = {
@@ -47,10 +47,12 @@ export interface ExportBatchVariantInput {
 	preset: PlatformExportPreset;
 	outputPath: string;
 	format?: "mp4" | "webm";
+	videoCodec?: "avc" | "vp9";
 	quality?: "low" | "medium" | "high" | "very_high";
 	fps?: { numerator: number; denominator: number };
 	includeAudio?: boolean;
 	canvasSize?: { width: number; height: number };
+	renderOverlay?: ExportRenderOverlay;
 }
 
 export interface ExportBatchInput {
@@ -108,11 +110,25 @@ export function expandExportBatch(
 
 		const preset = PLATFORM_EXPORT_PRESETS[variant.preset];
 		const format = variant.format ?? preset.format;
+		const videoCodec =
+			variant.videoCodec ?? (format === "webm" ? "vp9" : "avc");
+		if (
+			(format === "mp4" && videoCodec !== "avc") ||
+			(format === "webm" && videoCodec !== "vp9")
+		) {
+			throw new Error(
+				`video codec ${videoCodec} is not supported for ${format}`,
+			);
+		}
 		if (extname(outputPath).toLowerCase() !== `.${format}`) {
 			throw new Error(
 				`export path extension must match ${format}: ${outputPath}`,
 			);
 		}
+		const canvasSize =
+			variant.renderOverlay?.canvasSize ??
+			variant.canvasSize ??
+			preset.canvasSize;
 		return {
 			variantId: variant.variantId,
 			preset: variant.preset,
@@ -132,10 +148,14 @@ export function expandExportBatch(
 					: {}),
 				outputPath,
 				format,
+				videoCodec,
 				quality: variant.quality ?? preset.quality,
 				fps: variant.fps ?? preset.fps,
 				includeAudio: variant.includeAudio ?? preset.includeAudio,
-				canvasSize: variant.canvasSize ?? preset.canvasSize,
+				canvasSize,
+				...(variant.renderOverlay
+					? { renderOverlay: variant.renderOverlay }
+					: {}),
 			},
 		};
 	});
