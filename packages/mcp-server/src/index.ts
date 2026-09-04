@@ -34,6 +34,11 @@ import { SubtitleFiles } from "./subtitle-files";
 import { SubtitleImportOperation } from "./subtitle-import-operation";
 import { SubjectTrackingService } from "./track-subject";
 import { OperationLedger } from "./operation-ledger";
+import {
+	HistoryCheckpointStore,
+	HISTORY_CHECKPOINT_SCHEMA,
+	type HistoryCheckpointRecord,
+} from "./history-checkpoint-store";
 import { PreviewEvidenceStore } from "./preview-evidence-store";
 import { PreviewFrameService } from "./preview-frame-service";
 import { RangePreviewEvidenceStore } from "./range-preview-evidence-store";
@@ -169,6 +174,12 @@ import {
 	withMutationOperationId,
 	withProjectMutationSafety,
 	undoInputSchema,
+	redoInputSchema,
+	historyStateInputSchema,
+	createHistoryCheckpointInputSchema,
+	getHistoryCheckpointInputSchema,
+	listHistoryCheckpointsInputSchema,
+	restoreHistoryCheckpointInputSchema,
 	transcribeSourceInputSchema,
 	getTranscriptInputSchema,
 	listTranscriptsInputSchema,
@@ -410,6 +421,11 @@ const operationLedger = new OperationLedger(
 		join(exportReceipts.directory, "operation-ledger"),
 );
 await operationLedger.readiness();
+const historyCheckpointStore = new HistoryCheckpointStore(
+	process.env.OPENCUT_HISTORY_CHECKPOINT_DIR ??
+		join(exportReceipts.directory, "history-checkpoints"),
+);
+await historyCheckpointStore.readiness();
 const protocolCompatibility = readProtocolCompatibility();
 const ledgerBoundary = new McpLedgerBoundary(operationLedger, bridge, {
 	allowProtocolV1Mutation: protocolCompatibility.protocolV1Mutation.enabled,
@@ -1531,10 +1547,21 @@ function createServer(): McpServer {
 	);
 
 	server.registerTool(
+		"opencut_get_history_state",
+		{
+			description:
+				"Read the active editor session's exact native undo and redo entry sequence after revision, content-hash, scene, and connection checks.",
+			inputSchema: historyStateInputSchema,
+		},
+		async (params) =>
+			toolResult(await bridge.request("get_history_state", params)),
+	);
+
+	server.registerTool(
 		"opencut_undo",
 		{
 			description:
-				"Undo one OpenCut command after checking the current revision.",
+				"Undo one to 100 native OpenCut commands after revision, content-hash, scene, and connection checks.",
 			inputSchema: withProjectMutationSafety(undoInputSchema),
 		},
 		async (params) =>
@@ -1548,6 +1575,199 @@ function createServer(): McpServer {
 						request,
 					);
 				}),
+			),
+	);
+
+	server.registerTool(
+		"opencut_redo",
+		{
+			description:
+				"Redo one to 100 native OpenCut commands after revision, content-hash, scene, and connection checks.",
+			inputSchema: withProjectMutationSafety(redoInputSchema),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute("opencut_redo", params, (context) => {
+					const { redoOfOperationId: _redoOf, ...request } = params;
+					return requestLedgeredBrowserMutation(
+						context,
+						bridge,
+						"redo",
+						request,
+					);
+				}),
+			),
+	);
+
+	server.registerTool(
+		"opencut_create_checkpoint",
+		{
+			description:
+				"Create durable named checkpoint metadata bound to the exact project revision, content hash, active scene, editor session, and native undo/redo sequence.",
+			inputSchema: withProjectMutationSafety(
+				createHistoryCheckpointInputSchema,
+			),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_create_checkpoint",
+					params,
+					async () => {
+						const existing = await historyCheckpointStore.get(
+							params.checkpointId,
+						);
+						if (existing) {
+							return {
+								status: "rejected",
+								operationId: params.operationId,
+								reason: `checkpoint ${params.checkpointId} already exists`,
+							};
+						}
+						const history = await bridge.request("get_history_state", params);
+						if (!isHistoryState(history)) return history;
+						const identity = readConnectionIdentity(
+							params.expectedConnectionIdentity,
+						);
+						if (!identity) {
+							throw new Error("checkpoint creation requires v2 connection identity");
+						}
+						const checkpoint: HistoryCheckpointRecord = {
+							schemaVersion: HISTORY_CHECKPOINT_SCHEMA,
+							checkpointId: params.checkpointId,
+							operationId: requiredOperationId(params.operationId),
+							name: params.name,
+							projectId: history.projectId,
+							sceneId: history.sceneId,
+							revision: history.revision,
+							contentHash: history.contentHash,
+							contentHashProjectionVersion:
+								history.contentHashProjectionVersion,
+							createdAt: new Date().toISOString(),
+							connectionIdentity: {
+								...identity,
+								bridgeProtocolVersion: 2,
+							},
+							nativeHistory: history.nativeHistory,
+						};
+						await historyCheckpointStore.create(checkpoint);
+						return historyCheckpointCreated(checkpoint);
+					},
+					async () => {
+						const checkpoint = await historyCheckpointStore.get(
+							params.checkpointId,
+						);
+						return checkpoint?.operationId ===
+							requiredOperationId(params.operationId)
+							? historyCheckpointCreated(checkpoint)
+							: null;
+					},
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_checkpoint",
+		{
+			description:
+				"Read and checksum-verify one durable named history checkpoint.",
+			inputSchema: getHistoryCheckpointInputSchema,
+		},
+		async ({ checkpointId }) => {
+			const checkpoint = await historyCheckpointStore.get(checkpointId);
+			return toolResult(
+				checkpoint
+					? { status: "found", checkpoint }
+					: { status: "not-found", checkpointId },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_checkpoints",
+		{
+			description:
+				"List durable named history checkpoints with project/scene filters and stable bounded cursor pagination.",
+			inputSchema: listHistoryCheckpointsInputSchema,
+		},
+		async (input) =>
+			toolResult({
+				schemaVersion: HISTORY_CHECKPOINT_SCHEMA,
+				...(await historyCheckpointStore.list(input)),
+			}),
+	);
+
+	server.registerTool(
+		"opencut_restore_checkpoint",
+		{
+			description:
+				"Restore a named checkpoint only through the current editor session's reconstructible native undo/redo stacks; rejects reloads and divergent history without rebuilding project data.",
+			inputSchema: withProjectMutationSafety(
+				restoreHistoryCheckpointInputSchema,
+			),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_restore_checkpoint",
+					params,
+					async (context) => {
+						const operationId = requiredOperationId(params.operationId);
+						const currentIdentity = readConnectionIdentity(
+							params.expectedConnectionIdentity,
+						);
+						if (!currentIdentity) {
+							throw new Error("checkpoint restore requires v2 connection identity");
+						}
+						const checkpoint = await historyCheckpointStore.get(
+							params.checkpointId,
+						);
+						if (!checkpoint) {
+							return {
+								status: "not-found",
+								operationId,
+								checkpointId: params.checkpointId,
+							};
+						}
+						const history = await bridge.request("get_history_state", params);
+						if (!isHistoryState(history)) return history;
+						if (
+							checkpoint.projectId !== params.projectId ||
+							checkpoint.sceneId !== params.sceneId
+						) {
+							return historyDiverged(
+								params,
+								history,
+								"checkpoint belongs to a different project or scene",
+							);
+						}
+						if (
+							checkpoint.connectionIdentity.editorInstanceId !==
+								currentIdentity.editorInstanceId ||
+							checkpoint.connectionIdentity.editorSessionId !==
+								currentIdentity.editorSessionId
+						) {
+							return historyDiverged(
+								params,
+								history,
+								"checkpoint native history belongs to a different editor session",
+							);
+						}
+						const restored = await requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"restore_history_state",
+							{
+								...params,
+								expectedTargetProjectContentHash: checkpoint.contentHash,
+								nativeHistory: checkpoint.nativeHistory,
+							},
+						);
+						return isRecord(restored)
+							? { ...restored, checkpointId: checkpoint.checkpointId }
+							: restored;
+					},
+				),
 			),
 	);
 
@@ -1606,7 +1826,7 @@ function createServer(): McpServer {
 		"opencut_transcribe_timeline",
 		{
 			description:
-				"Render the active timeline audio mix, transcribe it with OpenCut's local Whisper worker, chunk the result into captions, and atomically insert a new text track. The first model use may download model files and can take several minutes.",
+				"Render the active timeline audio mix, transcribe it with OpenCut's local NVIDIA Parakeet worker, chunk the result into captions, and atomically insert a new text track. The first model use may load cached model files and can take several minutes.",
 			inputSchema: withProjectMutationSafety(transcribeTimelineInputSchema),
 		},
 		async (input) => {
@@ -2558,6 +2778,7 @@ function shutdown(): void {
 	void editorWorker.stop();
 	bridge.stop();
 	operationLedger.close();
+	historyCheckpointStore.close();
 	previewEvidence.close();
 	editPlanPreflightStore.close();
 	void handle.close();
@@ -2589,6 +2810,81 @@ function toolResult(value: unknown) {
 		content: [
 			{ type: "text" as const, text: JSON.stringify(enriched, null, 2) },
 		],
+	};
+}
+
+type BrowserHistoryState = {
+	status: "history-state";
+	projectId: string;
+	sceneId: string;
+	revision: number;
+	contentHash: string;
+	contentHashProjectionVersion: 1 | 2 | 3;
+	nativeHistory: HistoryCheckpointRecord["nativeHistory"];
+};
+
+function isHistoryState(value: unknown): value is BrowserHistoryState {
+	if (!isRecord(value) || value.status !== "history-state") return false;
+	return (
+		typeof value.projectId === "string" &&
+		typeof value.sceneId === "string" &&
+		Number.isSafeInteger(value.revision) &&
+		typeof value.contentHash === "string" &&
+		/^[a-f0-9]{64}$/.test(value.contentHash) &&
+		(value.contentHashProjectionVersion === 1 ||
+			value.contentHashProjectionVersion === 2 ||
+			value.contentHashProjectionVersion === 3) &&
+		isRecord(value.nativeHistory) &&
+		Array.isArray(value.nativeHistory.history) &&
+		Array.isArray(value.nativeHistory.redo) &&
+		value.nativeHistory.pending === null
+	);
+}
+
+function historyCheckpointCreated(checkpoint: HistoryCheckpointRecord) {
+	return {
+		status: "checkpoint-created" as const,
+		operationId: checkpoint.operationId,
+		checkpointId: checkpoint.checkpointId,
+		projectId: checkpoint.projectId,
+		sceneId: checkpoint.sceneId,
+		revision: checkpoint.revision,
+		contentHash: checkpoint.contentHash,
+		contentHashProjectionVersion: checkpoint.contentHashProjectionVersion,
+		checkpoint,
+		affectedObjects: [
+			{
+				objectType: "checkpoint" as const,
+				objectId: checkpoint.checkpointId,
+				action: "created" as const,
+			},
+		],
+	};
+}
+
+function historyDiverged(
+	params: {
+		operationId?: string;
+		checkpointId: string;
+	},
+	history: BrowserHistoryState,
+	reason: string,
+) {
+	return {
+		status: "history-diverged" as const,
+		operationId: requiredOperationId(params.operationId),
+		checkpointId: params.checkpointId,
+		reason,
+		revision: history.revision,
+		contentIdentity: {
+			status: "hashed" as const,
+			hash: {
+				algorithm: "SHA-256" as const,
+				projectionVersion: history.contentHashProjectionVersion,
+				digest: history.contentHash,
+			},
+		},
+		nativeHistory: history.nativeHistory,
 	};
 }
 

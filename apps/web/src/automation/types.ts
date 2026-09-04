@@ -40,6 +40,10 @@ import type {
 	OperationReceiptBinding,
 } from "@/services/storage/types";
 import type { RenderEnvironmentIdentity } from "@/services/renderer/render-environment";
+import type {
+	CommandHistoryEntryDescription,
+	CommandHistorySnapshot,
+} from "@/core/managers/commands";
 
 export interface AutomationElementSnapshot {
 	trackId: string;
@@ -1283,22 +1287,99 @@ export type AutomationMutationResult =
 	| { status: "rejected"; operationId: string; reason: string }
 	| AutomationContentIdentityBlockedResult;
 
-export type AutomationUndoResult =
+export interface AutomationHistorySafetyRequest {
+	projectId: string;
+	sceneId: string;
+	expectedRevision: number;
+	expectedProjectContentHash: string;
+	bridgeProtocolVersion?: number;
+}
+
+export interface AutomationHistoryMutationRequest
+	extends AutomationHistorySafetyRequest {
+	steps: number;
+}
+
+export type AutomationHistoryStateResult =
 	| {
-			status: "undone";
+			status: "history-state";
+			projectId: string;
+			sceneId: string;
 			revision: number;
-			snapshot: AutomationProjectSnapshot;
+			contentHash: string;
+			contentHashProjectionVersion: ProjectContentProjectionVersion;
+			nativeHistory: CommandHistorySnapshot;
 	  }
+	| AutomationHistoryConflictResult
+	| AutomationContentIdentityBlockedResult;
+
+export interface AutomationHistoryMovedResult {
+	revision: number;
+	steps: number;
+	movedNativeCommands: CommandHistoryEntryDescription[];
+	snapshot: AutomationProjectSnapshot;
+	nativeHistory: CommandHistorySnapshot;
+	affectedObjects: import("./affected-objects").AutomationAffectedObject[];
+}
+
+export type AutomationHistoryConflictResult =
 	| {
 			status: "conflict";
 			expectedRevision: number;
 			actualRevision: number;
 	  }
 	| {
+			status: "content-hash-conflict";
+			code: "CONTENT_HASH_CONFLICT";
+			projectId: string;
+			expectedProjectContentHash: string;
+			actualProjectContentHash: string;
+	  };
+
+export type AutomationUndoResult =
+	| {
+			status: "undone";
+		} & AutomationHistoryMovedResult
+	| {
 			status: "nothing-to-undo";
 			revision: number;
+			availableSteps: number;
 			contentIdentity: ProjectContentHashResult;
 	  }
+	| AutomationHistoryConflictResult
+	| AutomationContentIdentityBlockedResult;
+
+export type AutomationRedoResult =
+	| {
+			status: "redone";
+	  } & AutomationHistoryMovedResult
+	| {
+			status: "nothing-to-redo";
+			revision: number;
+			availableSteps: number;
+			contentIdentity: ProjectContentHashResult;
+	  }
+	| AutomationHistoryConflictResult
+	| AutomationContentIdentityBlockedResult;
+
+export interface AutomationRestoreHistoryRequest
+	extends AutomationHistorySafetyRequest {
+	expectedTargetProjectContentHash: string;
+	nativeHistory: CommandHistorySnapshot;
+}
+
+export type AutomationRestoreHistoryResult =
+	| ({
+			status: "restored";
+			undoneNativeCommands: CommandHistoryEntryDescription[];
+			redoneNativeCommands: CommandHistoryEntryDescription[];
+	  } & Omit<AutomationHistoryMovedResult, "steps" | "movedNativeCommands">)
+	| ({ status: "history-diverged"; reason: string } & {
+			revision: number;
+			contentIdentity: ProjectContentHashResult;
+			nativeHistory: CommandHistorySnapshot;
+	  })
+	| AutomationHistoryConflictResult
 	| AutomationContentIdentityBlockedResult;
 
 export interface AutomationImportRequest {

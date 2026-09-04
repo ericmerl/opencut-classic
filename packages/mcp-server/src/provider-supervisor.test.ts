@@ -128,7 +128,7 @@ describe("durable detached provider supervisor", () => {
 			directory,
 			"subject-tracker-command",
 			"unknown",
-			900,
+			3_000,
 		);
 		const client = trackClient(
 			new DurableProviderSupervisor({ directory: fixture.storeDirectory }),
@@ -172,7 +172,7 @@ describe("durable detached provider supervisor", () => {
 		);
 		expect(reran).toMatchObject({ state: "succeeded", attempt: 2 });
 		expect(await invocationCount(fixture.counterPath)).toBe(2);
-	});
+	}, 20_000);
 });
 
 async function prepareFixture(

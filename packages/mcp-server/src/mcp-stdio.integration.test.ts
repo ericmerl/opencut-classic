@@ -62,6 +62,302 @@ afterEach(async () => {
 });
 
 integrationTest(
+	"lists native history and safely performs multi-step undo, redo, checkpoint, restore, and restart rejection",
+	async () => {
+		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
+		if (!baseUrl) throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		const browserPath = process.env.OPENCUT_HEADLESS_BROWSER_PATH;
+		if (!browserPath) throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
+		const bridgePort = await availablePort();
+		const profileDirectory = join(directory, "history-profile");
+		const receiptDirectory = join(directory, "history-receipts");
+		const first = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await first.callTool("opencut_start_editor_worker", {});
+		const firstStatus = await first.callTool("opencut_connection_status", {});
+		const firstIdentity = requireRecord(
+			firstStatus.connectionIdentity,
+			"connectionIdentity",
+		);
+		const initial = await first.callTool(
+			"opencut_get_project",
+			affinity(firstIdentity),
+		);
+		const projectId = requireString(initial.projectId, "projectId");
+		const sceneId = requireString(initial.sceneId, "sceneId");
+		const initialHash = requireProjectContentHash(initial);
+		const safety = (project: Record<string, unknown>, identity = firstIdentity) => ({
+			...affinity(identity),
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(project.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(project),
+		});
+
+		const initialHistory = await first.callTool(
+			"opencut_get_history_state",
+			safety(initial),
+		);
+		expect(initialHistory).toMatchObject({
+			status: "history-state",
+			projectId,
+			sceneId,
+			revision: initial.revision,
+			contentHash: initialHash,
+		});
+		const baselineNativeHistory = requireRecord(
+			initialHistory.nativeHistory,
+			"nativeHistory",
+		);
+
+		const createdCheckpoint = await first.callTool(
+			"opencut_create_checkpoint",
+			{
+				...safety(initial),
+				operationId: "history-create-checkpoint",
+				checkpointId: "history-baseline",
+				name: "Baseline before color changes",
+			},
+		);
+		expect(createdCheckpoint).toMatchObject({
+			status: "checkpoint-created",
+			checkpointId: "history-baseline",
+			contentHash: initialHash,
+			operationRecord: {
+				relationships: { checkpointId: "history-baseline" },
+				affectedObjects: expect.arrayContaining([
+					{
+						objectType: "checkpoint",
+						objectId: "history-baseline",
+						action: "created",
+					},
+				]),
+			},
+		});
+
+		const applyBackground = async (
+			project: Record<string, unknown>,
+			operationId: string,
+			color: string,
+		) => {
+			const contentHash = requireProjectContentHash(project);
+			const revision = requireNumber(project.revision, "revision");
+			const saveOperationId = `${operationId}:save`;
+			const saved = await first.callTool("opencut_save_project", {
+				...affinity(firstIdentity),
+				projectId,
+				sceneId,
+				operationId: saveOperationId,
+				expectedRevision: revision,
+				expectedContentHash: contentHash,
+			});
+			const description = `Set project background to ${color}`;
+			const operations = [
+				{
+					kind: "set_project_settings",
+					background: { type: "color", color },
+				},
+			];
+			const preflight = await first.callTool("opencut_preflight_edit_plan", {
+				contractVersion: 2,
+				...affinity(firstIdentity),
+				preflightId: `${operationId}:preflight`,
+				projectId,
+				sceneId,
+				expectedRevision: revision,
+				expectedProjectContentHash: contentHash,
+				expectedWriteVersion: requireNumber(saved.writeVersion, "writeVersion"),
+				saveReceiptOperationId: saveOperationId,
+				expectedSaveReceiptId: requireString(saved.receiptId, "receiptId"),
+				description,
+				operations,
+				policy: {
+					warningPolicy: "allow",
+					providerExecution: "forbidden",
+					costPolicy: "require-exact",
+				},
+			});
+			const preflightResult = requireRecord(preflight.result, "preflight result");
+			const evaluation = requireRecord(
+				preflightResult.evaluation,
+				"preflight evaluation",
+			);
+			const applied = await first.callTool("opencut_apply_edit_plan", {
+				...safety(project),
+				operationId,
+				description,
+				operations,
+				preflight: {
+					receiptId: requireString(preflight.receiptId, "preflight receiptId"),
+					planFingerprint: requireString(
+						evaluation.planFingerprint,
+						"planFingerprint",
+					),
+					preflightFingerprint: requireString(
+						evaluation.preflightFingerprint,
+						"preflightFingerprint",
+					),
+					planDiffHash: requireString(
+						evaluation.planDiffHash,
+						"planDiffHash",
+					),
+				},
+			});
+			expect(applied.status).toBe("applied");
+			return requireRecord(applied.snapshot, "applied snapshot");
+		};
+
+		const afterFirstEdit = await applyBackground(
+			initial,
+			"history-edit-one",
+			"#112233",
+		);
+		const afterSecondEdit = await applyBackground(
+			afterFirstEdit,
+			"history-edit-two",
+			"#334455",
+		);
+		const secondHash = requireProjectContentHash(afterSecondEdit);
+		const afterEditsHistory = await first.callTool(
+			"opencut_get_history_state",
+			safety(afterSecondEdit),
+		);
+		expect(
+			requireRecords(
+				requireRecord(afterEditsHistory.nativeHistory, "nativeHistory").history,
+				"history",
+			).length,
+		).toBe(requireRecords(baselineNativeHistory.history, "baseline history").length + 2);
+
+		const undone = await first.callTool("opencut_undo", {
+			...safety(afterSecondEdit),
+			operationId: "history-undo-two",
+			steps: 2,
+			undoOfOperationId: "history-edit-two",
+		});
+		expect(undone).toMatchObject({
+			status: "undone",
+			steps: 2,
+			operationRecord: {
+				relationships: { undoOf: "history-edit-two" },
+				affectedObjects: expect.arrayContaining([
+					expect.objectContaining({ objectType: "project" }),
+				]),
+			},
+		});
+		const undoneSnapshot = requireRecord(undone.snapshot, "undone snapshot");
+		expect(requireProjectContentHash(undoneSnapshot)).toBe(initialHash);
+
+		const redone = await first.callTool("opencut_redo", {
+			...safety(undoneSnapshot),
+			operationId: "history-redo-two",
+			steps: 2,
+			redoOfOperationId: "history-undo-two",
+		});
+		expect(redone).toMatchObject({
+			status: "redone",
+			steps: 2,
+			operationRecord: {
+				relationships: { redoOf: "history-undo-two" },
+			},
+		});
+		const redoneSnapshot = requireRecord(redone.snapshot, "redone snapshot");
+		expect(requireProjectContentHash(redoneSnapshot)).toBe(secondHash);
+
+		const restored = await first.callTool("opencut_restore_checkpoint", {
+			...safety(redoneSnapshot),
+			operationId: "history-restore-baseline",
+			checkpointId: "history-baseline",
+		});
+		expect(restored).toMatchObject({
+			status: "restored",
+			checkpointId: "history-baseline",
+			operationRecord: {
+				relationships: { restoresCheckpointId: "history-baseline" },
+			},
+		});
+		const restoredSnapshot = requireRecord(
+			restored.snapshot,
+			"restored snapshot",
+		);
+		expect(requireProjectContentHash(restoredSnapshot)).toBe(initialHash);
+
+		const history = await first.callTool("opencut_list_operation_history", {
+			projectId,
+			limit: 100,
+		});
+		const historyRecords = requireRecords(history.entries, "history entries").map(
+			(entry) => requireRecord(entry.record, "operation record"),
+		);
+		for (const operationId of [
+			"history-create-checkpoint",
+			"history-undo-two",
+			"history-redo-two",
+			"history-restore-baseline",
+		]) {
+			const record = historyRecords.find(
+				(candidate) => candidate.operationId === operationId,
+			);
+			expect(record).toBeDefined();
+			expect(requireString(record!.description, "description").length).toBeGreaterThan(0);
+			expect(Array.isArray(record!.affectedObjects)).toBe(true);
+		}
+
+		await first.callTool("opencut_stop_editor_worker", {});
+		await first.close();
+		const second = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await second.callTool("opencut_start_editor_worker", { projectId });
+		const secondStatus = await second.callTool("opencut_connection_status", {});
+		const secondIdentity = requireRecord(
+			secondStatus.connectionIdentity,
+			"restarted connectionIdentity",
+		);
+		const listed = await second.callTool("opencut_list_checkpoints", {
+			projectId,
+			limit: 10,
+		});
+		expect(listed).toMatchObject({
+			schemaVersion: "opencut.history-checkpoint.v1",
+			entries: [expect.objectContaining({ checkpointId: "history-baseline" })],
+		});
+		const reloaded = await second.callTool(
+			"opencut_get_project",
+			affinity(secondIdentity),
+		);
+		const rejectedRestore = await second.callTool(
+			"opencut_restore_checkpoint",
+			{
+				...safety(reloaded, secondIdentity),
+				operationId: "history-restore-after-session-loss",
+				checkpointId: "history-baseline",
+			},
+		);
+		expect(rejectedRestore).toMatchObject({
+			status: "history-diverged",
+			reason: expect.stringContaining("different editor session"),
+			operationDisposition: "not-applied",
+			operationRecord: {
+				relationships: { restoresCheckpointId: "history-baseline" },
+				affectedObjects: [],
+			},
+		});
+		await second.callTool("opencut_stop_editor_worker", {});
+	},
+	180_000,
+);
+
+integrationTest(
 	"applies a preflighted scene lifecycle mutation through the MCP ledger",
 	async () => {
 		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;

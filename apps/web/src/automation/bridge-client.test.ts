@@ -389,6 +389,86 @@ describe("automation editor instance identity", () => {
 		});
 		expect(response.identity).toBeUndefined();
 	});
+
+	test("exposes native history state, redo, and exact history restore", async () => {
+		const calls: Array<{ method: string; request: unknown }> = [];
+		const bridge = createBridge();
+		const client = createClient(
+			`ws://127.0.0.1:${bridge.getStatus().port}/editor`,
+			undefined,
+			{
+				getHistoryState: async (request: unknown) => {
+					calls.push({ method: "get_history_state", request });
+					return {
+						status: "history-state",
+						projectId: "project-1",
+						sceneId: "scene-1",
+						revision: 3,
+						contentHash: "a".repeat(64),
+						contentHashProjectionVersion: 3,
+						nativeHistory: {
+							activitySequence: 4,
+							history: [{ entryId: 1, commandName: "BatchCommand" }],
+							redo: [],
+							pending: null,
+							rippleEnabled: false,
+						},
+					};
+				},
+				redo: (async (request: unknown) => {
+					calls.push({ method: "redo", request });
+					return {
+						status: "redone",
+						projectId: "project-1",
+						sceneId: "scene-1",
+						revision: 4,
+					};
+				}) as unknown as EditorAutomation["redo"],
+				restoreHistoryState: (async (request: unknown) => {
+					calls.push({ method: "restore_history_state", request });
+					return { status: "restored", revision: 5 };
+				}) as unknown as EditorAutomation["restoreHistoryState"],
+			},
+		);
+		client.start();
+		await bridge.waitForConnection(1_000);
+		const identity = bridge.getStatus().connectionIdentity;
+		if (!identity) throw new Error("v2 connection identity is missing");
+		const safety = {
+			projectId: "project-1",
+			sceneId: "scene-1",
+			expectedRevision: 0,
+			expectedProjectContentHash: "a".repeat(64),
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: identity,
+		};
+
+		await bridge.request("read_project", {}, 1_000, identity);
+		await bridge.request("get_history_state", safety, 1_000, identity);
+		await bridge.request(
+			"redo",
+			{ ...safety, expectedRevision: 3, steps: 2 },
+			1_000,
+			identity,
+		);
+		await bridge.request(
+			"restore_history_state",
+			{
+				...safety,
+				expectedRevision: 4,
+				expectedTargetProjectContentHash: "b".repeat(64),
+				nativeHistory: { history: [], redo: [] },
+			},
+			1_000,
+			identity,
+		);
+
+		expect(calls.map((call) => call.method)).toEqual([
+			"get_history_state",
+			"redo",
+			"restore_history_state",
+		]);
+	});
 });
 
 function createClient(

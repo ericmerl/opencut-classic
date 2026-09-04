@@ -16,6 +16,7 @@ import {
 	compareProjectStatesInputSchema,
 	createDeliveryPackageInputSchema,
 	createProjectInputSchema,
+	createHistoryCheckpointInputSchema,
 	editPlanInputSchema,
 	exportProjectInputSchema,
 	exportSubtitlesInputSchema,
@@ -54,6 +55,8 @@ import {
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 	undoInputSchema,
+	redoInputSchema,
+	restoreHistoryCheckpointInputSchema,
 	transcribeSourceInputSchema,
 	correctTranscriptInputSchema,
 	analyzeSpeechInputSchema,
@@ -250,7 +253,26 @@ const cases: SchemaCase[] = [
 	{
 		name: "opencut_undo",
 		schema: withProjectMutationSafety(undoInputSchema),
-		input: project({}),
+		input: project({ sceneId: "scene-1" }),
+	},
+	{
+		name: "opencut_redo",
+		schema: withProjectMutationSafety(redoInputSchema),
+		input: project({ sceneId: "scene-1", redoOfOperationId: "undo-1" }),
+	},
+	{
+		name: "opencut_create_checkpoint",
+		schema: withProjectMutationSafety(createHistoryCheckpointInputSchema),
+		input: project({
+			sceneId: "scene-1",
+			checkpointId: "checkpoint-1",
+			name: "Before titles",
+		}),
+	},
+	{
+		name: "opencut_restore_checkpoint",
+		schema: withProjectMutationSafety(restoreHistoryCheckpointInputSchema),
+		input: project({ sceneId: "scene-1", checkpointId: "checkpoint-1" }),
 	},
 	{
 		name: "opencut_import_media",
@@ -567,7 +589,7 @@ const cases: SchemaCase[] = [
 ];
 
 describe("all mutating public MCP schema versions", () => {
-	test("covers exactly the 56 registered mutation identities", () => {
+	test("covers every registered mutation identity", () => {
 		expect(cases.map(({ name }) => String(name)).sort()).toEqual(
 			Object.keys(MUTATING_TOOL_MANIFEST).map(String).sort(),
 		);

@@ -2585,8 +2585,61 @@ export const stopEditorWorkerInputSchema = withMutationOperationId(
 export const undoInputSchema = z.object({
 	operationId: legacyCompatibleOperationIdSchema,
 	projectId: z.string().min(1),
+	sceneId: z.string().min(1),
 	expectedRevision: z.number().int().nonnegative(),
+	steps: z.number().int().min(1).max(100).default(1),
 	undoOfOperationId: operationIdSchema.optional(),
+});
+
+export const redoInputSchema = z.object({
+	operationId: legacyCompatibleOperationIdSchema,
+	projectId: z.string().min(1),
+	sceneId: z.string().min(1),
+	expectedRevision: z.number().int().nonnegative(),
+	steps: z.number().int().min(1).max(100).default(1),
+	redoOfOperationId: operationIdSchema.optional(),
+});
+
+export const historyStateInputSchema = z.object({
+	projectId: z.string().min(1).max(256),
+	sceneId: z.string().min(1).max(256),
+	expectedRevision: z.number().int().nonnegative(),
+	expectedProjectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+	bridgeProtocolVersion: z.literal(2),
+	expectedConnectionIdentity: connectionIdentitySchema,
+});
+
+export const createHistoryCheckpointInputSchema = z.object({
+	operationId: legacyCompatibleOperationIdSchema,
+	checkpointId: operationIdSchema,
+	name: z.string().trim().min(1).max(256),
+	projectId: z.string().min(1).max(256),
+	sceneId: z.string().min(1).max(256),
+	expectedRevision: z.number().int().nonnegative(),
+});
+
+export const getHistoryCheckpointInputSchema = z
+	.object({ checkpointId: operationIdSchema })
+	.strict();
+
+export const listHistoryCheckpointsInputSchema = z
+	.object({
+		limit: z.number().int().min(1).max(100).default(50),
+		cursor: z
+			.string()
+			.regex(/^[1-9]\d*$/)
+			.optional(),
+		projectId: z.string().min(1).max(256).optional(),
+		sceneId: z.string().min(1).max(256).optional(),
+	})
+	.strict();
+
+export const restoreHistoryCheckpointInputSchema = z.object({
+	operationId: legacyCompatibleOperationIdSchema,
+	checkpointId: operationIdSchema,
+	projectId: z.string().min(1).max(256),
+	sceneId: z.string().min(1).max(256),
+	expectedRevision: z.number().int().nonnegative(),
 });
 
 export const cancelExportJobInputSchema = withMutationOperationId(

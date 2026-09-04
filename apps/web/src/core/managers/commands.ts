@@ -11,11 +11,16 @@ interface CommandHistoryEntry {
 	selectionOverride?: EditorSelectionSnapshot;
 }
 
+export interface CommandHistoryEntryDescription {
+	entryId: number;
+	commandName: string;
+}
+
 export interface CommandHistorySnapshot {
 	activitySequence: number;
-	history: Array<{ entryId: number; commandName: string }>;
-	redo: Array<{ entryId: number; commandName: string }>;
-	pending: { entryId: number; commandName: string } | null;
+	history: CommandHistoryEntryDescription[];
+	redo: CommandHistoryEntryDescription[];
+	pending: CommandHistoryEntryDescription | null;
 	rippleEnabled: boolean;
 }
 
@@ -69,7 +74,9 @@ export class CommandManager {
 			if (commandCompleted) {
 				try {
 					command.undo();
-					this.editor.selection.restoreSnapshot({ snapshot: previousSelection });
+					this.editor.selection.restoreSnapshot({
+						snapshot: previousSelection,
+					});
 				} catch (failure) {
 					rollbackError = failure;
 				}
@@ -172,6 +179,23 @@ export class CommandManager {
 		}
 	}
 
+	undoSteps(steps: number): CommandHistoryEntryDescription[] {
+		this.assertStepCount(steps);
+		if (this.history.length < steps) {
+			throw new Error(
+				`cannot undo ${steps} steps; only ${this.history.length} undo ${this.history.length === 1 ? "entry is" : "entries are"} available`,
+			);
+		}
+		const moved: CommandHistoryEntryDescription[] = [];
+		for (let index = 0; index < steps; index += 1) {
+			const entry = this.history.at(-1);
+			if (!entry) throw new Error("native undo history changed unexpectedly");
+			moved.push(this.describeEntry(entry));
+			this.undo();
+		}
+		return moved;
+	}
+
 	redo(): void {
 		if (this.pendingEntry) {
 			throw new Error("cannot redo while a command transaction is pending");
@@ -200,6 +224,51 @@ export class CommandManager {
 		this.activitySequence += 1;
 	}
 
+	redoSteps(steps: number): CommandHistoryEntryDescription[] {
+		this.assertStepCount(steps);
+		if (this.redoStack.length < steps) {
+			throw new Error(
+				`cannot redo ${steps} steps; only ${this.redoStack.length} redo ${this.redoStack.length === 1 ? "entry is" : "entries are"} available`,
+			);
+		}
+		const moved: CommandHistoryEntryDescription[] = [];
+		for (let index = 0; index < steps; index += 1) {
+			const entry = this.redoStack.at(-1);
+			if (!entry) throw new Error("native redo history changed unexpectedly");
+			moved.push(this.describeEntry(entry));
+			this.redo();
+		}
+		return moved;
+	}
+
+	restoreHistorySnapshot(target: CommandHistorySnapshot): {
+		undone: CommandHistoryEntryDescription[];
+		redone: CommandHistoryEntryDescription[];
+	} {
+		if (this.pendingEntry || target.pending) {
+			throw new Error("cannot restore history while a command is pending");
+		}
+		const current = this.getHistorySnapshot();
+		const currentSequence = this.completeSequence(current);
+		const targetSequence = this.completeSequence(target);
+		const reconstructible =
+			target.redo.length > 0
+				? this.sameSequence(currentSequence, targetSequence)
+				: this.sequenceStartsWith(currentSequence, targetSequence);
+		if (!reconstructible) {
+			throw new Error(
+				"native history has diverged from the recorded checkpoint",
+			);
+		}
+
+		const delta = current.history.length - target.history.length;
+		return delta > 0
+			? { undone: this.undoSteps(delta), redone: [] }
+			: delta < 0
+				? { undone: [], redone: this.redoSteps(-delta) }
+				: { undone: [], redone: [] };
+	}
+
 	canUndo(): boolean {
 		return this.history.length > 0;
 	}
@@ -222,20 +291,48 @@ export class CommandManager {
 			activitySequence: this.activitySequence,
 			history: this.history.map((entry) => this.describeEntry(entry)),
 			redo: this.redoStack.map((entry) => this.describeEntry(entry)),
-			pending: this.pendingEntry
-				? this.describeEntry(this.pendingEntry)
-				: null,
+			pending: this.pendingEntry ? this.describeEntry(this.pendingEntry) : null,
 			rippleEnabled: this.isRippleEnabled,
 		};
 	}
 
 	private describeEntry(
 		entry: CommandHistoryEntry,
-	): { entryId: number; commandName: string } {
+	): CommandHistoryEntryDescription {
 		return {
 			entryId: entry.entryId,
 			commandName: entry.command.constructor.name || "Command",
 		};
+	}
+
+	private assertStepCount(steps: number): void {
+		if (!Number.isSafeInteger(steps) || steps < 1) {
+			throw new Error("history step count must be a positive safe integer");
+		}
+	}
+
+	private completeSequence(
+		snapshot: CommandHistorySnapshot,
+	): CommandHistoryEntryDescription[] {
+		return [...snapshot.history, ...snapshot.redo.toReversed()];
+	}
+
+	private sameSequence(
+		left: CommandHistoryEntryDescription[],
+		right: CommandHistoryEntryDescription[],
+	): boolean {
+		return left.length === right.length && this.sequenceStartsWith(left, right);
+	}
+
+	private sequenceStartsWith(
+		sequence: CommandHistoryEntryDescription[],
+		prefix: CommandHistoryEntryDescription[],
+	): boolean {
+		return prefix.every(
+			(entry, index) =>
+				sequence[index]?.entryId === entry.entryId &&
+				sequence[index]?.commandName === entry.commandName,
+		);
 	}
 
 	private getSelectionSnapshot(): EditorSelectionSnapshot {

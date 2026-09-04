@@ -389,6 +389,7 @@ describe("OpenCut bridge affinity contract", () => {
 		const mutation = withProjectMutationSafety(undoInputSchema);
 		const v2 = {
 			projectId: "project-1",
+			sceneId: "scene-1",
 			expectedRevision: 1,
 			bridgeProtocolVersion: 2 as const,
 			expectedConnectionIdentity: connectionIdentity,
@@ -410,6 +411,7 @@ describe("OpenCut bridge affinity contract", () => {
 		const stop = stopEditorWorkerInputSchema.parse({});
 		const undo = withProjectMutationSafety(undoInputSchema).parse({
 			projectId: "project-1",
+			sceneId: "scene-1",
 			expectedRevision: 1,
 		});
 		const cancelJob = cancelExportJobInputSchema.parse({ jobId: "job-1" });

@@ -459,6 +459,17 @@ Apply MUST accept a receipt whose durable write version, canonical hash, and sav
 
 Production parity MUST include history listing with operation IDs, descriptions, and affected objects, redo, bounded multi-step undo, and named checkpoint and restore. Each MUST be ledgered, revision-checked, hash-aware, and readable in history.
 
+Implementation status (2026-09-04, issue #25): the browser automation bridge now
+exposes its exact native command-history state and performs bounded undo, redo,
+and position restore. MCP persists checksum-verified named checkpoint metadata and
+the normal append-only operation records across server restarts. Native command
+objects remain editor-session-local: restore requires the recorded editor session
+and a reconstructible ordered command chain, and returns `history-diverged` after
+reload, session loss, or chain divergence rather than attempting to rebuild
+project data from metadata. Public stdio coverage exercises the complete workflow,
+operation-history relationships/affected objects, restart persistence, and this
+fail-closed boundary against managed Chrome.
+
 ## 14. Project, scene, bookmark, track, and media lifecycle
 
 Audit reference: section B.

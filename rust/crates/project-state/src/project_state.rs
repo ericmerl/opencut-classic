@@ -1006,6 +1006,8 @@ pub fn evaluate_automation_operation_policy(
         | "relink_media_asset"
         | "remove_media_asset" => matches!(options.status.as_str(), "applied" | "replayed"),
         "undo" => options.status == "undone",
+        "redo" => options.status == "redone",
+        "restore_history_state" => options.status == "restored",
         "render_preview_frame" => matches!(options.status.as_str(), "rendered" | "replayed"),
         "render_preview_range" => {
             matches!(
@@ -1463,6 +1465,8 @@ mod tests {
             ("rename_media_asset", "applied"),
             ("relink_media_asset", "applied"),
             ("remove_media_asset", "applied"),
+            ("redo", "redone"),
+            ("restore_history_state", "restored"),
         ] {
             assert_eq!(
                 evaluate_automation_operation_policy(EvaluateAutomationOperationPolicyOptions {

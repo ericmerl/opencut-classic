@@ -127,6 +127,21 @@ export const MUTATING_TOOL_MANIFEST = {
 		requiresSaveVerification: true,
 		protocolMutationPolicy: "v2-required",
 	},
+	opencut_redo: {
+		operationKind: "redo",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_create_checkpoint: {
+		operationKind: "create-checkpoint",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_restore_checkpoint: {
+		operationKind: "restore-checkpoint",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
 	opencut_import_media: {
 		operationKind: "import-media",
 		requiresSaveVerification: true,

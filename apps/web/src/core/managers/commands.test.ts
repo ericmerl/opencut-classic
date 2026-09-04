@@ -125,6 +125,67 @@ describe("CommandManager pending transactions", () => {
 	});
 });
 
+describe("CommandManager bounded history navigation", () => {
+	test("moves multiple native entries through undo and redo in stack order", () => {
+		const state = { value: 0 };
+		const manager = createManager();
+		for (let index = 0; index < 3; index += 1) {
+			manager.execute({ command: new CountingCommand(state) });
+		}
+
+		expect(manager.undoSteps(2)).toEqual([
+			{ entryId: 3, commandName: "CountingCommand" },
+			{ entryId: 2, commandName: "CountingCommand" },
+		]);
+		expect(state.value).toBe(1);
+		expect(manager.getHistorySnapshot()).toMatchObject({
+			history: [{ entryId: 1, commandName: "CountingCommand" }],
+			redo: [
+				{ entryId: 3, commandName: "CountingCommand" },
+				{ entryId: 2, commandName: "CountingCommand" },
+			],
+		});
+
+		expect(manager.redoSteps(2)).toEqual([
+			{ entryId: 2, commandName: "CountingCommand" },
+			{ entryId: 3, commandName: "CountingCommand" },
+		]);
+		expect(state.value).toBe(3);
+	});
+
+	test("rejects an unavailable multi-step move without changing native state", () => {
+		const state = { value: 0 };
+		const manager = createManager();
+		manager.execute({ command: new CountingCommand(state) });
+
+		expect(() => manager.undoSteps(2)).toThrow("only 1 undo entry");
+		expect(state.value).toBe(1);
+		expect(manager.getHistorySnapshot().history).toHaveLength(1);
+	});
+
+	test("restores an exact recorded position and rejects a diverged history chain", () => {
+		const state = { value: 0 };
+		const manager = createManager();
+		manager.execute({ command: new CountingCommand(state) });
+		manager.execute({ command: new CountingCommand(state) });
+		const checkpoint = manager.getHistorySnapshot();
+		manager.execute({ command: new CountingCommand(state) });
+
+		expect(manager.restoreHistorySnapshot(checkpoint)).toEqual({
+			undone: [{ entryId: 3, commandName: "CountingCommand" }],
+			redone: [],
+		});
+		expect(state.value).toBe(2);
+
+		manager.undo();
+		manager.execute({ command: new CountingCommand(state) });
+		expect(() => manager.restoreHistorySnapshot(checkpoint)).toThrow(
+			"native history has diverged",
+		);
+		expect(state.value).toBe(2);
+	});
+});
+
 function createManager(
 	selectionOverrides: Partial<EditorCore["selection"]> = {},
 ): CommandManager {

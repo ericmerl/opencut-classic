@@ -542,6 +542,61 @@ describe("MCP ledger handler recovery", () => {
 		});
 	});
 
+	test("ledgers a named checkpoint with unchanged hash state and checkpoint relationships", async () => {
+		const ledger = new OperationLedger(directory);
+		const input = {
+			bridgeProtocolVersion: 2,
+			operationId: "create-checkpoint-1",
+			checkpointId: "checkpoint-1",
+			name: "Before titles",
+			projectId: "project-1",
+			sceneId: "scene-1",
+			expectedRevision: 8,
+			expectedProjectContentHash: "a".repeat(64),
+		};
+		const result = await new McpLedgerBoundary(
+			ledger,
+			buildBridge(),
+		).execute("opencut_create_checkpoint", input, async () => ({
+			status: "checkpoint-created",
+			checkpointId: input.checkpointId,
+			projectId: input.projectId,
+			sceneId: input.sceneId,
+			revision: input.expectedRevision,
+			contentHash: input.expectedProjectContentHash,
+			contentHashProjectionVersion: 3,
+			affectedObjects: [
+				{
+					objectType: "checkpoint",
+					objectId: input.checkpointId,
+					action: "created",
+				},
+			],
+		}));
+		ledger.close();
+
+		expect(result).toMatchObject({
+			status: "checkpoint-created",
+			durableOperationStatus: "completed",
+			operationRecord: {
+				projectId: "project-1",
+				sceneId: "scene-1",
+				revisionBefore: 8,
+				revisionAfter: 8,
+				contentHashBefore: "a".repeat(64),
+				contentHashAfter: "a".repeat(64),
+				relationships: { checkpointId: "checkpoint-1" },
+				affectedObjects: expect.arrayContaining([
+					{
+						objectType: "checkpoint",
+						objectId: "checkpoint-1",
+						action: "created",
+					},
+				]),
+			},
+		});
+	});
+
 	test("binds project lifecycle records to the project they act on", async () => {
 		const bridge = buildBridge();
 		const ledger = new OperationLedger(directory);

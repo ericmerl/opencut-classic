@@ -26,7 +26,7 @@ describe("complete mutating handler ledger coverage", () => {
 		});
 	});
 
-	test("exactly replays and rejects changed reuse for all 56 mutators", async () => {
+	test("exactly replays and rejects changed reuse for all mutators", async () => {
 		const ledger = new OperationLedger(directory);
 		const boundary = new McpLedgerBoundary(ledger, verificationBridge());
 		try {
@@ -186,6 +186,18 @@ function operationInput(
 	toolName: MutatingToolName,
 	operationId: string,
 ): Record<string, unknown> {
+	if (toolName === "opencut_create_checkpoint") {
+		return {
+			bridgeProtocolVersion: 2,
+			operationId,
+			checkpointId: `checkpoint-${operationId}`,
+			name: `Checkpoint ${operationId}`,
+			projectId: "project-1",
+			sceneId: "scene-1",
+			expectedRevision: 0,
+			expectedProjectContentHash: "b".repeat(64),
+		};
+	}
 	if (toolName === "opencut_compare_project_states") {
 		return {
 			bridgeProtocolVersion: 2,
@@ -219,7 +231,13 @@ function operationInput(
 		return { bridgeProtocolVersion: 2, operationId };
 	}
 	if (
-		MUTATING_TOOL_MANIFEST[toolName].requiresSaveVerification &&
+		(MUTATING_TOOL_MANIFEST[toolName].requiresSaveVerification ||
+			[
+				"opencut_export_subtitles",
+				"opencut_export_project",
+				"opencut_evaluate_export_qc",
+				"opencut_create_delivery_package",
+			].includes(toolName)) &&
 		toolName !== "opencut_create_project"
 	) {
 		return {
@@ -278,6 +296,9 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 		opencut_clean_audio: "cleaned-and-attached",
 		opencut_apply_edit_plan: "applied",
 		opencut_undo: "undone",
+		opencut_redo: "redone",
+		opencut_create_checkpoint: "checkpoint-created",
+		opencut_restore_checkpoint: "restored",
 		opencut_import_media: "applied",
 		opencut_import_subtitles: "applied",
 		opencut_transcribe_timeline: "applied",

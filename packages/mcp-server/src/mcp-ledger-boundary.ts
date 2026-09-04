@@ -20,6 +20,7 @@ import {
 	OperationLedger,
 	type OperationAffectedObject,
 	type OperationConnectionAffinity,
+	type OperationRelationships,
 	type OperationSaveReceipt,
 } from "./operation-ledger";
 import { protocolMutationRejection } from "./protocol-compatibility";
@@ -137,10 +138,7 @@ export class McpLedgerBoundary {
 			// Inputs describe intended targets, not verified effects. Terminal evidence
 			// is populated only from authoritative result data after the effect commits.
 			affectedObjects: [],
-			relationships:
-				typeof input.undoOfOperationId === "string"
-					? { undoOf: input.undoOfOperationId }
-					: undefined,
+			relationships: inputRelationships(toolName, input),
 			recover: async (context) => {
 				const operationContext = this.withBrowserContext(
 					context,
@@ -337,12 +335,28 @@ export class McpLedgerBoundary {
 			};
 		}
 		if (!requiresSaveVerification) {
+			const state = immutableResultState(value);
 			return {
 				disposition: "applied-verified",
 				value,
 				evidence: {
 					...terminalEvidence(value),
+					...(state
+						? {
+								projectId: state.projectId,
+								sceneId: state.sceneId,
+								revisionAfter: state.revision,
+								contentHashAfter: state.contentHash,
+								...(state.contentHashProjectionVersion
+									? {
+											contentHashProjectionVersionAfter:
+												state.contentHashProjectionVersion,
+										}
+									: {}),
+							}
+						: {}),
 					affectedObjects: verifiedAffectedObjects(toolName, input, value),
+					relationships: verifiedRelationships(toolName, input, value),
 				},
 			};
 		}
@@ -359,6 +373,7 @@ export class McpLedgerBoundary {
 					...receiptEvidence(directReceipt),
 					...terminalEvidence(value),
 					affectedObjects: verifiedAffectedObjects(toolName, input, value),
+					relationships: verifiedRelationships(toolName, input, value),
 				},
 			};
 		}
@@ -440,6 +455,7 @@ export class McpLedgerBoundary {
 			evidence: {
 				...receiptEvidence(receipt),
 				affectedObjects: verifiedAffectedObjects(toolName, input, value),
+				relationships: verifiedRelationships(toolName, input, value),
 			},
 		};
 	}
@@ -752,6 +768,8 @@ const DIRECT_BROWSER_METHODS = {
 	opencut_attach_clean_audio: "attach_clean_audio",
 	opencut_apply_edit_plan: "apply_edit_plan",
 	opencut_undo: "undo",
+	opencut_redo: "redo",
+	opencut_restore_checkpoint: "restore_history_state",
 	opencut_import_media: "import_media",
 	opencut_transcribe_timeline: "transcribe_timeline",
 	opencut_attach_matte: "attach_matte",
@@ -813,6 +831,52 @@ function protocolContext(input: ToolInput): ToolInput {
 			? { expectedConnectionIdentity: input.expectedConnectionIdentity }
 			: {}),
 	};
+}
+
+function inputRelationships(
+	toolName: MutatingToolName,
+	input: ToolInput,
+): Partial<OperationRelationships> | undefined {
+	const relationships: Partial<OperationRelationships> = {};
+	if (typeof input.undoOfOperationId === "string") {
+		relationships.undoOf = input.undoOfOperationId;
+	}
+	if (typeof input.redoOfOperationId === "string") {
+		relationships.redoOf = input.redoOfOperationId;
+	}
+	if (typeof input.checkpointId === "string") {
+		if (toolName === "opencut_create_checkpoint") {
+			relationships.checkpointId = input.checkpointId;
+		} else if (toolName === "opencut_restore_checkpoint") {
+			relationships.restoresCheckpointId = input.checkpointId;
+		}
+	}
+	return Object.keys(relationships).length > 0 ? relationships : undefined;
+}
+
+function verifiedRelationships(
+	toolName: MutatingToolName,
+	input: ToolInput,
+	value: unknown,
+): Partial<OperationRelationships> | undefined {
+	const relationships = inputRelationships(toolName, input) ?? {};
+	if (isRecord(value)) {
+		const commands = [
+			...(Array.isArray(value.movedNativeCommands)
+				? value.movedNativeCommands
+				: []),
+			...(Array.isArray(value.undoneNativeCommands)
+				? value.undoneNativeCommands
+				: []),
+			...(Array.isArray(value.redoneNativeCommands)
+				? value.redoneNativeCommands
+				: []),
+		].filter(isRecord);
+		if (commands.length === 1 && Number.isSafeInteger(commands[0]!.entryId)) {
+			relationships.nativeCommandId = `native-command:${commands[0]!.entryId}`;
+		}
+	}
+	return Object.keys(relationships).length > 0 ? relationships : undefined;
 }
 
 function comparisonSourceState(input: ToolInput) {
@@ -1025,6 +1089,8 @@ function operationAction(
 		return "cancelled";
 	if (toolName === "opencut_record_export_inspection") return "inspected";
 	if (toolName === "opencut_undo") return "undone";
+	if (toolName === "opencut_redo") return "redone";
+	if (toolName === "opencut_restore_checkpoint") return "restored";
 	return "updated";
 }
 
@@ -1447,6 +1513,8 @@ const DIRECT_BROWSER_SUCCESS: Partial<
 	opencut_attach_clean_audio: new Set(["applied", "replayed"]),
 	opencut_apply_edit_plan: new Set(["applied", "replayed"]),
 	opencut_undo: new Set(["undone"]),
+	opencut_redo: new Set(["redone"]),
+	opencut_restore_checkpoint: new Set(["restored"]),
 	opencut_import_media: new Set(["applied", "replayed"]),
 	opencut_transcribe_timeline: new Set(["applied", "replayed"]),
 	opencut_attach_matte: new Set(["applied", "replayed"]),
@@ -1542,6 +1610,12 @@ const MUTATOR_RESULT_CONTRACTS = {
 	opencut_clean_audio: contract(["cleaned-and-attached", "replayed"], rejected),
 	opencut_apply_edit_plan: contract(["applied", "replayed"], rejected),
 	opencut_undo: contract(["undone"], new Set([...rejected, "nothing-to-undo"])),
+	opencut_redo: contract(["redone"], new Set([...rejected, "nothing-to-redo"])),
+	opencut_create_checkpoint: contract(["checkpoint-created"], rejected),
+	opencut_restore_checkpoint: contract(
+		["restored"],
+		new Set([...rejected, "history-diverged", "not-found"]),
+	),
 	opencut_import_media: contract(["applied", "replayed"], rejected),
 	opencut_import_subtitles: contract(["applied", "replayed"], rejected),
 	opencut_transcribe_timeline: contract(["applied", "replayed"], rejected),

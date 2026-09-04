@@ -242,6 +242,13 @@ import type {
 	AutomationTranscriptionRequest,
 	AutomationTranscriptionResult,
 	AutomationUndoResult,
+	AutomationRedoResult,
+	AutomationHistoryConflictResult,
+	AutomationHistoryMutationRequest,
+	AutomationHistorySafetyRequest,
+	AutomationHistoryStateResult,
+	AutomationRestoreHistoryRequest,
+	AutomationRestoreHistoryResult,
 } from "./types";
 import { renderAutomationPreviewFrame } from "./render-preview-frame";
 import { renderAutomationPreviewRange } from "./render-preview-range";
@@ -884,12 +891,24 @@ export class EditorAutomation {
 		});
 	}
 
-	undo(request: {
-		projectId: string;
-		expectedRevision: number;
-		bridgeProtocolVersion?: number;
-	}): Promise<AutomationUndoResult> {
+	getHistoryState(
+		request: AutomationHistorySafetyRequest,
+	): Promise<AutomationHistoryStateResult> {
+		return this.enqueue(() => this.getHistoryStateNow(request));
+	}
+
+	undo(request: AutomationHistoryMutationRequest): Promise<AutomationUndoResult> {
 		return this.enqueue(() => this.undoNow(request));
+	}
+
+	redo(request: AutomationHistoryMutationRequest): Promise<AutomationRedoResult> {
+		return this.enqueue(() => this.redoNow(request));
+	}
+
+	restoreHistoryState(
+		request: AutomationRestoreHistoryRequest,
+	): Promise<AutomationRestoreHistoryResult> {
+		return this.enqueue(() => this.restoreHistoryStateNow(request));
 	}
 
 	renameProject(
@@ -1617,49 +1636,160 @@ export class EditorAutomation {
 		});
 	}
 
-	private async undoNow({
-		projectId,
-		expectedRevision,
-		...requestContext
-	}: {
-		projectId: string;
-		expectedRevision: number;
-		bridgeProtocolVersion?: number;
-	}): Promise<AutomationUndoResult> {
+	private async getHistoryStateNow(
+		request: AutomationHistorySafetyRequest,
+	): Promise<AutomationHistoryStateResult> {
 		this.reconcileExternalChanges();
-		const identityBlock = await this.blockedProductionRequest({
-			projectId,
-			expectedRevision,
-			...requestContext,
-		});
-		if (identityBlock) return identityBlock;
-		if (projectId !== this.getProjectId()) {
-			throw new Error(`active project is ${this.getProjectId()}`);
+		const failure = await this.historySafetyFailure(request);
+		if (failure) return failure;
+		const identity = this.requireContentIdentity();
+		if (identity.status !== "hashed") {
+			throw new Error("history state requires a hashed project identity");
 		}
-		if (expectedRevision !== this.revision) {
-			return {
-				status: "conflict",
-				expectedRevision,
-				actualRevision: this.revision,
-			};
-		}
-		if (!this.editor.command.canUndo()) {
-			await this.refreshContentIdentity();
+		return {
+			status: "history-state",
+			projectId: this.getProjectId(),
+			sceneId: this.editor.scenes.getActiveScene().id,
+			revision: this.revision,
+			contentHash: identity.hash.digest,
+			contentHashProjectionVersion: identity.hash.projectionVersion,
+			nativeHistory: this.editor.command.getHistorySnapshot(),
+		};
+	}
+
+	private async undoNow(
+		request: AutomationHistoryMutationRequest,
+	): Promise<AutomationUndoResult> {
+		this.reconcileExternalChanges();
+		const failure = await this.historySafetyFailure(request);
+		if (failure) return failure;
+		this.assertHistoryStepCount(request.steps);
+		const availableSteps = this.editor.command.getHistorySnapshot().history.length;
+		if (availableSteps < request.steps) {
 			return {
 				status: "nothing-to-undo",
 				revision: this.revision,
+				availableSteps,
 				contentIdentity: this.requireContentIdentity(),
 			};
 		}
 
-		this.editor.command.undo();
+		const beforeSnapshot = this.buildSnapshot();
+		const movedNativeCommands = this.editor.command.undoSteps(request.steps);
 		await this.editor.save.flush();
 		this.recordCommittedState();
 		await this.refreshContentIdentity();
+		const snapshot = this.buildSnapshot();
 		return {
 			status: "undone",
 			revision: this.revision,
-			snapshot: this.buildSnapshot(),
+			steps: request.steps,
+			movedNativeCommands,
+			snapshot,
+			nativeHistory: this.editor.command.getHistorySnapshot(),
+			affectedObjects: diffAutomationSnapshots(beforeSnapshot, snapshot),
+		};
+	}
+
+	private async redoNow(
+		request: AutomationHistoryMutationRequest,
+	): Promise<AutomationRedoResult> {
+		this.reconcileExternalChanges();
+		const failure = await this.historySafetyFailure(request);
+		if (failure) return failure;
+		this.assertHistoryStepCount(request.steps);
+		const availableSteps = this.editor.command.getHistorySnapshot().redo.length;
+		if (availableSteps < request.steps) {
+			return {
+				status: "nothing-to-redo",
+				revision: this.revision,
+				availableSteps,
+				contentIdentity: this.requireContentIdentity(),
+			};
+		}
+
+		const beforeSnapshot = this.buildSnapshot();
+		const movedNativeCommands = this.editor.command.redoSteps(request.steps);
+		await this.editor.save.flush();
+		this.recordCommittedState();
+		await this.refreshContentIdentity();
+		const snapshot = this.buildSnapshot();
+		return {
+			status: "redone",
+			revision: this.revision,
+			steps: request.steps,
+			movedNativeCommands,
+			snapshot,
+			nativeHistory: this.editor.command.getHistorySnapshot(),
+			affectedObjects: diffAutomationSnapshots(beforeSnapshot, snapshot),
+		};
+	}
+
+	private async restoreHistoryStateNow(
+		request: AutomationRestoreHistoryRequest,
+	): Promise<AutomationRestoreHistoryResult> {
+		this.reconcileExternalChanges();
+		const failure = await this.historySafetyFailure(request);
+		if (failure) return failure;
+		const beforeSnapshot = this.buildSnapshot();
+		const beforeHistory = this.editor.command.getHistorySnapshot();
+		let movement: ReturnType<EditorCore["command"]["restoreHistorySnapshot"]>;
+		try {
+			movement = this.editor.command.restoreHistorySnapshot(request.nativeHistory);
+		} catch (error) {
+			return {
+				status: "history-diverged",
+				reason:
+					error instanceof Error
+						? error.message
+						: "native history is not reconstructible",
+				revision: this.revision,
+				contentIdentity: this.requireContentIdentity(),
+				nativeHistory: this.editor.command.getHistorySnapshot(),
+			};
+		}
+		if (movement.undone.length > 0 || movement.redone.length > 0) {
+			await this.editor.save.flush();
+		}
+		const restoredIdentity = await this.refreshContentIdentity();
+		if (
+			restoredIdentity.status !== "hashed" ||
+			restoredIdentity.hash.digest !== request.expectedTargetProjectContentHash
+		) {
+			if (movement.undone.length > 0 || movement.redone.length > 0) {
+				this.editor.command.restoreHistorySnapshot(beforeHistory);
+				await this.editor.save.flush();
+			}
+			const rolledBackIdentity = await this.refreshContentIdentity();
+			if (
+				rolledBackIdentity.status !== "hashed" ||
+				rolledBackIdentity.hash.digest !== request.expectedProjectContentHash
+			) {
+				throw new Error(
+					"checkpoint hash mismatch and native history rollback could not verify the original project state",
+				);
+			}
+			return {
+				status: "history-diverged",
+				reason: "native history reached a project hash that differs from the checkpoint",
+				revision: this.revision,
+				contentIdentity: rolledBackIdentity,
+				nativeHistory: this.editor.command.getHistorySnapshot(),
+			};
+		}
+		if (movement.undone.length > 0 || movement.redone.length > 0) {
+			this.recordCommittedState();
+			await this.refreshContentIdentity();
+		}
+		const snapshot = this.buildSnapshot();
+		return {
+			status: "restored",
+			revision: this.revision,
+			undoneNativeCommands: movement.undone,
+			redoneNativeCommands: movement.redone,
+			snapshot,
+			nativeHistory: this.editor.command.getHistorySnapshot(),
+			affectedObjects: diffAutomationSnapshots(beforeSnapshot, snapshot),
 		};
 	}
 
@@ -3752,6 +3882,50 @@ export class EditorAutomation {
 				"Production protocol v2 requires immutable identity for every project media source",
 			contentIdentity,
 		};
+	}
+
+	private async historySafetyFailure(
+		request: AutomationHistorySafetyRequest,
+	): Promise<
+		AutomationHistoryConflictResult | AutomationContentIdentityBlockedResult | null
+	> {
+		const identityBlock = await this.blockedProductionRequest(request);
+		if (identityBlock) return identityBlock;
+		if (request.projectId !== this.getProjectId()) {
+			throw new Error(`active project is ${this.getProjectId()}`);
+		}
+		if (request.sceneId !== this.editor.scenes.getActiveScene().id) {
+			throw new Error(
+				`active scene is ${this.editor.scenes.getActiveScene().id}`,
+			);
+		}
+		if (request.expectedRevision !== this.revision) {
+			return {
+				status: "conflict",
+				expectedRevision: request.expectedRevision,
+				actualRevision: this.revision,
+			};
+		}
+		const identity = this.requireContentIdentity();
+		if (
+			identity.status === "hashed" &&
+			request.expectedProjectContentHash !== identity.hash.digest
+		) {
+			return {
+				status: "content-hash-conflict",
+				code: "CONTENT_HASH_CONFLICT",
+				projectId: request.projectId,
+				expectedProjectContentHash: request.expectedProjectContentHash,
+				actualProjectContentHash: identity.hash.digest,
+			};
+		}
+		return null;
+	}
+
+	private assertHistoryStepCount(steps: number): void {
+		if (!Number.isSafeInteger(steps) || steps < 1 || steps > 100) {
+			throw new Error("history steps must be an integer between 1 and 100");
+		}
 	}
 
 	private requireContentIdentity(): ProjectContentHashResult {

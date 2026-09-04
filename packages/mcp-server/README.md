@@ -163,6 +163,7 @@ are inherited or set in the web shell instead.
 | `OPENCUT_FFMPEG_PATH`, `OPENCUT_FFPROBE_PATH`                                      | Executable name on `PATH` or absolute path.                                                                                                                                                         |
 | `OPENCUT_RENDERER_CLASS`                                                           | `software` (the deterministic default) or explicitly declared `hardware`.                                                                                                                           |
 | `OPENCUT_PREVIEW_EVIDENCE_DIR`, `OPENCUT_OPERATION_LEDGER_DIR`                     | Optional overrides; normally leave both under the state root.                                                                                                                                       |
+| `OPENCUT_HISTORY_CHECKPOINT_DIR`                                                   | Optional durable named-history-checkpoint store override. Defaults to `history-checkpoints` below the instance state root.                                                                          |
 | `OPENCUT_PREVIEW_RANGE_EVIDENCE_DIR`                                               | Optional durable receipt and content-addressed PNG/WAV root for range previews.                                                                                                                     |
 | `OPENCUT_PREVIEW_RANGE_MAX_DURATION_SECONDS`, `OPENCUT_PREVIEW_RANGE_MAX_FRAMES`   | Positive range-preview bounds; defaults to 10 seconds and 300 frames, is reported by `opencut_capabilities`, and caps the frame override at the manifest-safe operational maximum of 10,000.        |
 | `OPENCUT_WASM_ARTIFACT_PATH`, `OPENCUT_WASM_PACKAGE_VERSION`                       | Optional WASM identity overrides for a custom deployment.                                                                                                                                           |
@@ -197,7 +198,21 @@ retained for 90 days after its latest verification. Expired hashes fail with
 access; a cleanup scan also runs on the first verified save after editor startup
 and no more than once per 24 hours for the rest of that session.
 
-The job store, export receipts, operation ledger, and evidence stores all live below the state root and share its retention window; a job row references its receipts and artifacts by path and hash rather than copying them.
+The job store, export receipts, operation ledger, named history-checkpoint store,
+and evidence stores all live below the state root and share its retention window;
+a job row references its receipts and artifacts by path and hash rather than
+copying them. Checkpoint records retain their name, project and scene, revision,
+canonical content hash, browser connection/session identity, and exact native
+undo/redo entry sequence across MCP restarts.
+
+Native undo and redo entries themselves are intentionally editor-session-local.
+A checkpoint is restorable only while its recorded command sequence remains
+reconstructible in the same browser editor session. Reloading the editor, starting
+a new editor session, or diverging from that command chain leaves the durable
+checkpoint readable but makes restore return `history-diverged`; OpenCut never
+reconstructs project data from checkpoint metadata. Every undo, redo, checkpoint
+creation, and restore crosses the durable operation ledger with revision and
+canonical-hash checks.
 
 Back up both directories while the instance is stopped; restoring only receipts
 or only the browser profile can leave durable hashes without their matching
@@ -325,7 +340,10 @@ Available tools:
 - `opencut_attach_clean_audio`, attaching a complete precomputed cleaned-audio source while preserving the selected clip's timing and audio automation
 - `opencut_clean_audio`, transferring a complete uploaded source to the configured cleaner and attaching its output non-destructively with model provenance
 - `opencut_apply_edit_plan`, supporting canvas, frame-rate, and background settings, track creation, rename, reorder, duplicate, main-track promotion, and removal with explicit reject/delete/move/cascade occupied-track policy (cascade is resolved by Rust through transitive group/link relationships), bookmark add, update, move, and remove by stable ID, caption shift, merge, split, and restyle (preset-based, with Rust-resolved params), caption rechunking by character budget and reading speed (`rechunk_captions`, word-timed chunks resolved by Rust) and overlap repair (`repair_caption_overlaps`), speaker labels on captions (`caption.speaker`, selectable by `restyle_captions` and `rechunk_captions`, carried into ASS as the cue Name), word-by-word highlighting of the spoken word (`highlight.enabled`/`highlight.color`, the `tiktok-karaoke` preset; timed by character share and drawn identically in preview and export), plus `CAPTION_OVERLAP` and `CAPTION_READING_SPEED` warnings, per-line caption bubbles (`background.perLine`, drawn identically in preview and export and reported as `lineBubbles` in caption layout evidence), media-bin asset instantiation by asset ID, deterministic track mute and visibility, normalized crop and focal-point reframing, contain, cover, stretch, split-screen, and picture-in-picture layouts, source-audio separation, cleaned-source enablement and detachment, non-destructive dialogue ducking with attack and release ramps, per-clip audio gain, mute, linear fades, uniform mix gain, stable-ID clip effect creation, update, ordering, enablement, and removal, general keyframe creation, update, retiming, and removal, crossfade, fade-through-black, slide, wipe, and zoom transitions, text and styled caption-batch insertion, delete, same-track or cross-track move, constant retiming from 0.01x through 5x with optional pitch preservation, validated parameter updates, split, and source-edge trim operations
-- `opencut_undo`
+- `opencut_get_history_state`, exposing the current revision/hash-bound native undo and redo entry sequences for the connected editor session
+- `opencut_undo` and `opencut_redo`, moving a caller-bounded 1-100 native history entries after exact project, scene, revision, content-hash, and connection checks
+- `opencut_create_checkpoint`, `opencut_get_checkpoint`, and `opencut_list_checkpoints`, storing and reading durable named checkpoints with bounded stable pagination
+- `opencut_restore_checkpoint`, moving only through the native undo/redo stacks when the checkpoint's recorded session and command chain remain reconstructible, and otherwise failing closed without synthesizing project state
 - `opencut_import_media`, using an absolute local path and a one-time loopback transfer ticket, with optional placement on an explicit compatible track. Imports preserve project canvas and frame rate by default; set `adoptMediaSettings` to `true` to adopt them from the first visual asset.
 - `opencut_import_media_asset`, `opencut_list_media_usages`, `opencut_rename_media_asset`, `opencut_preflight_media_relink`, `opencut_relink_media_asset`, and `opencut_remove_media_asset`, the media-bin lifecycle: import without timeline placement, list every source, matte, audio-replacement, and immutable provider reference across scenes and compounds (package references are reported as an empty list until packaging exists), rename, preflight a relink's compatibility and complete metadata consequence diff without mutation, relink a file behind a stable asset ID, and remove unused assets or cascade through every reference; relink preflight fingerprints bind the replacement source fingerprint and consequence diff to apply
 - `opencut_export_project`, rendering a verified persisted project readback in the connected editor, applying an optional immutable render overlay (canvas and safe zones, track and caption inclusion, caption restyle/reposition, per-element layout/reframe and subject-safe focal policy, and cover-frame selection), writing to a new absolute local `.mp4` or `.webm` path, fully decoding and probing it, and persisting the requested overlay, fully resolved render specification/frame schedule, frame samples, and SHA-256 receipt

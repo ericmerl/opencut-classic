@@ -98,6 +98,7 @@ export const operationAffectedObjectSchema = z
 			"transcript",
 			"speech-analysis",
 			"editorial-decision",
+			"checkpoint",
 		]),
 		objectId: identifierSchema,
 		action: z.enum([
@@ -119,6 +120,8 @@ export const operationAffectedObjectSchema = z
 			"evaluated",
 			"packaged",
 			"undone",
+			"redone",
+			"restored",
 		]),
 	})
 	.strict();

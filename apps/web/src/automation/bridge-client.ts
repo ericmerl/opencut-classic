@@ -47,6 +47,9 @@ import type {
 	AutomationGetEditPlanPreflightReceiptRequest,
 	AutomationVerifyOperationReceiptRequest,
 	AutomationVerifyEditPlanPreflightSourceRequest,
+	AutomationHistoryMutationRequest,
+	AutomationHistorySafetyRequest,
+	AutomationRestoreHistoryRequest,
 	AutomationStickerSearchRequest,
 	AutomationTransferSourceRequest,
 	AutomationTranscriptionRequest,
@@ -344,12 +347,26 @@ type BridgeRequest =
 	| ({
 			kind: "request";
 			id: string;
+			method: "get_history_state";
+			params: AutomationHistorySafetyRequest;
+	  } & { target?: AutomationConnectionIdentity })
+	| ({
+			kind: "request";
+			id: string;
 			method: "undo";
-			params: {
-				projectId: string;
-				expectedRevision: number;
-				bridgeProtocolVersion?: number;
-			};
+			params: AutomationHistoryMutationRequest;
+	  } & { target?: AutomationConnectionIdentity })
+	| ({
+			kind: "request";
+			id: string;
+			method: "redo";
+			params: AutomationHistoryMutationRequest;
+	  } & { target?: AutomationConnectionIdentity })
+	| ({
+			kind: "request";
+			id: string;
+			method: "restore_history_state";
+			params: AutomationRestoreHistoryRequest;
 	  } & { target?: AutomationConnectionIdentity });
 
 type BridgeRequestWithTarget = BridgeRequest & {
@@ -770,8 +787,14 @@ export class AutomationBridgeClient {
 				return this.automation.attachCleanAudio(message.params);
 			case "transfer_source_media":
 				return this.automation.transferSourceMedia(message.params);
+			case "get_history_state":
+				return this.automation.getHistoryState(message.params);
 			case "undo":
 				return this.automation.undo(message.params);
+			case "redo":
+				return this.automation.redo(message.params);
+			case "restore_history_state":
+				return this.automation.restoreHistoryState(message.params);
 		}
 	}
 
