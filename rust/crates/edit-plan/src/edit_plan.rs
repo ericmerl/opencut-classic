@@ -1196,6 +1196,7 @@ impl State {
             EditOperation::RechunkCaptions {
                 track_id,
                 element_ids,
+                speaker,
                 max_chars,
                 max_chars_per_second,
                 max_duration,
@@ -1206,6 +1207,7 @@ impl State {
                 let (chunks, allocations) = self.resolve_caption_chunks(
                     track_id,
                     element_ids.as_deref(),
+                    speaker.as_deref(),
                     *max_chars,
                     *max_chars_per_second,
                     *max_duration,
@@ -2142,6 +2144,19 @@ impl State {
                             "caption resolvedParams must be flat scalar params bound to resolvedContent",
                         );
                     }
+                    let materialized_speaker =
+                        scalar_params
+                            .get("caption.speaker")
+                            .and_then(|value| match value {
+                                Scalar::String(value) => Some(value.as_str()),
+                                _ => None,
+                            });
+                    if materialized_speaker != caption.speaker.as_deref() {
+                        return invalid(
+                            index,
+                            "caption resolvedParams speaker does not match the caption",
+                        );
+                    }
                     let mut element = new_element(
                         required(&caption.element_id),
                         "text",
@@ -2210,7 +2225,8 @@ impl State {
                 if delta.as_ticks() == 0 {
                     return invalid(index, "delta cannot be zero");
                 }
-                let targets = self.caption_targets(track_id, element_ids.as_deref(), index)?;
+                let targets =
+                    self.caption_targets(track_id, element_ids.as_deref(), None, index)?;
                 for id in &targets {
                     let element = self.element_mut(track_id, id, index)?;
                     let moved = add(element.start_time, *delta, index)?;
@@ -2230,7 +2246,7 @@ impl State {
                 if element_ids.len() < 2 {
                     return invalid(index, "merge needs at least two captions");
                 }
-                let mut ordered = self.caption_targets(track_id, Some(element_ids), index)?;
+                let mut ordered = self.caption_targets(track_id, Some(element_ids), None, index)?;
                 if ordered.len() != element_ids.len() {
                     return invalid(index, "merge captions must be distinct");
                 }
@@ -2377,13 +2393,19 @@ impl State {
             EditOperation::RestyleCaptions {
                 track_id,
                 element_ids,
+                speaker,
                 resolved_params,
                 ..
             } => {
                 let Some(params) = resolved_params else {
                     return invalid(index, "restyle params were not resolved");
                 };
-                let targets = self.caption_targets(track_id, element_ids.as_deref(), index)?;
+                let targets = self.caption_targets(
+                    track_id,
+                    element_ids.as_deref(),
+                    speaker.as_deref(),
+                    index,
+                )?;
                 for id in &targets {
                     let element = self.element_mut(track_id, id, index)?;
                     for (key, value) in &params.0 {
@@ -2395,6 +2417,7 @@ impl State {
             EditOperation::RechunkCaptions {
                 track_id,
                 element_ids,
+                speaker,
                 max_chars_per_second,
                 resolved_chunks,
                 ..
@@ -2405,7 +2428,12 @@ impl State {
                 if chunks.is_empty() {
                     return invalid(index, "no caption chunks to apply");
                 }
-                let targets = self.caption_targets(track_id, element_ids.as_deref(), index)?;
+                let targets = self.caption_targets(
+                    track_id,
+                    element_ids.as_deref(),
+                    speaker.as_deref(),
+                    index,
+                )?;
                 let sources: BTreeMap<String, Element> = targets
                     .iter()
                     .map(|id| {
@@ -2489,7 +2517,8 @@ impl State {
                 if gap.as_ticks() < 0 {
                     return bounds(index, "minGap");
                 }
-                let targets = self.caption_targets(track_id, element_ids.as_deref(), index)?;
+                let targets =
+                    self.caption_targets(track_id, element_ids.as_deref(), None, index)?;
                 let mut ordered: Vec<(MediaTime, String, MediaTime, bool)> = targets
                     .iter()
                     .map(|id| {
@@ -3221,6 +3250,7 @@ impl State {
         &self,
         track: &str,
         element_ids: Option<&[String]>,
+        speaker: Option<&str>,
         index: usize,
     ) -> Result<Vec<String>, EditPlanError> {
         if !self.snapshot.tracks.iter().any(|t| t.track_id == track) {
@@ -3275,12 +3305,33 @@ impl State {
                 captions.iter().map(|e| e.element_id.clone()).collect()
             }
         };
+        if let Some(speaker) = speaker {
+            if speaker.trim().is_empty() {
+                return Err(error(
+                    ErrorCode::InvalidValue,
+                    "speaker cannot be empty",
+                    Some(index),
+                    Some("speaker"),
+                ));
+            }
+            targets.retain(|id| {
+                self.snapshot
+                    .elements
+                    .iter()
+                    .find(|e| e.track_id == track && e.element_id == *id)
+                    .is_some_and(|element| caption_speaker(element) == speaker)
+            });
+        }
         if targets.is_empty() {
             return Err(error(
                 ErrorCode::InvalidValue,
                 "no captions to operate on",
                 Some(index),
-                Some("trackId"),
+                Some(if speaker.is_some() {
+                    "speaker"
+                } else {
+                    "trackId"
+                }),
             ));
         }
         targets.dedup();
@@ -3301,6 +3352,7 @@ impl State {
         &mut self,
         track: &str,
         element_ids: Option<&[String]>,
+        speaker: Option<&str>,
         max_chars: Option<u32>,
         max_chars_per_second: Option<f64>,
         max_duration: Option<MediaTime>,
@@ -3323,7 +3375,7 @@ impl State {
         if max_gap.as_ticks() < 0 {
             bounds(index, "maxGap")?;
         }
-        let targets = self.caption_targets(track, element_ids, index)?;
+        let targets = self.caption_targets(track, element_ids, speaker, index)?;
         let mut sources: Vec<Element> = targets
             .iter()
             .map(|id| {
@@ -3387,7 +3439,9 @@ impl State {
                 let exceeds_duration = max_duration
                     .is_some_and(|limit| word.end - words[first].start > limit.as_ticks());
                 let exceeds_gap = word.start - words[last].end > max_gap.as_ticks();
-                if exceeds_chars || exceeds_duration || exceeds_gap {
+                let changes_speaker = caption_speaker(&sources[words[first].source])
+                    != caption_speaker(&sources[word.source]);
+                if exceeds_chars || exceeds_duration || exceeds_gap || changes_speaker {
                     groups.push(std::mem::take(&mut current));
                 }
             }
@@ -6211,6 +6265,14 @@ fn replace_generated_keyframes(
 }
 
 /// A caption's text: the evaluator's text field, else its content param.
+/// The caption's speaker label, or empty when it has none.
+fn caption_speaker(element: &Element) -> &str {
+    match element.params.0.get("caption.speaker") {
+        Some(Scalar::String(value)) => value.as_str(),
+        _ => "",
+    }
+}
+
 fn caption_text(element: &Element) -> String {
     element
         .text
@@ -6297,6 +6359,9 @@ fn default_text_params(content: &str) -> Params {
         ("background.paddingY", Scalar::Number(42.0)),
         ("background.offsetX", Scalar::Number(0.0)),
         ("background.offsetY", Scalar::Number(0.0)),
+        ("highlight.enabled", Scalar::Boolean(false)),
+        ("highlight.color", Scalar::String("#ffd400".into())),
+        ("caption.speaker", Scalar::String(String::new())),
         ("transform.positionX", Scalar::Number(0.0)),
         ("transform.positionY", Scalar::Number(0.0)),
         ("transform.scaleX", Scalar::Number(1.0)),
@@ -6597,8 +6662,13 @@ fn coerce_element_param(
             coerce_number(value, -100.0, None, 0.1, index, key)
         }
         "lineHeight" if element_type == "text" => coerce_number(value, 0.1, None, 0.1, index, key),
-        "background.enabled" | "background.perLine" if element_type == "text" => {
+        "background.enabled" | "background.perLine" | "highlight.enabled"
+            if element_type == "text" =>
+        {
             coerce_boolean(value, index, key)
+        }
+        "highlight.color" | "caption.speaker" if element_type == "text" => {
+            coerce_string(value, index, key)
         }
         "background.cornerRadius" if element_type == "text" => {
             coerce_number(value, 0.0, Some(100.0), 1.0, index, key)

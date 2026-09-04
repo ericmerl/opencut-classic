@@ -29,6 +29,11 @@ const defaultTextBackground = {
 	offsetY: 0,
 };
 
+const defaultTextHighlight = {
+	enabled: false,
+	color: "#ffd400",
+};
+
 const defaultTextElement: Omit<TextElement, "id"> = {
 	type: "text",
 	name: "Text",
@@ -55,6 +60,8 @@ const defaultTextElement: Omit<TextElement, "id"> = {
 		"background.paddingY": defaultTextBackground.paddingY,
 		"background.offsetX": defaultTextBackground.offsetX,
 		"background.offsetY": defaultTextBackground.offsetY,
+		"highlight.enabled": defaultTextHighlight.enabled,
+		"highlight.color": defaultTextHighlight.color,
 		"transform.positionX": defaultTransform.position.x,
 		"transform.positionY": defaultTransform.position.y,
 		"transform.scaleX": defaultTransform.scaleX,
@@ -82,6 +89,7 @@ export const DEFAULTS = {
 		letterSpacing: defaultTextLetterSpacing,
 		lineHeight: defaultTextLineHeight,
 		background: defaultTextBackground,
+		highlight: defaultTextHighlight,
 		element: defaultTextElement,
 	},
 	timeline: {

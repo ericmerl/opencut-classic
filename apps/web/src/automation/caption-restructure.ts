@@ -155,7 +155,11 @@ export function buildCaptionRestructureCommand({
 			if (!chunks || chunks.length === 0) {
 				throw new Error("caption chunks were not resolved");
 			}
-			const targets = captionTargets({ track, elementIds: operation.elementIds });
+			const targets = captionTargets({
+				track,
+				elementIds: operation.elementIds,
+				speaker: operation.speaker,
+			});
 			const sources = new Map(targets.map((element) => [element.id, element]));
 			const chunkIds = new Set(chunks.map((chunk) => chunk.elementId));
 			const commands: Command[] = [];
@@ -261,7 +265,11 @@ export function buildCaptionRestructureCommand({
 			if (!params || Object.keys(params).length === 0) {
 				throw new Error("restyle params were not resolved");
 			}
-			const targets = captionTargets({ track, elementIds: operation.elementIds });
+			const targets = captionTargets({
+				track,
+				elementIds: operation.elementIds,
+				speaker: operation.speaker,
+			});
 			return new UpdateElementsCommand({
 				updates: targets.map((element) => ({
 					trackId: track.id,
@@ -278,32 +286,44 @@ export function buildCaptionRestructureCommand({
 /**
  * The captions an operation addresses on a track, matching the evaluator:
  * the listed ids, each of which must be a caption on the track, or every
- * caption on it in timeline order.
+ * caption on it in timeline order, narrowed to one speaker when asked.
  */
 function captionTargets({
 	track,
 	elementIds,
+	speaker,
 }: {
 	track: TimelineTrack;
 	elementIds: readonly string[] | undefined;
+	speaker?: string | undefined;
 }): TextElement[] {
 	const captions = track.elements.filter(
 		(element): element is TextElement => element.type === "text",
 	);
-	if (elementIds) {
-		const unique = [...new Set(elementIds)];
-		return unique.map((id) => {
-			const caption = captions.find((element) => element.id === id);
-			if (!caption) throw new Error(`unknown caption: ${id}`);
-			return caption;
-		});
+	const listed = elementIds
+		? [...new Set(elementIds)].map((id) => {
+				const caption = captions.find((element) => element.id === id);
+				if (!caption) throw new Error(`unknown caption: ${id}`);
+				return caption;
+			})
+		: [...captions].sort(
+				(left, right) =>
+					left.startTime - right.startTime || left.id.localeCompare(right.id),
+			);
+	if (speaker !== undefined && speaker.trim() === "") {
+		throw new Error("speaker cannot be empty");
 	}
-	const ordered = [...captions].sort(
-		(left, right) =>
-			left.startTime - right.startTime || left.id.localeCompare(right.id),
-	);
-	if (ordered.length === 0) throw new Error("no captions to operate on");
-	return ordered;
+	const targets =
+		speaker === undefined
+			? listed
+			: listed.filter((element) => captionSpeaker(element) === speaker);
+	if (targets.length === 0) throw new Error("no captions to operate on");
+	return targets;
+}
+
+function captionSpeaker(element: TextElement): string {
+	const speaker = element.params["caption.speaker"];
+	return typeof speaker === "string" ? speaker : "";
 }
 
 function captionText(element: TextElement): string {

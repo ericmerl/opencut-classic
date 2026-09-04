@@ -1915,6 +1915,10 @@ export class EditorAutomation {
 						startTime: mediaTimeToSeconds({ time: element.startTime }),
 						duration: mediaTimeToSeconds({ time: element.duration }),
 						style: captionStyleFromElement(element),
+						...(typeof element.params["caption.speaker"] === "string" &&
+						element.params["caption.speaker"]
+							? { speaker: element.params["caption.speaker"] }
+							: {}),
 					})),
 			)
 			.filter((caption) => caption.text && caption.duration > 0)
@@ -3830,6 +3834,16 @@ function captionStyleFromElement(
 		letterSpacing: text.letterSpacing,
 		lineHeight: text.lineHeight,
 		...(background.enabled ? { background } : {}),
+		...(element.params["highlight.enabled"] === true
+			? {
+					highlight: {
+						enabled: true,
+						...(typeof element.params["highlight.color"] === "string"
+							? { color: element.params["highlight.color"] }
+							: {}),
+					},
+				}
+			: {}),
 	};
 }
 

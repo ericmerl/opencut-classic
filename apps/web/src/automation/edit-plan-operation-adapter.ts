@@ -116,6 +116,7 @@ export function toAutomationResolvedOperation(
 				captions: operation.captions.map((caption) => ({
 					...caption,
 					elementId: optional(caption.elementId),
+					speaker: optional(caption.speaker),
 					startTime: mediaTime({ ticks: caption.startTime }),
 					duration: mediaTime({ ticks: caption.duration }),
 					resolvedName: optional(caption.resolvedName),
@@ -153,6 +154,7 @@ export function toAutomationResolvedOperation(
 			return {
 				...operation,
 				elementIds: optional(operation.elementIds),
+				speaker: optional(operation.speaker),
 				style: resolvedSubtitleStyle(operation.style) ?? {},
 				resolvedParams: optional(operation.resolvedParams),
 			};
@@ -160,6 +162,7 @@ export function toAutomationResolvedOperation(
 			return {
 				...operation,
 				elementIds: optional(operation.elementIds),
+				speaker: optional(operation.speaker),
 				maxChars: optional(operation.maxChars),
 				maxCharsPerSecond: optional(operation.maxCharsPerSecond),
 				maxDuration: optionalMediaTime(operation.maxDuration),
@@ -363,6 +366,12 @@ function resolvedSubtitleStyle(
 		textDecoration: optional(style.textDecoration),
 		letterSpacing: optional(style.letterSpacing),
 		lineHeight: optional(style.lineHeight),
+		highlight: style.highlight
+			? {
+					enabled: style.highlight.enabled,
+					color: optional(style.highlight.color),
+				}
+			: undefined,
 		placement: style.placement
 			? {
 					verticalAlign: optional(style.placement.verticalAlign),
@@ -497,6 +506,7 @@ function toNativeEditOperation(
 				captions: operation.captions.map((caption) => ({
 					elementId: caption.elementId,
 					text: caption.text,
+					speaker: caption.speaker,
 					startTime: caption.startTime,
 					duration: caption.duration,
 					resolvedName: caption.resolvedName,
@@ -545,6 +555,7 @@ function toNativeEditOperation(
 				kind: operation.kind,
 				trackId: operation.trackId,
 				elementIds: operation.elementIds,
+				speaker: operation.speaker,
 				style: operation.style,
 				resolvedParams: operation.resolvedParams,
 			};
@@ -553,6 +564,7 @@ function toNativeEditOperation(
 				kind: operation.kind,
 				trackId: operation.trackId,
 				elementIds: operation.elementIds,
+				speaker: operation.speaker,
 				maxChars: operation.maxChars,
 				maxCharsPerSecond: operation.maxCharsPerSecond,
 				maxDuration: operation.maxDuration,

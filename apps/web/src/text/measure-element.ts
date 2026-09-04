@@ -3,9 +3,8 @@ import { DEFAULTS } from "@/timeline/defaults";
 import type { TextElement } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import { resolveNumberAtTime } from "@/animation/values";
-import {
-	getTextVisualRect,
-} from "./layout";
+import { activeWordIndex, type ResolvedTextHighlight } from "./highlight";
+import { getTextVisualRect } from "./layout";
 import {
 	measureTextLayout,
 	type MeasuredTextLayout,
@@ -27,6 +26,7 @@ export interface ResolvedTextBackground extends TextBackground {
 
 export interface MeasuredTextElement extends MeasuredTextLayout {
 	resolvedBackground: ResolvedTextBackground;
+	highlight: ResolvedTextHighlight;
 	visualRect: { left: number; top: number; width: number; height: number };
 }
 
@@ -117,6 +117,28 @@ export function measureTextElement({
 		}),
 	};
 
+	const highlightEnabled = readBooleanParam({
+		params: element.params,
+		key: "highlight.enabled",
+		fallback: DEFAULTS.text.highlight.enabled,
+	});
+	const highlight: ResolvedTextHighlight = {
+		enabled: highlightEnabled,
+		color: readStringParam({
+			params: element.params,
+			key: "highlight.color",
+			fallback: DEFAULTS.text.highlight.color,
+		}),
+		wordIndex:
+			highlightEnabled && element.duration > 0
+				? activeWordIndex({
+						content: text.content,
+						elapsedTicks: localTime,
+						durationTicks: element.duration,
+					})
+				: null,
+	};
+
 	const visualRect = getTextVisualRect({
 		textAlign: text.textAlign,
 		block: measuredLayout.block,
@@ -127,6 +149,7 @@ export function measureTextElement({
 	return {
 		...measuredLayout,
 		resolvedBackground,
+		highlight,
 		visualRect,
 	};
 }

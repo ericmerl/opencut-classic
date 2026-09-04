@@ -186,6 +186,7 @@ describe("edit-plan preflight contract", () => {
 			text: "Hi",
 			startTime: 0,
 			duration: 120_000,
+			speaker: null,
 			resolvedName: "Caption 1",
 			resolvedContent: "Hi",
 			resolvedParams: {

@@ -367,7 +367,12 @@ integrationTest(
 			requireRecords(fonts.captionStylePresets, "captionStylePresets").map(
 				(preset) => preset.id,
 			),
-		).toEqual(["tiktok-classic", "tiktok-classic-red", "montserrat-clean"]);
+		).toEqual([
+			"tiktok-classic",
+			"tiktok-classic-red",
+			"tiktok-karaoke",
+			"montserrat-clean",
+		]);
 		const project = await harness.callTool(
 			"opencut_get_project",
 			affinity(identity),
@@ -407,6 +412,7 @@ integrationTest(
 								text: "This is the part of the video where the hook has to land in the first three seconds",
 								startTime: 0,
 								duration: 240_000,
+								speaker: "host",
 							},
 						],
 						// The preset supplies TikTok Sans bold on a black block; the
@@ -495,6 +501,7 @@ integrationTest(
 							text: "This is the part of the video where the hook has to land in the first three seconds",
 							startTime: 0,
 							duration: 240_000,
+							speaker: "host",
 						},
 					],
 					style: { preset: "tiktok-classic", fontSize: 6 },
@@ -543,7 +550,10 @@ integrationTest(
 		const assDocument = await readFile(assPath, "utf8");
 		expect(assDocument).toContain("[V4+ Styles]");
 		expect(assDocument).toContain("Style: Default,TikTok Sans,");
-		expect(assDocument).toContain("Dialogue: 0,0:00:00.00,0:00:02.00,Default,");
+		// The speaker label rides in the Dialogue Name field.
+		expect(assDocument).toContain(
+			"Dialogue: 0,0:00:00.00,0:00:02.00,Default,host,0,0,0,,",
+		);
 
 		// Restructure the inserted caption: split it at a word boundary and
 		// restyle the left half from a preset, all resolved by Rust.
@@ -552,6 +562,9 @@ integrationTest(
 			(element) => element.type === "text",
 		);
 		if (!captionElement) throw new Error("expected the inserted caption");
+		expect(requireRecord(captionElement.params, "params")).toMatchObject({
+			"caption.speaker": "host",
+		});
 		const captionTrackId = requireString(captionElement.trackId, "trackId");
 		const captionElementId = requireString(captionElement.elementId, "elementId");
 		const restructureOperations = [
@@ -562,10 +575,15 @@ integrationTest(
 				splitIndex: 29,
 			},
 			{
+				// Selected by speaker rather than id, so both halves of the split
+				// (which inherit the label) are restyled, with the spoken word lit.
 				kind: "restyle_captions",
 				trackId: captionTrackId,
-				elementIds: [captionElementId],
-				style: { preset: "tiktok-classic-red" },
+				speaker: "host",
+				style: {
+					preset: "tiktok-classic-red",
+					highlight: { enabled: true, color: "#ffd400" },
+				},
 			},
 			{
 				kind: "rechunk_captions",
@@ -631,7 +649,12 @@ integrationTest(
 		)[1];
 		expect(resolvedRestyle).toMatchObject({
 			kind: "restyle_captions",
-			resolvedParams: { fontFamily: "TikTok Sans", "background.color": "#ff0000" },
+			resolvedParams: {
+				fontFamily: "TikTok Sans",
+				"background.color": "#ff0000",
+				"highlight.enabled": true,
+				"highlight.color": "#ffd400",
+			},
 		});
 		// Rust re-segments both halves into word-timed chunks under the budget
 		// and allocates ids for the chunks beyond the two existing captions.
@@ -685,6 +708,15 @@ integrationTest(
 			"elements",
 		).filter((element) => element.type === "text");
 		expect(captionsAfter).toHaveLength(resolvedChunks.length);
+		// Every chunk inherits the speaker label and the karaoke highlight from
+		// the caption its first word came from.
+		for (const caption of captionsAfter) {
+			expect(requireRecord(caption.params, "params")).toMatchObject({
+				"caption.speaker": "host",
+				"highlight.enabled": true,
+				"highlight.color": "#ffd400",
+			});
+		}
 		expect(
 			requireProjectContentHash(requireRecord(restructured.snapshot, "snapshot")),
 		).toBe(requireString(restructureEvaluation.predictedProjectHash, "predicted"));

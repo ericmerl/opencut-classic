@@ -106,12 +106,16 @@ fn options(operations: Vec<EditOperation>) -> EvaluateEditPlanOptions {
 }
 
 fn resolved_caption(text: &str, start_time: MediaTime, duration: MediaTime) -> Caption {
-    let params = default_text_params(text);
+    // Caption materialization omits the metadata key when no speaker was
+    // supplied; plain insert_text still carries the registry's empty default.
+    let mut params = default_text_params(text);
+    params.0.remove("caption.speaker");
     Caption {
         element_id: None,
         text: text.into(),
         start_time,
         duration,
+        speaker: None,
         resolved_name: Some("Caption 1".into()),
         resolved_content: Some(text.into()),
         resolved_params: Some(CanonicalValue::Object(
@@ -1049,6 +1053,7 @@ fn all_57_operation_variants_have_valid_and_invalid_evaluator_coverage() {
             vec![EditOperation::RestyleCaptions {
                 track_id: "track-text".into(),
                 element_ids: None,
+                speaker: None,
                 style: SubtitleStyleOverrides {
                     preset: Some("tiktok-classic".into()),
                     ..Default::default()
@@ -1062,6 +1067,7 @@ fn all_57_operation_variants_have_valid_and_invalid_evaluator_coverage() {
             vec![EditOperation::RechunkCaptions {
                 track_id: "track-text".into(),
                 element_ids: None,
+                speaker: None,
                 max_chars: None,
                 // One character per second stretches the fixture caption.
                 max_chars_per_second: Some(1.0),
@@ -2804,7 +2810,12 @@ fn caption_style_presets_name_bundled_faces_and_gate_insertion() {
             .iter()
             .map(|preset| preset.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["tiktok-classic", "tiktok-classic-red", "montserrat-clean"]
+        vec![
+            "tiktok-classic",
+            "tiktok-classic-red",
+            "tiktok-karaoke",
+            "montserrat-clean"
+        ]
     );
     for preset in &presets {
         let family = preset.style.font_family.as_deref().unwrap();
@@ -2814,7 +2825,22 @@ fn caption_style_presets_name_bundled_faces_and_gate_insertion() {
         if let Some(background) = &preset.style.background {
             assert_eq!(background.per_line, Some(true));
         }
+        let highlighted = preset.style.highlight.as_ref().is_some_and(|h| h.enabled);
+        assert_eq!(highlighted, preset.id == "tiktok-karaoke");
     }
+    let karaoke = caption_style_params(&SubtitleStyleOverrides {
+        preset: Some("tiktok-karaoke".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        karaoke.get("highlight.enabled"),
+        Some(&Scalar::Boolean(true))
+    );
+    assert_eq!(
+        karaoke.get("highlight.color"),
+        Some(&Scalar::String("#ffd400".into()))
+    );
 
     let insert = |preset: &str| EditOperation::InsertCaptions {
         track_id: None,
@@ -2975,6 +3001,7 @@ fn rechunk_captions_resolves_word_timed_chunks_and_reuses_ids_in_order() {
         EditOperation::RechunkCaptions {
             track_id: "captions".into(),
             element_ids: None,
+            speaker: None,
             max_chars: Some(8),
             max_chars_per_second: None,
             max_duration: None,
@@ -3020,6 +3047,7 @@ fn rechunk_captions_extends_chunks_to_the_reading_speed_and_warns_when_it_cannot
         EditOperation::RechunkCaptions {
             track_id: "captions".into(),
             element_ids: None,
+            speaker: None,
             max_chars: Some(8),
             max_chars_per_second: Some(2.0),
             max_duration: None,
@@ -3092,11 +3120,92 @@ fn repair_caption_overlaps_trims_the_earlier_caption_and_refuses_to_empty_it() {
 }
 
 #[test]
+fn caption_speaker_selects_restyle_targets_and_bounds_rechunking() {
+    let tag = |id: &str, speaker: &str| EditOperation::SetParams {
+        track_id: "captions".into(),
+        element_id: id.into(),
+        params: Params::from_iter([("caption.speaker".into(), Scalar::String(speaker.into()))]),
+    };
+    let result = evaluate(options(caption_plan(vec![
+        tag("cap-b", "guest"),
+        EditOperation::RestyleCaptions {
+            track_id: "captions".into(),
+            element_ids: None,
+            speaker: Some("guest".into()),
+            style: SubtitleStyleOverrides {
+                color: Some("#00ff00".into()),
+                ..Default::default()
+            },
+            resolved_params: None,
+        },
+    ])))
+    .unwrap();
+    assert_eq!(
+        scalar_string_of(&caption_after(&result, "cap-b").common().params, "color"),
+        Some("#00ff00")
+    );
+    assert_ne!(
+        scalar_string_of(&caption_after(&result, "cap-a").common().params, "color"),
+        Some("#00ff00")
+    );
+    let nobody = evaluate(options(caption_plan(vec![
+        EditOperation::RestyleCaptions {
+            track_id: "captions".into(),
+            element_ids: None,
+            speaker: Some("nobody".into()),
+            style: SubtitleStyleOverrides {
+                color: Some("#00ff00".into()),
+                ..Default::default()
+            },
+            resolved_params: None,
+        },
+    ])))
+    .unwrap_err();
+    assert_eq!(nobody.path.as_deref(), Some("speaker"));
+    // Rechunking never joins two speakers into one caption even when the
+    // character budget would allow it.
+    let rechunked = evaluate(options(caption_plan(vec![
+        tag("cap-b", "guest"),
+        EditOperation::RechunkCaptions {
+            track_id: "captions".into(),
+            element_ids: None,
+            speaker: None,
+            max_chars: Some(64),
+            // Slow enough that the first caption stretches to the second.
+            max_chars_per_second: Some(5.0),
+            max_duration: None,
+            max_gap: Some(MediaTime::from_ticks(600_000)),
+            resolved_chunks: None,
+            resolved_allocations: None,
+        },
+    ])))
+    .unwrap();
+    let EditOperation::RechunkCaptions {
+        resolved_chunks: Some(chunks),
+        ..
+    } = &rechunked.resolved_operations[2]
+    else {
+        panic!("rechunk was not resolved");
+    };
+    let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
+    assert_eq!(texts, ["hello there", "general kenobi"]);
+    assert_eq!(chunks[0].duration, MediaTime::from_ticks(150_000));
+    assert_eq!(
+        scalar_string_of(
+            &caption_after(&rechunked, "cap-b").common().params,
+            "caption.speaker"
+        ),
+        Some("guest")
+    );
+}
+
+#[test]
 fn restyle_captions_resolves_preset_params_in_rust_and_refuses_placement() {
     let result = evaluate(options(caption_plan(vec![
         EditOperation::RestyleCaptions {
             track_id: "captions".into(),
             element_ids: None,
+            speaker: None,
             style: SubtitleStyleOverrides {
                 preset: Some("tiktok-classic".into()),
                 color: Some("#ffff00".into()),
@@ -3136,6 +3245,7 @@ fn restyle_captions_resolves_preset_params_in_rust_and_refuses_placement() {
         EditOperation::RestyleCaptions {
             track_id: "captions".into(),
             element_ids: None,
+            speaker: None,
             style: SubtitleStyleOverrides {
                 placement: Some(SubtitlePlacementStyle {
                     vertical_align: Some(VerticalAlign::Top),

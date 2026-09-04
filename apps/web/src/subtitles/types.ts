@@ -44,10 +44,17 @@ export interface SubtitleStyleOverrides {
 	letterSpacing?: number;
 	lineHeight?: number;
 	placement?: SubtitlePlacementStyle;
+	/**
+	 * Word-by-word emphasis: the spoken word, by character share of the
+	 * caption's duration, takes `color` in preview and export.
+	 */
+	highlight?: { enabled: boolean; color?: string };
 }
 
 export interface SubtitleCue extends CaptionChunk {
 	style?: SubtitleStyleOverrides;
+	/** Speaker label, stored as the `caption.speaker` text param. */
+	speaker?: string;
 }
 
 export interface ParseSubtitleResult {

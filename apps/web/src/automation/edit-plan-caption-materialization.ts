@@ -109,6 +109,7 @@ export async function materializeEditPlanCaptions({
 						startTime: mediaTimeToSeconds({ time: caption.startTime }),
 						duration: mediaTimeToSeconds({ time: caption.duration }),
 						style: operation.style,
+						speaker: caption.speaker,
 					},
 					canvasSize: currentCanvasSize,
 					ctx,

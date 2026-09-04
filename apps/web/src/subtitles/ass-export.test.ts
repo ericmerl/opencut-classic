@@ -98,7 +98,8 @@ describe("ASS export", () => {
 			{
 				feature: "background.padding",
 				cueCount: 2,
-				reason: "ASS opaque boxes take their size from the text, not from padding",
+				reason:
+					"ASS opaque boxes take their size from the text, not from padding",
 			},
 			{
 				feature: "lineHeight",
@@ -118,7 +119,9 @@ describe("ASS export", () => {
 			.filter((line) => line.startsWith("Style: "));
 		expect(styleRows).toHaveLength(2);
 		expect(styleRows[0]).toMatch(/^Style: Default,Arial,107,/);
-		expect(content).toContain("Dialogue: 0,0:00:03.00,0:00:05.00,Default,,0,0,0,,Plain");
+		expect(content).toContain(
+			"Dialogue: 0,0:00:03.00,0:00:05.00,Default,,0,0,0,,Plain",
+		);
 		expect(content).toContain(
 			"Dialogue: 0,0:00:00.50,0:00:02.25,Style2,,0,0,0,,First line\\NSecond line",
 		);
@@ -132,8 +135,45 @@ describe("ASS export", () => {
 	});
 
 	test("is deterministic", () => {
-		const first = serializeAss({ captions: [STYLED, PLAIN], playRes: PLAY_RES });
-		const second = serializeAss({ captions: [STYLED, PLAIN], playRes: PLAY_RES });
+		const first = serializeAss({
+			captions: [STYLED, PLAIN],
+			playRes: PLAY_RES,
+		});
+		const second = serializeAss({
+			captions: [STYLED, PLAIN],
+			playRes: PLAY_RES,
+		});
 		expect(second).toEqual(first);
+	});
+});
+
+describe("ASS export speaker and highlight", () => {
+	test("carries the speaker as the cue Name and reports word highlight as a loss", () => {
+		const { content, lossReport } = serializeAss({
+			captions: [
+				{
+					...PLAIN,
+					speaker: "guest,\nhost",
+					style: { highlight: { enabled: true, color: "#ffd400" } },
+				},
+			],
+			playRes: PLAY_RES,
+		});
+		// Commas and newlines would split Dialogue fields or rows, so both
+		// become spaces while the speaker stays in the Name field.
+		expect(content).toContain(
+			"Dialogue: 0,0:00:03.00,0:00:05.00,Default,guest  host,",
+		);
+		expect(lossReport.supported).toContain("speaker");
+		expect(lossReport.dropped).toEqual([
+			{
+				feature: "highlight",
+				cueCount: 1,
+				reason:
+					"ASS karaoke tags fill words as they are sung rather than emphasizing the spoken word",
+			},
+		]);
+		const parsed = parseAss({ input: content });
+		expect(parsed.captions).toHaveLength(1);
 	});
 });

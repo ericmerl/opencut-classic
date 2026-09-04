@@ -48,12 +48,17 @@ export function renderTextToContext({
 		ctx.rotate((resolved.transform.rotate * Math.PI) / 180);
 	}
 
+	const highlight = resolved.measuredText.highlight;
 	drawMeasuredTextLayout({
 		ctx,
 		layout: resolved.measuredText,
 		textColor: resolved.textColor,
 		background: resolved.measuredText.resolvedBackground,
 		backgroundColor: resolved.backgroundColor,
+		highlight:
+			highlight.enabled && highlight.wordIndex !== null
+				? { color: highlight.color, wordIndex: highlight.wordIndex }
+				: null,
 		textBaseline: baseline,
 	});
 

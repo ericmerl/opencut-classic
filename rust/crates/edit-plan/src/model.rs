@@ -565,6 +565,9 @@ pub struct Caption {
     pub text: String,
     pub start_time: MediaTime,
     pub duration: MediaTime,
+    /// Speaker label stored as the `caption.speaker` text param, which
+    /// `restyle_captions` and `rechunk_captions` can select by.
+    pub speaker: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -655,6 +658,19 @@ pub struct SubtitlePlacementStyle {
     pub margin_vertical_ratio: Option<f64>,
 }
 
+/// Word-by-word emphasis: the word being spoken takes `color` while the
+/// caption is on screen. Word timing follows character share of the caption's
+/// duration, the interpolation `rechunk_captions` uses, so preview, export,
+/// and the evaluator agree on which word is current.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubtitleHighlight {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -687,6 +703,8 @@ pub struct SubtitleStyleOverrides {
     pub line_height: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<SubtitlePlacementStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<SubtitleHighlight>,
 }
 
 /// A reusable social-caption style. The table lives in Rust so the editor,
@@ -746,6 +764,7 @@ pub fn caption_style_presets() -> CaptionStylePresetList {
             margin_right_ratio: None,
             margin_vertical_ratio: Some(0.12),
         }),
+        highlight: None,
     };
     CaptionStylePresetList {
         presets: vec![
@@ -762,6 +781,18 @@ pub fn caption_style_presets() -> CaptionStylePresetList {
                     "Bold white TikTok Sans on a red block, the high-contrast hook treatment."
                         .to_owned(),
                 style: tiktok("#ff0000"),
+            },
+            CaptionStylePreset {
+                id: "tiktok-karaoke".to_owned(),
+                description: "The classic black block with the spoken word picked out in yellow."
+                    .to_owned(),
+                style: SubtitleStyleOverrides {
+                    highlight: Some(SubtitleHighlight {
+                        enabled: true,
+                        color: Some("#ffd400".to_owned()),
+                    }),
+                    ..tiktok("#000000")
+                },
             },
             CaptionStylePreset {
                 id: "montserrat-clean".to_owned(),
@@ -786,6 +817,7 @@ pub fn caption_style_presets() -> CaptionStylePresetList {
                         margin_right_ratio: None,
                         margin_vertical_ratio: Some(0.12),
                     }),
+                    highlight: None,
                 },
             },
         ],
@@ -841,6 +873,14 @@ pub fn resolve_caption_style(
                 .or(base.margin_vertical_ratio),
         }),
     };
+    let highlight = match (&base.highlight, &style.highlight) {
+        (_, None) => base.highlight.clone(),
+        (None, Some(override_)) => Some(override_.clone()),
+        (Some(base), Some(override_)) => Some(SubtitleHighlight {
+            enabled: override_.enabled,
+            color: override_.color.clone().or_else(|| base.color.clone()),
+        }),
+    };
     Ok(SubtitleStyleOverrides {
         preset: None,
         font_size: style.font_size.or(base.font_size),
@@ -857,6 +897,7 @@ pub fn resolve_caption_style(
         letter_spacing: style.letter_spacing.or(base.letter_spacing),
         line_height: style.line_height.or(base.line_height),
         placement,
+        highlight,
     })
 }
 
@@ -934,6 +975,13 @@ pub fn caption_style_params(style: &SubtitleStyleOverrides) -> Result<Params, St
         put_number(&mut params, "background.paddingY", background.padding_y);
         put_number(&mut params, "background.offsetX", background.offset_x);
         put_number(&mut params, "background.offsetY", background.offset_y);
+    }
+    if let Some(highlight) = &style.highlight {
+        params.insert(
+            "highlight.enabled".to_owned(),
+            Scalar::Boolean(highlight.enabled),
+        );
+        put_string(&mut params, "highlight.color", highlight.color.clone());
     }
     if params.is_empty() {
         return Err("restyle sets no caption params".into());
@@ -1162,6 +1210,8 @@ pub enum EditOperation {
     RestyleCaptions {
         track_id: String,
         element_ids: Option<Vec<String>>,
+        /// Selects the captions whose `caption.speaker` param equals this.
+        speaker: Option<String>,
         style: SubtitleStyleOverrides,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolved_params: Option<Params>,
@@ -1172,6 +1222,8 @@ pub enum EditOperation {
     RechunkCaptions {
         track_id: String,
         element_ids: Option<Vec<String>>,
+        /// Selects the captions whose `caption.speaker` param equals this.
+        speaker: Option<String>,
         max_chars: Option<u32>,
         max_chars_per_second: Option<f64>,
         max_duration: Option<MediaTime>,

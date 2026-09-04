@@ -181,9 +181,10 @@ function normalizeRustOperationOptions(
 		shift_captions: ["elementIds"],
 		merge_captions: ["separator"],
 		split_caption: ["rightElementId"],
-		restyle_captions: ["elementIds"],
+		restyle_captions: ["elementIds", "speaker"],
 		rechunk_captions: [
 			"elementIds",
+			"speaker",
 			"maxChars",
 			"maxCharsPerSecond",
 			"maxDuration",
@@ -219,6 +220,7 @@ function normalizeRustOperationOptions(
 			text: caption.text,
 			startTime: caption.startTime,
 			duration: caption.duration,
+			speaker: caption.speaker ?? null,
 		}));
 	}
 	return value;

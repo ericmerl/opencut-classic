@@ -754,6 +754,8 @@ export type AutomationEditOperation =
 				text: string;
 				startTime: MediaTime;
 				duration: MediaTime;
+				/** Speaker label stored as the `caption.speaker` param. */
+				speaker?: string | undefined;
 				/** Internal browser-resolved layout, pinned by the V2 preflight receipt. */
 				resolvedName?: string | undefined;
 				resolvedContent?: string | undefined;
@@ -796,6 +798,8 @@ export type AutomationEditOperation =
 			kind: "restyle_captions";
 			trackId: string;
 			elementIds?: string[] | undefined;
+			/** Selects the captions whose `caption.speaker` param equals this. */
+			speaker?: string | undefined;
 			style: SubtitleStyleOverrides;
 			/** Params the Rust evaluator resolved from the style; never caller-supplied. */
 			resolvedParams?: Record<string, string | number | boolean> | undefined;
@@ -804,6 +808,8 @@ export type AutomationEditOperation =
 			kind: "rechunk_captions";
 			trackId: string;
 			elementIds?: string[] | undefined;
+			/** Selects the captions whose `caption.speaker` param equals this. */
+			speaker?: string | undefined;
 			maxChars?: number | undefined;
 			maxCharsPerSecond?: number | undefined;
 			maxDuration?: MediaTime | undefined;

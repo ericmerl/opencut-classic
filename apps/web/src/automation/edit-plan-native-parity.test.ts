@@ -256,6 +256,16 @@ const parityCases: NativeParityCase[] = [
 		state: withPlainCaptions,
 	},
 	{
+		name: "restyle_captions selects captions by speaker",
+		operation: {
+			kind: "restyle_captions",
+			trackId: "text-track",
+			speaker: "guest",
+			style: { color: "#00ff00" },
+		},
+		state: withSpeakerCaptions,
+	},
+	{
 		name: "rechunk_captions replays Rust-resolved word-timed chunks",
 		operation: {
 			kind: "rechunk_captions",
@@ -1847,6 +1857,23 @@ function withPlainCaptions(): NativeState {
 		}),
 		plainCaption({ id: "caption-third", content: "Third caption", startTicks: 300_000 }),
 	] as TextElement[];
+	return state;
+}
+
+/** The plain-caption state with the second caption tagged as a guest. */
+function withSpeakerCaptions(): NativeState {
+	const state = withPlainCaptions();
+	const target = state.project.scenes.find(
+		(scene) => scene.id === "scene-target",
+	);
+	const track = target?.tracks.overlay.find(
+		(candidate) => candidate.id === "text-track",
+	);
+	const second = track?.elements.find(
+		(element) => element.id === "caption-second",
+	);
+	if (!second) throw new Error("caption fixture missing");
+	second.params = { ...second.params, "caption.speaker": "guest" };
 	return state;
 }
 

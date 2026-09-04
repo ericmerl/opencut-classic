@@ -8,6 +8,11 @@ import type { SubtitleCue } from "@/subtitles/types";
 import type { TextCanvasContext } from "./layout";
 import { getMetricAscent, getMetricDescent } from "./layout";
 import { measureTextElement } from "./measure-element";
+import {
+	drawMeasuredTextLayout,
+	locateTextWord,
+	measureTextWordSpan,
+} from "./primitives";
 import { measureSubtitleCaption } from "@/subtitles/build-subtitle-text-element";
 import {
 	CAPTION_GEOMETRY_VERSION,
@@ -325,6 +330,85 @@ describe("caption geometry golden", () => {
 		);
 		expect(measured.geometry.lineBubbles).toHaveLength(lines.length);
 		expect(measured.element.params["background.perLine"]).toBe(true);
+	});
+
+	test("word highlight paints only the spoken word", () => {
+		const measured = measureSubtitleCaption({
+			index: 0,
+			caption: {
+				text: "hello there world",
+				startTime: 0,
+				duration: 3,
+				style: {
+					fontFamily: "TikTok Sans",
+					fontWeight: "bold",
+					fontSize: 6,
+					highlight: { enabled: true, color: "#ffd400" },
+				},
+			},
+			canvasSize: PORTRAIT,
+			ctx: measurementContext(),
+		});
+		const element = { ...measured.element, id: "caption-karaoke" } as TextElement;
+		expect(element.params["highlight.enabled"]).toBe(true);
+		const canvas = createCanvas(PORTRAIT.width, 400);
+		const ctx = canvas.getContext("2d") as unknown as TextCanvasContext;
+		// Half way through, character share puts "there" (5 of 15) on screen.
+		const layout = measureTextElement({
+			element,
+			canvasHeight: PORTRAIT.height,
+			localTime: element.duration / 2,
+			ctx: ctx as unknown as CanvasRenderingContext2D,
+		});
+		expect(layout.highlight).toMatchObject({
+			enabled: true,
+			color: "#ffd400",
+			wordIndex: 1,
+		});
+		const span = locateTextWord({ layout, wordIndex: 1 });
+		if (!span) throw new Error("expected the second word");
+		expect(layout.lines[span.lineIndex]!.slice(span.start, span.end)).toBe(
+			"there",
+		);
+		const extent = measureTextWordSpan({ ctx, layout, span });
+		const origin = { x: PORTRAIT.width / 2, y: 200 };
+		(ctx as unknown as CanvasRenderingContext2D).translate(origin.x, origin.y);
+		drawMeasuredTextLayout({
+			ctx,
+			layout,
+			textColor: "#ffffff",
+			background: null,
+			highlight: { color: "#ffd400", wordIndex: 1 },
+		});
+		const { data, width, height } = (
+			ctx as unknown as CanvasRenderingContext2D
+		).getImageData(0, 0, PORTRAIT.width, 400);
+		let yellow = 0;
+		let white = 0;
+		let strayYellow = 0;
+		const left = origin.x + extent.x - 2;
+		const right = origin.x + extent.x + extent.width + 2;
+		for (let y = 0; y < height; y++) {
+			for (let x = 0; x < width; x++) {
+				const offset = (y * width + x) * 4;
+				const [r, g, b, a] = [
+					data[offset]!,
+					data[offset + 1]!,
+					data[offset + 2]!,
+					data[offset + 3]!,
+				];
+				if (a < 200) continue;
+				if (r > 240 && g > 190 && b < 60) {
+					yellow += 1;
+					if (x < left || x > right) strayYellow += 1;
+				} else if (r > 240 && g > 240 && b > 240) {
+					white += 1;
+				}
+			}
+		}
+		expect(yellow).toBeGreaterThan(0);
+		expect(white).toBeGreaterThan(0);
+		expect(strayYellow).toBe(0);
 	});
 
 	test("measurement is deterministic across contexts", () => {

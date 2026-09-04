@@ -31,6 +31,7 @@ export const ASS_SUPPORTED_FEATURES = [
 	"verticalAlign",
 	"margins",
 	"backgroundColor",
+	"speaker",
 ] as const;
 
 const ASS_STYLE_FORMAT = [
@@ -108,7 +109,9 @@ export function serializeAss({
 			.trim()
 			.replace(/\r\n?/g, "\n")
 			.replace(/\n/g, "\\N");
-		return `Dialogue: 0,${start},${end},${name},,0,0,0,,${text}`;
+		// The Name field is the actor: the speaker label travels with the cue.
+		const speaker = (caption.speaker ?? "").replace(/[,\r\n]/g, " ").trim();
+		return `Dialogue: 0,${start},${end},${name},${speaker},0,0,0,,${text}`;
 	});
 	const lines = [
 		"[Script Info]",
@@ -120,7 +123,9 @@ export function serializeAss({
 		"",
 		"[V4+ Styles]",
 		`Format: ${ASS_STYLE_FORMAT.join(", ")}`,
-		...styles.map((style) => `Style: ${[style.name, ...style.fields].join(",")}`),
+		...styles.map(
+			(style) => `Style: ${[style.name, ...style.fields].join(",")}`,
+		),
 		"",
 		"[Events]",
 		"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -197,6 +202,12 @@ function reportUnmappable(
 	if (style.lineHeight !== undefined) {
 		countLoss("lineHeight", "ASS styles have no line-height field");
 	}
+	if (style.highlight?.enabled) {
+		countLoss(
+			"highlight",
+			"ASS karaoke tags fill words as they are sung rather than emphasizing the spoken word",
+		);
+	}
 	const background = style.background;
 	if (background?.enabled) {
 		if (background.cornerRadius) {
@@ -205,7 +216,10 @@ function reportUnmappable(
 				"ASS opaque boxes (BorderStyle 3) are rectangular",
 			);
 		}
-		if (background.paddingX !== undefined || background.paddingY !== undefined) {
+		if (
+			background.paddingX !== undefined ||
+			background.paddingY !== undefined
+		) {
 			countLoss(
 				"background.padding",
 				"ASS opaque boxes take their size from the text, not from padding",
@@ -238,7 +252,9 @@ export function toAssColor(input: string): string {
 	}
 	const rgba = input
 		.trim()
-		.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i);
+		.match(
+			/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i,
+		);
 	if (rgba) {
 		return assColor({
 			red: Number(rgba[1]),

@@ -12,6 +12,7 @@ import { DEFAULTS } from "@/timeline/defaults";
 import { mediaTimeFromSeconds } from "@/wasm";
 import type { CreateTextElement } from "@/timeline";
 import type { TextBackground } from "@/text/background";
+import type { TextHighlight } from "@/text/highlight";
 import type {
 	TextAlign,
 	TextDecoration,
@@ -60,6 +61,7 @@ type ResolvedSubtitleStyle = {
 	letterSpacing: number;
 	lineHeight: number;
 	background: TextBackground;
+	highlight: TextHighlight;
 	placement: NonNullable<SubtitleStyleOverrides["placement"]>;
 };
 
@@ -88,6 +90,10 @@ function resolveSubtitleStyle({
 			...DEFAULTS.text.background,
 			enabled: false,
 			...(style?.background ?? {}),
+		},
+		highlight: {
+			enabled: style?.highlight?.enabled ?? DEFAULTS.text.highlight.enabled,
+			color: style?.highlight?.color ?? DEFAULTS.text.highlight.color,
 		},
 		placement: {
 			verticalAlign: style?.placement?.verticalAlign ?? "bottom",
@@ -256,6 +262,9 @@ function buildElement({
 				style.background.offsetX ?? DEFAULTS.text.background.offsetX,
 			"background.offsetY":
 				style.background.offsetY ?? DEFAULTS.text.background.offsetY,
+			"highlight.enabled": style.highlight.enabled,
+			"highlight.color": style.highlight.color,
+			...(caption.speaker ? { "caption.speaker": caption.speaker } : {}),
 			"transform.positionX": positionX,
 			"transform.positionY": positionY,
 		},

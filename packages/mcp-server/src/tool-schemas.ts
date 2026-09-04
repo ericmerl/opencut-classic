@@ -561,6 +561,16 @@ const captionStyleSchema = z
 			})
 			.strict()
 			.optional(),
+		highlight: z
+			.object({
+				enabled: z.boolean(),
+				color: z.string().min(1).optional(),
+			})
+			.strict()
+			.optional()
+			.describe(
+				"Word-by-word emphasis: the spoken word, by character share of the caption's duration, takes this colour in preview and export (the tiktok-karaoke preset enables it).",
+			),
 	})
 	.strict();
 
@@ -929,6 +939,14 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 						text: z.string().trim().min(1),
 						startTime: z.number().int().nonnegative(),
 						duration: z.number().int().positive(),
+						speaker: z
+							.string()
+							.trim()
+							.min(1)
+							.optional()
+							.describe(
+								"Speaker label stored as the caption.speaker param; restyle_captions and rechunk_captions can select by it, and ASS export carries it as the cue's Name.",
+							),
 					})
 					.strict(),
 			)
@@ -985,6 +1003,12 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 			kind: z.literal("restyle_captions"),
 			trackId: z.string().min(1),
 			elementIds: z.array(z.string().min(1)).min(1).optional(),
+			speaker: z
+				.string()
+				.trim()
+				.min(1)
+				.optional()
+				.describe("Restyle only the captions whose caption.speaker equals this."),
 			style: captionStyleSchema.describe(
 				"Style to apply; placement and play-height sizing are refused because restyle does not move captions.",
 			),
@@ -1001,6 +1025,14 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 				.optional()
 				.describe(
 					"Captions to re-segment; omitted re-segments every caption on the track.",
+				),
+			speaker: z
+				.string()
+				.trim()
+				.min(1)
+				.optional()
+				.describe(
+					"Re-segment only the captions whose caption.speaker equals this; chunks never join two speakers.",
 				),
 			maxChars: z
 				.number()
@@ -1485,6 +1517,7 @@ const resolvedCaptionSchema = z
 		text: z.string().trim().min(1),
 		startTime: z.number().int().nonnegative(),
 		duration: z.number().int().positive(),
+		speaker: z.string().trim().min(1).nullable(),
 		resolvedName: z.string().trim().min(1),
 		resolvedContent: z.string().trim().min(1),
 		resolvedParams: elementParamRecordSchema,

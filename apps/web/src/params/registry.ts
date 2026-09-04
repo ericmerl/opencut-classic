@@ -207,6 +207,13 @@ const textElementParams: ElementParamDefinition[] = [
 		keyframable: false,
 	},
 	{
+		key: "caption.speaker",
+		label: "Speaker",
+		type: "text",
+		default: "",
+		keyframable: false,
+	},
+	{
 		key: "fontFamily",
 		label: "Font Family",
 		type: "font",
@@ -288,6 +295,20 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.lineHeight,
 		min: 0.1,
 		step: 0.1,
+	},
+	{
+		key: "highlight.enabled",
+		label: "Highlight Spoken Word",
+		type: "boolean",
+		default: DEFAULTS.text.highlight.enabled,
+		keyframable: false,
+	},
+	{
+		key: "highlight.color",
+		label: "Highlight Color",
+		type: "color",
+		default: DEFAULTS.text.highlight.color,
+		dependencies: [{ param: "highlight.enabled", equals: true }],
 	},
 	{
 		key: "background.enabled",
