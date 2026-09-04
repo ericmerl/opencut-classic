@@ -335,7 +335,12 @@ export class McpLedgerBoundary {
 			};
 		}
 		if (!requiresSaveVerification) {
-			const state = immutableResultState(value);
+			// A project deletion returns the newly active fallback snapshot, while
+			// its durable history must stay attributed to the deleted target.
+			const state =
+				toolName === "opencut_delete_project"
+					? null
+					: immutableResultState(value);
 			return {
 				disposition: "applied-verified",
 				value,

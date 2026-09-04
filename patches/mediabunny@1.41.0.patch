@@ -1,0 +1,216 @@
+diff --git a/node_modules/mediabunny/.bun-tag-46c1b97f81abeb29 b/.bun-tag-46c1b97f81abeb29
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/mediabunny/.bun-tag-a746f3d4f982bfa5 b/.bun-tag-a746f3d4f982bfa5
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/dist/modules/src/matroska/ebml.js b/dist/modules/src/matroska/ebml.js
+index 50cfea7ec0a82b9360dec35174a2c14789241513..d0e82f5655e1d4070dbb7aab25f45b46ec50a0ee 100644
+--- a/dist/modules/src/matroska/ebml.js
++++ b/dist/modules/src/matroska/ebml.js
+@@ -92,6 +92,7 @@ export var EBMLId;
+     EBMLId[EBMLId["BlockAdditional"] = 165] = "BlockAdditional";
+     EBMLId[EBMLId["BlockAddID"] = 238] = "BlockAddID";
+     EBMLId[EBMLId["BlockDuration"] = 155] = "BlockDuration";
++    EBMLId[EBMLId["DiscardPadding"] = 30114] = "DiscardPadding";
+     EBMLId[EBMLId["ReferenceBlock"] = 251] = "ReferenceBlock";
+     EBMLId[EBMLId["Cluster"] = 524531317] = "Cluster";
+     EBMLId[EBMLId["Timestamp"] = 231] = "Timestamp";
+diff --git a/dist/modules/src/matroska/matroska-muxer.js b/dist/modules/src/matroska/matroska-muxer.js
+index c5f55c1ff9e3de4e0b990191cc0f28bf4a9ec0e3..14e58ddd73b7884375fbc4bf52ad2546ad3fa914 100644
+--- a/dist/modules/src/matroska/matroska-muxer.js
++++ b/dist/modules/src/matroska/matroska-muxer.js
+@@ -46,6 +46,7 @@ export class MatroskaMuxer extends Muxer {
+         this.currentClusterMaxMsTimestamp = null;
+         this.trackDatasInCurrentCluster = new Map();
+         this.duration = 0;
++        this.supportsOpusEncoderDelayCompensation = true;
+         this.writer = output._writer;
+         this.format = format;
+         this.ebmlWriter = new EBMLWriter(this.writer);
+@@ -168,6 +169,7 @@ export class MatroskaMuxer extends Muxer {
+         for (const trackData of this.trackDatas) {
+             const codecId = CODEC_STRING_MAP[trackData.track.source._codec];
+             assert(codecId);
++            let codecDelayNs = 0;
+             let seekPreRollNs = 0;
+             if (trackData.type === 'audio' && trackData.track.source._codec === 'opus') {
+                 seekPreRollNs = 1e6 * 80; // In "Matroska ticks" (nanoseconds)
+@@ -175,8 +177,7 @@ export class MatroskaMuxer extends Muxer {
+                 if (description) {
+                     const bytes = toUint8Array(description);
+                     const header = parseOpusIdentificationHeader(bytes);
+-                    // Use the preSkip value from the header
+-                    seekPreRollNs = Math.round(1e9 * (header.preSkip / OPUS_SAMPLE_RATE));
++                    codecDelayNs = Math.round(1e9 * (header.preSkip / OPUS_SAMPLE_RATE));
+                 }
+             }
+             tracksElement.data.push({ id: EBMLId.TrackEntry, data: [
+@@ -204,7 +205,7 @@ export class MatroskaMuxer extends Muxer {
+                     { id: EBMLId.FlagLacing, data: 0 },
+                     { id: EBMLId.Language, data: trackData.track.metadata.languageCode ?? UNDETERMINED_LANGUAGE },
+                     { id: EBMLId.CodecID, data: codecId },
+-                    { id: EBMLId.CodecDelay, data: 0 },
++                    { id: EBMLId.CodecDelay, data: codecDelayNs },
+                     { id: EBMLId.SeekPreRoll, data: seekPreRollNs },
+                     trackData.track.metadata.name !== undefined
+                         ? { id: EBMLId.Name, data: new EBMLUnicodeString(trackData.track.metadata.name) }
+@@ -754,7 +755,7 @@ export class MatroskaMuxer extends Muxer {
+             }
+             const isKeyFrame = packet.type === 'key';
+             const timestamp = this.validateAndNormalizeTimestamp(trackData.track, packet.timestamp, isKeyFrame);
+-            const audioChunk = this.createInternalChunk(packetData, timestamp, packet.duration, packet.type);
++            const audioChunk = this.createInternalChunk(packetData, timestamp, packet.duration, packet.type, null, packet.sideData.discardPadding ?? 0);
+             trackData.chunkQueue.push(audioChunk);
+             await this.interleaveChunks();
+         }
+@@ -852,13 +853,14 @@ export class MatroskaMuxer extends Muxer {
+         writeBits(chunk.data, bitstream.pos, bitstream.pos + 3, colorSpaceID);
+     }
+     /** Converts a read-only external chunk into an internal one for easier use. */
+-    createInternalChunk(data, timestamp, duration, type, additions = null) {
++    createInternalChunk(data, timestamp, duration, type, additions = null, discardPadding = 0) {
+         const internalChunk = {
+             data,
+             type,
+             timestamp,
+             duration,
+             additions,
++            discardPadding,
+         };
+         return internalChunk;
+     }
+@@ -914,7 +916,7 @@ export class MatroskaMuxer extends Muxer {
+         view.setUint8(0, 0x80 | trackData.track.id);
+         view.setInt16(1, relativeTimestamp, false);
+         const msDuration = Math.round(1000 * chunk.duration);
+-        if (!chunk.additions) {
++        if (!chunk.additions && chunk.discardPadding === 0) {
+             // No additions, we can write out a SimpleBlock
+             view.setUint8(3, Number(chunk.type === 'key') << 7); // Flags (keyframe flag only present for SimpleBlock)
+             const simpleBlock = { id: EBMLId.SimpleBlock, data: [
+@@ -944,10 +946,23 @@ export class MatroskaMuxer extends Muxer {
+                             ] }
+                         : null,
+                     msDuration > 0 ? { id: EBMLId.BlockDuration, data: msDuration } : null,
++                    chunk.discardPadding > 0
++                        ? { id: EBMLId.DiscardPadding, data: new EBMLSignedInt(Math.round(1e9 * chunk.discardPadding)) }
++                        : null,
+                 ] };
+             this.ebmlWriter.writeEBML(blockGroup);
+         }
+-        this.duration = Math.max(this.duration, msTimestamp + msDuration);
++        let presentationEndMs = msTimestamp + msDuration;
++        if (trackData.type === 'audio'
++            && trackData.track.source._codec === 'opus'
++            && chunk.discardPadding > 0) {
++            const description = trackData.info.decoderConfig.description;
++            const codecDelay = description
++                ? parseOpusIdentificationHeader(toUint8Array(description)).preSkip / OPUS_SAMPLE_RATE
++                : 0;
++            presentationEndMs = Math.round(1000 * (chunk.timestamp + chunk.duration - chunk.discardPadding - codecDelay));
++        }
++        this.duration = Math.max(this.duration, presentationEndMs);
+         trackData.lastWrittenMsTimestamp = msTimestamp;
+         if (!this.trackDatasInCurrentCluster.has(trackData)) {
+             this.trackDatasInCurrentCluster.set(trackData, {
+diff --git a/dist/modules/src/media-source.js b/dist/modules/src/media-source.js
+index f120d2bb8262379e399c04f489d6215dd975191a..a1f62836d4bca52d61aeace45020cd2eea42e37d 100644
+--- a/dist/modules/src/media-source.js
++++ b/dist/modules/src/media-source.js
+@@ -14,6 +14,7 @@ import { customVideoEncoders, customAudioEncoders, } from './custom-coder.js';
+ import { EncodedPacket } from './packet.js';
+ import { AudioSample, VideoSample } from './sample.js';
+ import { buildAudioEncoderConfig, buildVideoEncoderConfig, validateAudioEncodingConfig, validateVideoEncodingConfig, } from './encode.js';
++import { parseOpusIdentificationHeader } from './codec-data.js';
+ /**
+  * Base class for media sources. Media sources are used to add media samples to an output file.
+  * @group Media sources
+@@ -1191,6 +1192,8 @@ class AudioEncoderWrapper {
+         this.customEncoderCallSerializer = new CallSerializer();
+         this.customEncoderQueueSize = 0;
+         this.lastEndSampleIndex = null;
++        this.opusPreSkipSamples = 0;
++        this.pendingOpusPacket = null;
+         /**
+          * Encoders typically throw their errors "out of band", meaning asynchronously in some other execution context.
+          * However, we want to surface these errors to the user within the normal control flow, so they don't go uncaught.
+@@ -1413,11 +1416,19 @@ class AudioEncoderWrapper {
+                             }
+                         }
+                         const packet = EncodedPacket.fromEncodedChunk(chunk);
+-                        this.encodingConfig.onEncodedPacket?.(packet, meta);
+-                        void this.muxer.addEncodedAudioPacket(this.source._connectedTrack, packet, meta)
+-                            .catch((error) => {
+-                            this.error ??= error;
+-                        });
++                        if (this.encodingConfig.codec === 'opus') {
++                            const description = meta?.decoderConfig?.description;
++                            if (description) {
++                                this.opusPreSkipSamples = parseOpusIdentificationHeader(toUint8Array(description)).preSkip;
++                            }
++                            if (this.pendingOpusPacket) {
++                                this.emitEncodedPacket(this.pendingOpusPacket.packet, this.pendingOpusPacket.meta);
++                            }
++                            this.pendingOpusPacket = { packet, meta };
++                        }
++                        else {
++                            this.emitEncodedPacket(packet, meta);
++                        }
+                     },
+                     error: (error) => {
+                         error.stack = stack; // Provide a more useful stack trace
+@@ -1530,6 +1541,13 @@ class AudioEncoderWrapper {
+                 ;
+         }
+     }
++    emitEncodedPacket(packet, meta) {
++        this.encodingConfig.onEncodedPacket?.(packet, meta);
++        void this.muxer.addEncodedAudioPacket(this.source._connectedTrack, packet, meta)
++            .catch((error) => {
++            this.error ??= error;
++        });
++    }
+     async flushAndClose(forceClose) {
+         if (!forceClose)
+             this.checkForEncoderError();
+@@ -1542,6 +1560,39 @@ class AudioEncoderWrapper {
+         else if (this.encoder) {
+             if (!forceClose) {
+                 await this.encoder.flush();
++                const compensateOpusDelay = this.encodingConfig.codec === 'opus'
++                    && this.muxer.supportsOpusEncoderDelayCompensation === true;
++                if (compensateOpusDelay
++                    && this.opusPreSkipSamples > 0
++                    && this.lastEndSampleIndex !== null
++                    && this.lastSampleRate !== null
++                    && this.lastNumberOfChannels !== null) {
++                    const tail = new AudioData({
++                        data: new Float32Array(this.opusPreSkipSamples * this.lastNumberOfChannels),
++                        format: 'f32',
++                        numberOfChannels: this.lastNumberOfChannels,
++                        numberOfFrames: this.opusPreSkipSamples,
++                        sampleRate: this.lastSampleRate,
++                        timestamp: Math.round(1e6 * this.lastEndSampleIndex / this.lastSampleRate),
++                    });
++                    this.encoder.encode(tail);
++                    tail.close();
++                    await this.encoder.flush();
++                }
++                if (this.pendingOpusPacket) {
++                    let packet = this.pendingOpusPacket.packet;
++                    if (compensateOpusDelay) {
++                        const logicalEnd = this.lastEndSampleIndex / this.lastSampleRate;
++                        const codecDelay = this.opusPreSkipSamples / 48000;
++                        const encodedEnd = packet.timestamp + packet.duration;
++                        const discardPadding = Math.max(0, encodedEnd - logicalEnd - codecDelay);
++                        packet = packet.clone({
++                            sideData: { ...packet.sideData, discardPadding },
++                        });
++                    }
++                    this.emitEncodedPacket(packet, this.pendingOpusPacket.meta);
++                    this.pendingOpusPacket = null;
++                }
+             }
+             if (this.encoder.state !== 'closed') {
+                 this.encoder.close();

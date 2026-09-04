@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ExportReceiptStore } from "./export-receipts";
 
@@ -64,6 +64,8 @@ export interface ExportMediaValidation {
 	audio: {
 		present: boolean;
 		codec: string | null;
+		declaredCodecDelaySeconds: number | null;
+		declaredSeekPreRollSeconds: number | null;
 		sampleRate: number | null;
 		channels: number | null;
 		channelLayout: string | null;
@@ -224,6 +226,20 @@ export class ExportValidator {
 			includeAudio,
 			audioCodec,
 		});
+		const declaredOpusTiming =
+			format === "webm" && audioCodec === "opus"
+				? await readDeclaredWebmOpusTiming(outputPath)
+				: null;
+		if (
+			format === "webm" &&
+			audioCodec === "opus" &&
+			(declaredOpusTiming?.codecDelaySeconds === null ||
+				declaredOpusTiming?.seekPreRollSeconds === null)
+		) {
+			throw new Error(
+				"WebM Opus export does not declare CodecDelay and SeekPreRoll",
+			);
+		}
 		const videoSignals = await this.measureVideoSignals(outputPath);
 		const audioMeasurements = audio
 			? await this.measureAudio({
@@ -273,6 +289,10 @@ export class ExportValidator {
 			audio: {
 				present: !!audio,
 				codec: audioCodec,
+				declaredCodecDelaySeconds:
+					declaredOpusTiming?.codecDelaySeconds ?? null,
+				declaredSeekPreRollSeconds:
+					declaredOpusTiming?.seekPreRollSeconds ?? null,
 				sampleRate: numericValueOrNull(audio?.sample_rate),
 				channels: numericValueOrNull(audio?.channels),
 				channelLayout: stringValue(audio?.channel_layout),
@@ -530,6 +550,80 @@ export class ExportValidator {
 			sha256: await hashFile(path),
 		};
 	}
+}
+
+async function readDeclaredWebmOpusTiming(outputPath: string): Promise<{
+	codecDelaySeconds: number | null;
+	seekPreRollSeconds: number | null;
+}> {
+	const handle = await open(outputPath, "r");
+	try {
+		const info = await handle.stat();
+		const bytes = Buffer.alloc(Math.min(info.size, 4 * 1024 * 1024));
+		const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+		const filePrefix = bytes.subarray(0, bytesRead);
+		const clusterOffset = filePrefix.indexOf(
+			Buffer.from([0x1f, 0x43, 0xb6, 0x75]),
+		);
+		const header =
+			clusterOffset >= 0 ? filePrefix.subarray(0, clusterOffset) : filePrefix;
+		const codecDelayNanoseconds = ebmlUnsignedInteger(
+			header,
+			Buffer.from([0x56, 0xaa]),
+		);
+		const seekPreRollNanoseconds = ebmlUnsignedInteger(
+			header,
+			Buffer.from([0x56, 0xbb]),
+		);
+		return {
+			codecDelaySeconds:
+				codecDelayNanoseconds === null ? null : codecDelayNanoseconds / 1e9,
+			seekPreRollSeconds:
+				seekPreRollNanoseconds === null ? null : seekPreRollNanoseconds / 1e9,
+		};
+	} finally {
+		await handle.close();
+	}
+}
+
+function ebmlUnsignedInteger(bytes: Buffer, id: Buffer): number | null {
+	const values: number[] = [];
+	let searchOffset = 0;
+	for (;;) {
+		const elementOffset = bytes.indexOf(id, searchOffset);
+		if (elementOffset < 0) break;
+		const value = ebmlUnsignedIntegerAt(bytes, elementOffset + id.length);
+		if (value !== null) values.push(value);
+		searchOffset = elementOffset + id.length;
+	}
+	return values.length > 0 ? Math.max(...values) : null;
+}
+
+function ebmlUnsignedIntegerAt(
+	bytes: Buffer,
+	sizeOffset: number,
+): number | null {
+	const firstSizeByte = bytes[sizeOffset];
+	if (firstSizeByte === undefined || firstSizeByte === 0) return null;
+	let sizeLength = 1;
+	let marker = 0x80;
+	while ((firstSizeByte & marker) === 0 && sizeLength <= 8) {
+		sizeLength += 1;
+		marker >>= 1;
+	}
+	if (sizeLength > 8 || sizeOffset + sizeLength > bytes.length) return null;
+	let size = firstSizeByte & (marker - 1);
+	for (let index = 1; index < sizeLength; index += 1) {
+		size = size * 256 + bytes[sizeOffset + index]!;
+	}
+	if (size < 1 || size > 8) return null;
+	const dataOffset = sizeOffset + sizeLength;
+	if (dataOffset + size > bytes.length) return null;
+	let value = 0;
+	for (let index = 0; index < size; index += 1) {
+		value = value * 256 + bytes[dataOffset + index]!;
+	}
+	return Number.isSafeInteger(value) ? value : null;
 }
 
 async function runCommand(

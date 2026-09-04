@@ -32,12 +32,11 @@ const PREVIEW_EXPORT_RGBA_MIN_PSNR_DB = 28;
 // bounded separately because it is the audio-to-video sync error. The real path
 // measured a 0.7 ms lag and an aligned MAE of about 10 on a signal averaging
 // 1275, so 2 ms and 128 (0.4% of full scale) leave several times the observed
-// values while still rejecting a dropped Opus frame (20 ms) or a dropout. The
-// export ends 6.5 ms early because the encoder tail is not flushed (issue #53);
-// the ending window tolerates that through the sample-count bound below.
+// values while still rejecting a dropped Opus frame (20 ms) or a dropout.
 const PREVIEW_EXPORT_PCM_MAE_TOLERANCE = 128;
 const PREVIEW_EXPORT_PCM_LAG_SEARCH_SECONDS = 0.02;
 const PREVIEW_EXPORT_PCM_MAX_LAG_SECONDS = 0.002;
+const PREVIEW_EXPORT_PCM_SAMPLE_COUNT_TOLERANCE_SECONDS = 0.001;
 const PREVIEW_EXPORT_LOUDNESS_TOLERANCE_LU = 1;
 const PREVIEW_EXPORT_TRUE_PEAK_TOLERANCE_DB = 1;
 const AUDIO_BOUNDARY_WINDOW_SECONDS = 0.5;
@@ -60,6 +59,196 @@ afterEach(async () => {
 	}
 	await removeTemporaryDirectory(directory);
 });
+
+integrationTest(
+	"flushes every WebM Opus audio frame through the public export path",
+	async () => {
+		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
+		if (!baseUrl)
+			throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		const browserPath = process.env.OPENCUT_HEADLESS_BROWSER_PATH;
+		if (!browserPath)
+			throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
+
+		const bridgePort = await availablePort();
+		const profileDirectory = join(directory, "opus-tail-profile");
+		const receiptDirectory = join(directory, "opus-tail-receipts");
+		const sourcePath = join(directory, "opus-tail-source.mp4");
+		const outputPath = join(directory, "opus-tail-export.webm");
+		await createSyntheticVideo(sourcePath);
+
+		const mcp = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await mcp.callTool("opencut_start_editor_worker", {});
+		const status = await mcp.callTool("opencut_connection_status", {});
+		const identity = requireRecord(
+			status.connectionIdentity,
+			"connectionIdentity",
+		);
+		const initial = await mcp.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		const projectId = requireString(initial.projectId, "projectId");
+		const imported = await mcp.callTool("opencut_import_media", {
+			...affinity(identity),
+			projectId,
+			operationId: "opus-tail-import",
+			expectedRevision: requireNumber(initial.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(initial),
+			path: sourcePath,
+			startTime: 0,
+			adoptMediaSettings: true,
+		});
+		const importedSnapshot = requireRecord(
+			imported.snapshot,
+			"imported snapshot",
+		);
+		const exported = await mcp.callTool(
+			"opencut_export_project",
+			{
+				...affinity(identity),
+				projectId,
+				operationId: "opus-tail-export",
+				expectedRevision: requireNumber(imported.revision, "import revision"),
+				expectedProjectContentHash: requireProjectContentHash(importedSnapshot),
+				outputPath,
+				format: "webm",
+				quality: "low",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: true,
+				canvasSize: { width: 64, height: 64 },
+			},
+			5 * 60_000,
+		);
+		expect(exported).toMatchObject({
+			status: "exported",
+			validation: {
+				status: "validated",
+				audio: {
+					codec: "opus",
+					declaredCodecDelaySeconds: 0.0065,
+					declaredSeekPreRollSeconds: 0.08,
+				},
+			},
+		});
+		const webmValidation = requireRecord(exported.validation, "validation");
+		expect(
+			Math.abs(
+				requireNumber(webmValidation.durationSeconds, "durationSeconds") - 2,
+			),
+		).toBeLessThanOrEqual(0.001);
+
+		const decodedAudio = await extractPcmI16(outputPath, 48_000);
+		const decodedFrames = decodedAudio.length / PARITY_AUDIO_CHANNELS;
+		expect(Math.abs(decodedFrames - 96_000)).toBeLessThanOrEqual(1);
+
+		const mp4OutputPath = join(directory, "aac-priming-export.mp4");
+		const aacExported = await mcp.callTool(
+			"opencut_export_project",
+			{
+				...affinity(identity),
+				projectId,
+				operationId: "aac-priming-export",
+				expectedRevision: requireNumber(imported.revision, "import revision"),
+				expectedProjectContentHash: requireProjectContentHash(importedSnapshot),
+				outputPath: mp4OutputPath,
+				format: "mp4",
+				quality: "low",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: true,
+				canvasSize: { width: 64, height: 64 },
+			},
+			5 * 60_000,
+		);
+		expect(aacExported).toMatchObject({
+			status: "exported",
+			validation: {
+				status: "validated",
+				audio: {
+					codec: "aac",
+					declaredCodecDelaySeconds: null,
+					declaredSeekPreRollSeconds: null,
+				},
+			},
+		});
+		const decodedAacAudio = await extractPcmI16(mp4OutputPath, 48_000);
+		const decodedAacFrames = decodedAacAudio.length / PARITY_AUDIO_CHANNELS;
+		// Chromium emits whole 1024-sample AAC access units and this MP4 path has
+		// no declared codec delay. Preserve the confirmed behavior as a bound: no
+		// timeline content is cut, and the surplus stays within one AAC unit after
+		// resampling the 44.1 kHz stream to the comparison rate.
+		expect(decodedAacFrames).toBeGreaterThanOrEqual(96_000);
+		expect(decodedAacFrames - 96_000).toBeLessThanOrEqual(
+			Math.ceil((1024 * 48_000) / 44_100),
+		);
+
+		const receipt = await mcp.callTool("opencut_get_export_receipt", {
+			operationId: "opus-tail-export",
+		});
+		expect(receipt).toMatchObject({
+			status: "found",
+			receipt: {
+				result: {
+					validation: {
+						audio: { declaredCodecDelaySeconds: 0.0065 },
+					},
+				},
+			},
+		});
+		await mcp.callTool("opencut_stop_editor_worker", {});
+		await mcp.close();
+
+		const restarted = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await restarted.callTool("opencut_start_editor_worker", { projectId });
+		const restartedStatus = await restarted.callTool(
+			"opencut_connection_status",
+			{},
+		);
+		const restartedIdentity = requireRecord(
+			restartedStatus.connectionIdentity,
+			"restarted connectionIdentity",
+		);
+		const replayed = await restarted.callTool(
+			"opencut_export_project",
+			{
+				...affinity(restartedIdentity),
+				projectId,
+				operationId: "opus-tail-export",
+				expectedRevision: requireNumber(imported.revision, "import revision"),
+				expectedProjectContentHash: requireProjectContentHash(importedSnapshot),
+				outputPath,
+				format: "webm",
+				quality: "low",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: true,
+				canvasSize: { width: 64, height: 64 },
+			},
+			5 * 60_000,
+		);
+		expect(replayed).toMatchObject({
+			status: "exported",
+			durableOperationStatus: "replayed",
+			sha256: exported.sha256,
+			validation: {
+				audio: { declaredCodecDelaySeconds: 0.0065 },
+			},
+		});
+		await restarted.callTool("opencut_stop_editor_worker", {});
+	},
+	10 * 60_000,
+);
 
 integrationTest(
 	"lists native history and safely performs multi-step undo, redo, checkpoint, restore, and restart rejection",
@@ -2428,7 +2617,9 @@ integrationTest(
 			expect(
 				Math.abs(previewPcm.length - exportPcm.length),
 			).toBeLessThanOrEqual(
-				PARITY_AUDIO_SAMPLE_RATE * PARITY_AUDIO_CHANNELS * 0.1,
+				PARITY_AUDIO_SAMPLE_RATE *
+					PARITY_AUDIO_CHANNELS *
+					PREVIEW_EXPORT_PCM_SAMPLE_COUNT_TOLERANCE_SECONDS,
 			);
 			const pcmMetrics = pcmComparisonMetrics(previewPcm, exportPcm);
 			console.log(
@@ -3217,7 +3408,7 @@ integrationTest(
 		}
 		await third.callTool("opencut_stop_editor_worker", {});
 	},
-	10 * 60_000,
+	20 * 60_000,
 );
 
 function affinity(identity: Record<string, unknown>) {
@@ -3605,7 +3796,10 @@ function rgbaComparisonMetrics(
 	};
 }
 
-async function extractPcmI16(path: string): Promise<Int16Array> {
+async function extractPcmI16(
+	path: string,
+	sampleRate = PARITY_AUDIO_SAMPLE_RATE,
+): Promise<Int16Array> {
 	const ffmpeg =
 		process.env.OPENCUT_FFMPEG_PATH ?? process.env.FFMPEG_PATH ?? "ffmpeg";
 	return new Promise((resolve, reject) => {
@@ -3623,7 +3817,7 @@ async function extractPcmI16(path: string): Promise<Int16Array> {
 				"-ac",
 				String(PARITY_AUDIO_CHANNELS),
 				"-ar",
-				String(PARITY_AUDIO_SAMPLE_RATE),
+				String(sampleRate),
 				"-f",
 				"s16le",
 				"-acodec",

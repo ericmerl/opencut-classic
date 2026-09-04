@@ -635,6 +635,12 @@ describe("MCP ledger handler recovery", () => {
 				projectId: "project-2",
 				activeProjectId: "project-2",
 				deletedProjectId: "project-1",
+				revision: 8,
+				snapshot: {
+					...projectSnapshot("b"),
+					projectId: "project-2",
+					sceneId: "scene-2",
+				},
 			}),
 		);
 		const history = await ledger.list({ limit: 10, projectId: "project-1" });
