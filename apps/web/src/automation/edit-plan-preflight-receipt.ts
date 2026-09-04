@@ -166,6 +166,7 @@ function normalizeRustOperationOptions(
 	// `undefined` for operations such as set_audio.
 	delete value.resolvedAllocations;
 	delete value.resolvedParams;
+	delete value.resolvedChunks;
 	delete value.resolvedCascadeElementIds;
 	if (value.autoTrackId === undefined) delete value.autoTrackId;
 	const optional: Partial<Record<typeof operation.kind, string[]>> = {
@@ -181,6 +182,14 @@ function normalizeRustOperationOptions(
 		merge_captions: ["separator"],
 		split_caption: ["rightElementId"],
 		restyle_captions: ["elementIds"],
+		rechunk_captions: [
+			"elementIds",
+			"maxChars",
+			"maxCharsPerSecond",
+			"maxDuration",
+			"maxGap",
+		],
+		repair_caption_overlaps: ["elementIds", "minGap"],
 		duplicate_elements: ["duplicateIds"],
 		create_compound: ["name", "targetTrackId"],
 		break_apart_compound: ["restoredElementIds"],

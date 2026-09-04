@@ -156,6 +156,29 @@ export function toAutomationResolvedOperation(
 				style: resolvedSubtitleStyle(operation.style) ?? {},
 				resolvedParams: optional(operation.resolvedParams),
 			};
+		case "rechunk_captions":
+			return {
+				...operation,
+				elementIds: optional(operation.elementIds),
+				maxChars: optional(operation.maxChars),
+				maxCharsPerSecond: optional(operation.maxCharsPerSecond),
+				maxDuration: optionalMediaTime(operation.maxDuration),
+				maxGap: optionalMediaTime(operation.maxGap),
+				resolvedChunks: operation.resolvedChunks?.map((chunk) => ({
+					elementId: chunk.elementId,
+					sourceElementId: chunk.sourceElementId,
+					text: chunk.text,
+					startTime: mediaTime({ ticks: chunk.startTime }),
+					duration: mediaTime({ ticks: chunk.duration }),
+				})),
+				resolvedAllocations: optional(operation.resolvedAllocations),
+			};
+		case "repair_caption_overlaps":
+			return {
+				...operation,
+				elementIds: optional(operation.elementIds),
+				minGap: optionalMediaTime(operation.minGap),
+			};
 		case "delete":
 			return operation;
 		case "duplicate_elements":
@@ -524,6 +547,25 @@ function toNativeEditOperation(
 				elementIds: operation.elementIds,
 				style: operation.style,
 				resolvedParams: operation.resolvedParams,
+			};
+		case "rechunk_captions":
+			return {
+				kind: operation.kind,
+				trackId: operation.trackId,
+				elementIds: operation.elementIds,
+				maxChars: operation.maxChars,
+				maxCharsPerSecond: operation.maxCharsPerSecond,
+				maxDuration: operation.maxDuration,
+				maxGap: operation.maxGap,
+				resolvedChunks: operation.resolvedChunks,
+				resolvedAllocations: operation.resolvedAllocations,
+			};
+		case "repair_caption_overlaps":
+			return {
+				kind: operation.kind,
+				trackId: operation.trackId,
+				elementIds: operation.elementIds,
+				minGap: operation.minGap,
 			};
 		case "delete":
 			return {

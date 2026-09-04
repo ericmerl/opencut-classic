@@ -530,6 +530,15 @@ function validateEvidence(
 	}
 }
 
+/** Operations whose targets are every caption on `trackId` unless listed. */
+const CAPTION_TRACK_OPERATIONS = new Set([
+	"shift_captions",
+	"merge_captions",
+	"restyle_captions",
+	"rechunk_captions",
+	"repair_caption_overlaps",
+]);
+
 function validateOperationAttribution(
 	evaluation: Extract<
 		BrowserEditPlanPreflightResponse,
@@ -570,6 +579,20 @@ function validateOperationAttribution(
 				allocation.resolvedId === consequence.elementId &&
 				allocation.role.includes("element"),
 		);
+		// Caption operations address the listed captions or, when no ids are
+		// given, every caption on their track; both scopes are caller-named.
+		// The track is read before and after the plan because an earlier
+		// operation may have created a caption there.
+		const captionTrackScoped =
+			CAPTION_TRACK_OPERATIONS.has(operation.kind) &&
+			"trackId" in operation &&
+			!("elementIds" in operation && Array.isArray(operation.elementIds)) &&
+			[evaluation.before, evaluation.predictedAfter].some((snapshot) =>
+				snapshot.project.scenes
+					.find((scene) => scene.id === evaluation.source.sceneId)
+					?.tracks.find((track) => track.id === operation.trackId)
+					?.elements.some((element) => element.id === consequence.elementId),
+			);
 		const removedWithTrack =
 			operation.kind === "remove_track" &&
 			(operation.resolvedCascadeElementIds?.includes(consequence.elementId) ||
@@ -582,6 +605,7 @@ function validateOperationAttribution(
 			!directlyReferenced &&
 			!rippleAttributed &&
 			!allocatedByOperation &&
+			!captionTrackScoped &&
 			!removedWithTrack
 		) {
 			throw new Error(
@@ -606,7 +630,7 @@ function operationReferencesElement(
 	]) {
 		if (record[field] === elementId) return true;
 	}
-	for (const field of ["duplicateIds", "restoredElementIds"]) {
+	for (const field of ["duplicateIds", "restoredElementIds", "elementIds"]) {
 		const values = record[field];
 		if (Array.isArray(values) && values.includes(elementId)) return true;
 	}

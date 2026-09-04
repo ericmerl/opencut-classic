@@ -1069,6 +1069,7 @@ function normalizeRustOperationOptions(
 	const value = { ...operation } as { [key: string]: unknown };
 	delete value.resolvedCascadeElementIds;
 	delete value.resolvedParams;
+	delete value.resolvedChunks;
 	const optional: Partial<Record<PreflightEditOperation["kind"], string[]>> = {
 		insert_text: ["elementId"],
 		insert_graphic: ["elementId", "name", "trackId", "params"],
@@ -1082,6 +1083,14 @@ function normalizeRustOperationOptions(
 		merge_captions: ["separator"],
 		split_caption: ["rightElementId"],
 		restyle_captions: ["elementIds"],
+		rechunk_captions: [
+			"elementIds",
+			"maxChars",
+			"maxCharsPerSecond",
+			"maxDuration",
+			"maxGap",
+		],
+		repair_caption_overlaps: ["elementIds", "minGap"],
 		duplicate_elements: ["duplicateIds"],
 		create_compound: ["name", "targetTrackId"],
 		break_apart_compound: ["restoredElementIds"],

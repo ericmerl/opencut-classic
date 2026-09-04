@@ -16,7 +16,9 @@ type CaptionRestructureOperation = Extract<
 			| "shift_captions"
 			| "merge_captions"
 			| "split_caption"
-			| "restyle_captions";
+			| "restyle_captions"
+			| "rechunk_captions"
+			| "repair_caption_overlaps";
 	}
 >;
 
@@ -147,6 +149,112 @@ export function buildCaptionRestructureCommand({
 					},
 				}),
 			]);
+		}
+		case "rechunk_captions": {
+			const chunks = operation.resolvedChunks;
+			if (!chunks || chunks.length === 0) {
+				throw new Error("caption chunks were not resolved");
+			}
+			const targets = captionTargets({ track, elementIds: operation.elementIds });
+			const sources = new Map(targets.map((element) => [element.id, element]));
+			const chunkIds = new Set(chunks.map((chunk) => chunk.elementId));
+			const commands: Command[] = [];
+			// Captions the chunks did not reuse vanished into the chunks that
+			// replaced them; remove them before the reused ones take new spans.
+			const surplus = targets.filter((element) => !chunkIds.has(element.id));
+			if (surplus.length > 0) {
+				commands.push(
+					new DeleteElementsCommand({
+						elements: surplus.map((element) => ({
+							trackId: track.id,
+							elementId: element.id,
+						})),
+					}),
+				);
+			}
+			const updates: ConstructorParameters<
+				typeof UpdateElementsCommand
+			>[0]["updates"] = [];
+			const inserts: Command[] = [];
+			for (const chunk of chunks) {
+				const source = sources.get(chunk.sourceElementId);
+				if (!source) {
+					throw new Error(`unknown chunk source: ${chunk.sourceElementId}`);
+				}
+				const params = { ...source.params, content: chunk.text };
+				if (sources.has(chunk.elementId)) {
+					updates.push({
+						trackId: track.id,
+						elementId: chunk.elementId,
+						patch: {
+							name: source.name,
+							startTime: mediaTime({ ticks: chunk.startTime }),
+							duration: mediaTime({ ticks: chunk.duration }),
+							params,
+						},
+					});
+					continue;
+				}
+				inserts.push(
+					new InsertElementCommand({
+						elementId: chunk.elementId,
+						placement: { mode: "explicit", trackId: track.id },
+						element: {
+							type: "text",
+							name: source.name,
+							startTime: mediaTime({ ticks: chunk.startTime }),
+							duration: mediaTime({ ticks: chunk.duration }),
+							trimStart: source.trimStart,
+							trimEnd: source.trimEnd,
+							params,
+						},
+					}),
+				);
+			}
+			if (updates.length > 0) {
+				commands.push(new UpdateElementsCommand({ updates }));
+			}
+			commands.push(...inserts);
+			return new BatchCommand(commands);
+		}
+		case "repair_caption_overlaps": {
+			const gap = operation.minGap ?? 0;
+			if (gap < 0) throw new Error("minGap cannot be negative");
+			const ordered = [
+				...captionTargets({ track, elementIds: operation.elementIds }),
+			].sort(
+				(left, right) =>
+					left.startTime - right.startTime || left.id.localeCompare(right.id),
+			);
+			const updates: ConstructorParameters<
+				typeof UpdateElementsCommand
+			>[0]["updates"] = [];
+			for (let position = 0; position + 1 < ordered.length; position++) {
+				const earlier = ordered[position]!;
+				const later = ordered[position + 1]!;
+				const limit = later.startTime - gap;
+				if (earlier.startTime + earlier.duration <= limit) continue;
+				// Shortening an animated caption would re-key its animations here,
+				// which the evaluator refuses to predict.
+				if (earlier.animations && Object.keys(earlier.animations).length > 0) {
+					throw new Error(
+						"repair_caption_overlaps does not support animated captions",
+					);
+				}
+				const trimmed = limit - earlier.startTime;
+				if (trimmed <= 0) {
+					throw new Error("overlap repair leaves a caption without duration");
+				}
+				updates.push({
+					trackId: track.id,
+					elementId: earlier.id,
+					patch: { duration: mediaTime({ ticks: trimmed }) },
+				});
+			}
+			if (updates.length === 0) {
+				throw new Error("no caption overlaps to repair");
+			}
+			return new UpdateElementsCommand({ updates });
 		}
 		case "restyle_captions": {
 			const params = operation.resolvedParams;

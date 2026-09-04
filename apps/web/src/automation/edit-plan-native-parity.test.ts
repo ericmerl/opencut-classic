@@ -256,6 +256,25 @@ const parityCases: NativeParityCase[] = [
 		state: withPlainCaptions,
 	},
 	{
+		name: "rechunk_captions replays Rust-resolved word-timed chunks",
+		operation: {
+			kind: "rechunk_captions",
+			trackId: "text-track",
+			elementIds: ["caption-second", "caption-third"],
+			maxChars: 8,
+		},
+		state: withPlainCaptions,
+	},
+	{
+		name: "repair_caption_overlaps shortens the earlier caption",
+		operation: {
+			kind: "repair_caption_overlaps",
+			trackId: "text-track",
+			minGap: mediaTime({ ticks: 6_000 }),
+		},
+		state: withOverlappingCaptions,
+	},
+	{
 		name: "update_caption preserves text defaults",
 		state: richState,
 		operation: {
@@ -1334,6 +1353,10 @@ function invalidOperation(
 			return { ...operation, splitIndex: 0 };
 		case "restyle_captions":
 			return { ...operation, style: { fontSizeRatioOfPlayHeight: 0.1 } };
+		case "rechunk_captions":
+			return { ...operation, maxChars: 0 };
+		case "repair_caption_overlaps":
+			return { ...operation, minGap: mediaTime({ ticks: -1 }) };
 		case "create_compound":
 			return { ...operation, elements: operation.elements.slice(0, 1) };
 		case "set_group":
@@ -1824,6 +1847,23 @@ function withPlainCaptions(): NativeState {
 		}),
 		plainCaption({ id: "caption-third", content: "Third caption", startTicks: 300_000 }),
 	] as TextElement[];
+	return state;
+}
+
+/** The plain-caption state with the third caption overlapping the second. */
+function withOverlappingCaptions(): NativeState {
+	const state = withPlainCaptions();
+	const target = state.project.scenes.find(
+		(scene) => scene.id === "scene-target",
+	);
+	const track = target?.tracks.overlay.find(
+		(candidate) => candidate.id === "text-track",
+	);
+	const third = track?.elements.find(
+		(element) => element.id === "caption-third",
+	);
+	if (!third) throw new Error("caption fixture missing");
+	third.startTime = mediaTime({ ticks: 250_000 });
 	return state;
 }
 

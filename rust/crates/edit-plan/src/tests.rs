@@ -778,7 +778,7 @@ fn adjust_mix_gain_rejects_projects_without_audible_timeline_elements() {
 }
 
 #[test]
-fn all_45_operation_variants_have_a_strict_typed_transport_shape() {
+fn all_47_operation_variants_have_a_strict_typed_transport_shape() {
     let reference = serde_json::json!({ "trackId": "main", "elementId": "element" });
     let operations = vec![
         serde_json::json!({ "kind": "insert_text", "content": "x", "startTime": 0, "duration": 1 }),
@@ -794,6 +794,8 @@ fn all_45_operation_variants_have_a_strict_typed_transport_shape() {
         serde_json::json!({ "kind": "merge_captions", "trackId": "t", "elementIds": ["a", "b"] }),
         serde_json::json!({ "kind": "split_caption", "trackId": "t", "elementId": "e", "splitIndex": 1 }),
         serde_json::json!({ "kind": "restyle_captions", "trackId": "t", "style": { "preset": "tiktok-classic" } }),
+        serde_json::json!({ "kind": "rechunk_captions", "trackId": "t", "maxChars": 24 }),
+        serde_json::json!({ "kind": "repair_caption_overlaps", "trackId": "t", "minGap": 0 }),
         serde_json::json!({ "kind": "delete", "trackId": "t", "elementId": "e", "ripple": false, "relationshipScope": "all" }),
         serde_json::json!({ "kind": "duplicate_elements", "elements": [reference.clone()], "relationshipScope": "all" }),
         serde_json::json!({ "kind": "create_compound", "compoundId": "c", "elements": [reference.clone(), reference.clone()], "relationshipScope": "all" }),
@@ -827,7 +829,7 @@ fn all_45_operation_variants_have_a_strict_typed_transport_shape() {
         serde_json::json!({ "kind": "set_audio_replacement_state", "trackId": "t", "elementId": "e", "enabled": true }),
         serde_json::json!({ "kind": "remove_audio_replacement", "trackId": "t", "elementId": "e" }),
     ];
-    assert_eq!(operations.len(), 45);
+    assert_eq!(operations.len(), 47);
     for operation in operations {
         let expected_kind = operation["kind"].clone();
         let typed: EditOperation = serde_json::from_value(operation.clone()).unwrap();
@@ -836,7 +838,7 @@ fn all_45_operation_variants_have_a_strict_typed_transport_shape() {
 }
 
 #[test]
-fn all_55_operation_variants_have_valid_and_invalid_evaluator_coverage() {
+fn all_57_operation_variants_have_valid_and_invalid_evaluator_coverage() {
     let t = MediaTime::from_ticks;
     let reference = || ElementRef {
         track_id: "track-text".into(),
@@ -869,6 +871,14 @@ fn all_55_operation_variants_have_valid_and_invalid_evaluator_coverage() {
     second_video.common_mut().source_duration = Some(t(60_060));
     transition_track.elements[1] = second_video;
     transition_track.transitions.clear();
+    let mut overlap_snapshot = full_snapshot();
+    let overlap_track = &mut overlap_snapshot.project.scenes[0].tracks[1];
+    let mut second_caption = overlap_track.elements[0].clone();
+    second_caption.common_mut().id = "text-2".into();
+    second_caption.common_mut().name = "Second caption".into();
+    second_caption.common_mut().order = 1;
+    second_caption.common_mut().start_time = t(30_000);
+    overlap_track.elements.push(second_caption);
     let cases: Vec<(&str, ProjectSnapshot, Vec<EditOperation>)> = vec![
         (
             "insert_text",
@@ -1044,6 +1054,30 @@ fn all_55_operation_variants_have_valid_and_invalid_evaluator_coverage() {
                     ..Default::default()
                 },
                 resolved_params: None,
+            }],
+        ),
+        (
+            "rechunk_captions",
+            full_snapshot(),
+            vec![EditOperation::RechunkCaptions {
+                track_id: "track-text".into(),
+                element_ids: None,
+                max_chars: None,
+                // One character per second stretches the fixture caption.
+                max_chars_per_second: Some(1.0),
+                max_duration: None,
+                max_gap: None,
+                resolved_chunks: None,
+                resolved_allocations: None,
+            }],
+        ),
+        (
+            "repair_caption_overlaps",
+            overlap_snapshot,
+            vec![EditOperation::RepairCaptionOverlaps {
+                track_id: "track-text".into(),
+                element_ids: None,
+                min_gap: None,
             }],
         ),
         (
@@ -1491,7 +1525,7 @@ fn all_55_operation_variants_have_valid_and_invalid_evaluator_coverage() {
             }],
         ),
     ];
-    assert_eq!(cases.len(), 55);
+    assert_eq!(cases.len(), 57);
     for (name, before, operations) in cases {
         let valid = evaluate(options_with_before(before.clone(), operations.clone()));
         if let Err(error) = valid {
@@ -1891,6 +1925,12 @@ fn invalid_operations_for(operations: &[EditOperation]) -> Vec<EditOperation> {
                 "style".into(),
                 serde_json::json!({ "fontSizeRatioOfPlayHeight": 0.1 }),
             );
+        }
+        "rechunk_captions" => {
+            object.insert("maxChars".into(), serde_json::json!(0));
+        }
+        "repair_caption_overlaps" => {
+            object.insert("minGap".into(), serde_json::json!(-1));
         }
         "duplicate_elements" | "create_compound" | "set_group" | "set_link" => {
             object.insert("elements".into(), serde_json::json!([]));
@@ -2927,6 +2967,128 @@ fn fast_captions_warn_about_reading_speed() {
         warning.code == WarningCode::CaptionReadingSpeed
             && warning.object_id.as_deref() == Some("cap-a")
     }));
+}
+
+#[test]
+fn rechunk_captions_resolves_word_timed_chunks_and_reuses_ids_in_order() {
+    let result = evaluate(options(caption_plan(vec![
+        EditOperation::RechunkCaptions {
+            track_id: "captions".into(),
+            element_ids: None,
+            max_chars: Some(8),
+            max_chars_per_second: None,
+            max_duration: None,
+            max_gap: None,
+            resolved_chunks: None,
+            resolved_allocations: None,
+        },
+    ])))
+    .unwrap();
+    let EditOperation::RechunkCaptions {
+        resolved_chunks: Some(chunks),
+        resolved_allocations: Some(allocations),
+        ..
+    } = &result.resolved_operations[1]
+    else {
+        panic!("rechunk was not resolved");
+    };
+    // "hello there" and "general kenobi" break into one word per chunk under
+    // an eight-character budget; the first two chunks keep the source ids.
+    let texts: Vec<&str> = chunks.iter().map(|chunk| chunk.text.as_str()).collect();
+    assert_eq!(texts, ["hello", "there", "general", "kenobi"]);
+    assert_eq!(chunks[0].element_id, "cap-a");
+    assert_eq!(chunks[1].element_id, "cap-b");
+    assert_eq!(chunks[1].source_element_id, "cap-a");
+    assert_eq!(chunks[2].source_element_id, "cap-b");
+    assert_eq!(allocations.len(), 2);
+    assert_eq!(allocations[0].resolved_id, chunks[2].element_id);
+    assert_eq!(allocations[1].resolved_id, chunks[3].element_id);
+    // Word timing follows character share: "hello" is five of ten characters.
+    let there = caption_after(&result, "cap-b").common();
+    assert_eq!(scalar_string_of(&there.params, "content"), Some("there"));
+    assert_eq!(there.start_time, MediaTime::from_ticks(60_000));
+    assert_eq!(there.duration, MediaTime::from_ticks(60_000));
+    let kenobi = caption_after(&result, &chunks[3].element_id).common();
+    assert_eq!(kenobi.start_time, MediaTime::from_ticks(214_615));
+    assert_eq!(kenobi.duration, MediaTime::from_ticks(55_385));
+    assert!(result.warnings.is_empty());
+}
+
+#[test]
+fn rechunk_captions_extends_chunks_to_the_reading_speed_and_warns_when_it_cannot() {
+    let result = evaluate(options(caption_plan(vec![
+        EditOperation::RechunkCaptions {
+            track_id: "captions".into(),
+            element_ids: None,
+            max_chars: Some(8),
+            max_chars_per_second: Some(2.0),
+            max_duration: None,
+            max_gap: None,
+            resolved_chunks: None,
+            resolved_allocations: None,
+        },
+    ])))
+    .unwrap();
+    let EditOperation::RechunkCaptions {
+        resolved_chunks: Some(chunks),
+        ..
+    } = &result.resolved_operations[1]
+    else {
+        panic!("rechunk was not resolved");
+    };
+    // "hello" needs 2.5 s at two characters per second but the next chunk
+    // starts at 0.5 s, so it stays short and the evaluator says so.
+    assert_eq!(chunks[0].duration, MediaTime::from_ticks(60_000));
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == WarningCode::CaptionReadingSpeed
+            && warning.object_id.as_deref() == Some("cap-a")
+    }));
+    // The last chunk has nothing after it, so it grows to the full 3 s.
+    assert_eq!(chunks[3].duration, MediaTime::from_ticks(360_000));
+    assert!(!result.warnings.iter().any(|warning| {
+        warning.code == WarningCode::CaptionReadingSpeed
+            && warning.object_id.as_deref() == Some(chunks[3].element_id.as_str())
+    }));
+}
+
+#[test]
+fn repair_caption_overlaps_trims_the_earlier_caption_and_refuses_to_empty_it() {
+    let overlapping = EditOperation::ShiftCaptions {
+        track_id: "captions".into(),
+        delta: MediaTime::from_ticks(-60_000),
+        element_ids: Some(vec!["cap-b".into()]),
+    };
+    let result = evaluate(options(caption_plan(vec![
+        overlapping.clone(),
+        EditOperation::RepairCaptionOverlaps {
+            track_id: "captions".into(),
+            element_ids: None,
+            min_gap: Some(MediaTime::from_ticks(6_000)),
+        },
+    ])))
+    .unwrap();
+    // cap-b now starts at 90 000, so cap-a ends 6 000 ticks before it.
+    assert_eq!(
+        caption_after(&result, "cap-a").common().duration,
+        MediaTime::from_ticks(84_000)
+    );
+    // The shift at index 1 reported the overlap; the repair at index 2 does not.
+    assert!(!result.warnings.iter().any(|warning| {
+        warning.code == WarningCode::CaptionOverlap && warning.operation_index == 2
+    }));
+    let emptied = evaluate(options(caption_plan(vec![
+        EditOperation::ShiftCaptions {
+            track_id: "captions".into(),
+            delta: MediaTime::from_ticks(-150_000),
+            element_ids: Some(vec!["cap-b".into()]),
+        },
+        EditOperation::RepairCaptionOverlaps {
+            track_id: "captions".into(),
+            element_ids: None,
+            min_gap: None,
+        },
+    ])));
+    assert!(emptied.is_err());
 }
 
 #[test]

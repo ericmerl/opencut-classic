@@ -326,6 +326,20 @@ pub struct ObjectIdAllocation {
     pub resolved_id: String,
 }
 
+/// One caption the evaluator resolved for `rechunk_captions`: its id (a
+/// targeted caption's, reused in timeline order, or a freshly allocated one),
+/// the caption whose style it inherits, and its text and timing.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolvedCaptionChunk {
+    pub element_id: String,
+    pub source_element_id: String,
+    pub text: String,
+    pub start_time: MediaTime,
+    pub duration: MediaTime,
+}
+
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -1125,14 +1139,12 @@ pub enum EditOperation {
     ShiftCaptions {
         track_id: String,
         delta: MediaTime,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         element_ids: Option<Vec<String>>,
     },
     /// Joins two or more captions on one track into the earliest of them.
     MergeCaptions {
         track_id: String,
         element_ids: Vec<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         separator: Option<String>,
     },
     /// Splits a caption's text at a character index into two captions whose
@@ -1149,11 +1161,32 @@ pub enum EditOperation {
     /// the track or to the listed ones; the evaluator resolves the params.
     RestyleCaptions {
         track_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         element_ids: Option<Vec<String>>,
         style: SubtitleStyleOverrides,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolved_params: Option<Params>,
+    },
+    /// Re-segments every caption on the track (or the listed ones) into
+    /// chunks of at most `max_chars` characters that read no faster than
+    /// `max_chars_per_second`; the evaluator resolves the exact chunks.
+    RechunkCaptions {
+        track_id: String,
+        element_ids: Option<Vec<String>>,
+        max_chars: Option<u32>,
+        max_chars_per_second: Option<f64>,
+        max_duration: Option<MediaTime>,
+        max_gap: Option<MediaTime>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_chunks: Option<Vec<ResolvedCaptionChunk>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_allocations: Option<Vec<ObjectIdAllocation>>,
+    },
+    /// Shortens each caption that runs into the next one so consecutive
+    /// captions on the track are separated by at least `min_gap`.
+    RepairCaptionOverlaps {
+        track_id: String,
+        element_ids: Option<Vec<String>>,
+        min_gap: Option<MediaTime>,
     },
     Delete {
         track_id: String,

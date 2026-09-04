@@ -2621,7 +2621,9 @@ export class EditorAutomation {
 			operation.kind === "shift_captions" ||
 			operation.kind === "merge_captions" ||
 			operation.kind === "split_caption" ||
-			operation.kind === "restyle_captions"
+			operation.kind === "restyle_captions" ||
+			operation.kind === "rechunk_captions" ||
+			operation.kind === "repair_caption_overlaps"
 		) {
 			return buildCaptionRestructureCommand({
 				operation,

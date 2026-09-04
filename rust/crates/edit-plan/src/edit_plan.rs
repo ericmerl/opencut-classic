@@ -8,7 +8,7 @@ use bridge::export;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use time::MediaTime;
+use time::{MediaTime, TICKS_PER_SECOND};
 
 const SNAPSHOT_VERSION: &str = "opencut.edit-plan-snapshot.v2";
 const MAX_OPERATIONS: usize = 1_000;
@@ -240,6 +240,11 @@ pub enum WarningCode {
 /// Captions faster than this are hard to read at full speed; the evaluator
 /// warns rather than rejects so a reviewer decides.
 pub const CAPTION_MAX_CHARS_PER_SECOND: f64 = 20.0;
+/// Default character budget for one rechunked caption: two short lines of
+/// a large social caption.
+pub const CAPTION_DEFAULT_MAX_CHARS: u32 = 32;
+/// Default pause (half a second) that a rechunked caption will not bridge.
+pub const CAPTION_DEFAULT_MAX_GAP_TICKS: i64 = TICKS_PER_SECOND / 2;
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(missing_as_null))]
@@ -440,6 +445,14 @@ fn clear_internal_resolved_fields(operations: &mut [EditOperation]) {
                 resolved_cascade_element_ids,
                 ..
             } => *resolved_cascade_element_ids = None,
+            EditOperation::RechunkCaptions {
+                resolved_chunks,
+                resolved_allocations,
+                ..
+            } => {
+                *resolved_chunks = None;
+                *resolved_allocations = None;
+            }
             _ => {}
         }
     }
@@ -1179,6 +1192,29 @@ impl State {
                 *resolved_params = Some(caption_style_params(style).map_err(|message| {
                     error(ErrorCode::InvalidValue, message, Some(index), Some("style"))
                 })?);
+            }
+            EditOperation::RechunkCaptions {
+                track_id,
+                element_ids,
+                max_chars,
+                max_chars_per_second,
+                max_duration,
+                max_gap,
+                resolved_chunks,
+                resolved_allocations,
+            } => {
+                let (chunks, allocations) = self.resolve_caption_chunks(
+                    track_id,
+                    element_ids.as_deref(),
+                    *max_chars,
+                    *max_chars_per_second,
+                    *max_duration,
+                    *max_gap,
+                    index,
+                    fingerprint,
+                )?;
+                *resolved_chunks = Some(chunks);
+                *resolved_allocations = Some(allocations);
             }
             EditOperation::SetRetime {
                 track_id,
@@ -2356,6 +2392,146 @@ impl State {
                 }
                 Ok(())
             }
+            EditOperation::RechunkCaptions {
+                track_id,
+                element_ids,
+                max_chars_per_second,
+                resolved_chunks,
+                ..
+            } => {
+                let Some(chunks) = resolved_chunks else {
+                    return invalid(index, "caption chunks were not resolved");
+                };
+                if chunks.is_empty() {
+                    return invalid(index, "no caption chunks to apply");
+                }
+                let targets = self.caption_targets(track_id, element_ids.as_deref(), index)?;
+                let sources: BTreeMap<String, Element> = targets
+                    .iter()
+                    .map(|id| {
+                        let element = self
+                            .snapshot
+                            .elements
+                            .iter()
+                            .find(|e| e.track_id == *track_id && e.element_id == *id)
+                            .cloned()
+                            .expect("targets were validated");
+                        (id.clone(), element)
+                    })
+                    .collect();
+                let chunk_ids: BTreeSet<&String> =
+                    chunks.iter().map(|chunk| &chunk.element_id).collect();
+                // Captions the chunks did not reuse vanished into the chunks
+                // that replaced them, so this is not a gap-leaving delete.
+                let surplus: BTreeSet<&String> = targets
+                    .iter()
+                    .filter(|id| !chunk_ids.contains(id))
+                    .collect();
+                self.snapshot.elements.retain(|element| {
+                    !(element.track_id == *track_id && surplus.contains(&element.element_id))
+                });
+                self.snapshot.transitions.retain(|transition| {
+                    !surplus.contains(&transition.from_element_id)
+                        && !surplus.contains(&transition.to_element_id)
+                });
+                for chunk in chunks {
+                    let source = sources.get(&chunk.source_element_id).ok_or_else(|| {
+                        error(
+                            ErrorCode::UnknownReference,
+                            "unknown chunk source",
+                            Some(index),
+                            Some("resolvedChunks"),
+                        )
+                    })?;
+                    let mut params = source.params.clone();
+                    params
+                        .0
+                        .insert("content".to_owned(), Scalar::String(chunk.text.clone()));
+                    if sources.contains_key(&chunk.element_id) {
+                        let element = self.element_mut(track_id, &chunk.element_id, index)?;
+                        element.name = source.name.clone();
+                        element.text = Some(chunk.text.clone());
+                        element.params = params;
+                        element.canonical_params = source.canonical_params.clone();
+                        element.start_time = chunk.start_time;
+                        element.duration = chunk.duration;
+                    } else {
+                        let mut element = new_element(
+                            &chunk.element_id,
+                            "text",
+                            &source.name,
+                            chunk.start_time,
+                            chunk.duration,
+                        );
+                        element.text = Some(chunk.text.clone());
+                        element.params = params;
+                        element.canonical_params = source.canonical_params.clone();
+                        self.insert_element(element, Some(track_id), index)?;
+                    }
+                }
+                self.caption_track_warnings(track_id, index, warnings);
+                // The caller asked for a reading speed; say where the
+                // timeline left no room to meet it.
+                self.caption_reading_speed_warnings(
+                    track_id,
+                    max_chars_per_second.unwrap_or(CAPTION_MAX_CHARS_PER_SECOND),
+                    index,
+                    warnings,
+                );
+                Ok(())
+            }
+            EditOperation::RepairCaptionOverlaps {
+                track_id,
+                element_ids,
+                min_gap,
+            } => {
+                let gap = min_gap.unwrap_or(MediaTime::ZERO);
+                if gap.as_ticks() < 0 {
+                    return bounds(index, "minGap");
+                }
+                let targets = self.caption_targets(track_id, element_ids.as_deref(), index)?;
+                let mut ordered: Vec<(MediaTime, String, MediaTime, bool)> = targets
+                    .iter()
+                    .map(|id| {
+                        let element = self
+                            .snapshot
+                            .elements
+                            .iter()
+                            .find(|e| e.track_id == *track_id && e.element_id == *id)
+                            .expect("targets were validated");
+                        (
+                            element.start_time,
+                            id.clone(),
+                            element.duration,
+                            !element.keyframes.is_empty(),
+                        )
+                    })
+                    .collect();
+                ordered.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+                for pair in ordered.windows(2) {
+                    let (start, id, duration, animated) = &pair[0];
+                    let end = add(*start, *duration, index)?;
+                    let limit = sub(pair[1].0, gap, index)?;
+                    if end.as_ticks() <= limit.as_ticks() {
+                        continue;
+                    }
+                    // Shortening an animated caption would re-key its
+                    // animations, which the browser would do its own way.
+                    if *animated {
+                        return invalid(
+                            index,
+                            "repair_caption_overlaps does not support animated captions",
+                        );
+                    }
+                    let trimmed = sub(limit, *start, index)?;
+                    if trimmed.as_ticks() <= 0 {
+                        return invalid(index, "overlap repair leaves a caption without duration");
+                    }
+                    self.element_mut(track_id, id, index)?.duration = trimmed;
+                }
+                self.caption_track_warnings(track_id, index, warnings);
+                Ok(())
+            }
             EditOperation::Delete {
                 track_id,
                 element_id,
@@ -3111,6 +3287,188 @@ impl State {
         Ok(targets)
     }
 
+    /// Re-segments the targeted captions into chunks of at most `max_chars`
+    /// characters that read no faster than `max_chars_per_second`. Word
+    /// timings are interpolated by character share inside each source
+    /// caption; a chunk closes when the next word would exceed the character
+    /// budget, `max_duration`, or a pause longer than `max_gap`. Each chunk's
+    /// end then grows, up to the next chunk (or the next caption this
+    /// operation leaves alone), until it meets the reading speed. Chunks reuse
+    /// the targeted ids in timeline order and allocate ids for the rest; a
+    /// chunk inherits the style of the caption its first word came from.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_caption_chunks(
+        &mut self,
+        track: &str,
+        element_ids: Option<&[String]>,
+        max_chars: Option<u32>,
+        max_chars_per_second: Option<f64>,
+        max_duration: Option<MediaTime>,
+        max_gap: Option<MediaTime>,
+        index: usize,
+        fingerprint: &str,
+    ) -> Result<(Vec<ResolvedCaptionChunk>, Vec<ObjectIdAllocation>), EditPlanError> {
+        let max_chars = max_chars.unwrap_or(CAPTION_DEFAULT_MAX_CHARS) as usize;
+        if max_chars == 0 {
+            bounds(index, "maxChars")?;
+        }
+        let max_cps = max_chars_per_second.unwrap_or(CAPTION_MAX_CHARS_PER_SECOND);
+        if !max_cps.is_finite() || max_cps <= 0.0 {
+            bounds(index, "maxCharsPerSecond")?;
+        }
+        if max_duration.is_some_and(|limit| limit.as_ticks() <= 0) {
+            bounds(index, "maxDuration")?;
+        }
+        let max_gap = max_gap.unwrap_or(MediaTime::from_ticks(CAPTION_DEFAULT_MAX_GAP_TICKS));
+        if max_gap.as_ticks() < 0 {
+            bounds(index, "maxGap")?;
+        }
+        let targets = self.caption_targets(track, element_ids, index)?;
+        let mut sources: Vec<Element> = targets
+            .iter()
+            .map(|id| {
+                self.snapshot
+                    .elements
+                    .iter()
+                    .find(|e| e.track_id == track && e.element_id == *id)
+                    .cloned()
+                    .expect("targets were validated")
+            })
+            .collect();
+        sources.sort_by(|a, b| {
+            a.start_time
+                .cmp(&b.start_time)
+                .then_with(|| a.element_id.cmp(&b.element_id))
+        });
+        struct Word {
+            text: String,
+            start: i64,
+            end: i64,
+            source: usize,
+        }
+        let mut words: Vec<Word> = Vec::new();
+        for (source_index, source) in sources.iter().enumerate() {
+            if !source.keyframes.is_empty() {
+                invalid(index, "rechunk_captions does not support animated captions")?;
+            }
+            let text = caption_text(source);
+            let tokens: Vec<&str> = text.split_whitespace().collect();
+            let total: i128 = tokens
+                .iter()
+                .map(|token| token.chars().count() as i128)
+                .sum();
+            if total == 0 {
+                continue;
+            }
+            let start = i128::from(source.start_time.as_ticks());
+            let span = i128::from(source.duration.as_ticks());
+            let mut before: i128 = 0;
+            for token in tokens {
+                let length = token.chars().count() as i128;
+                words.push(Word {
+                    text: token.to_owned(),
+                    start: (start + span * before / total) as i64,
+                    end: (start + span * (before + length) / total) as i64,
+                    source: source_index,
+                });
+                before += length;
+            }
+        }
+        if words.is_empty() {
+            invalid(index, "captions have no words to rechunk")?;
+        }
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        let mut current: Vec<usize> = Vec::new();
+        let mut current_chars = 0usize;
+        for (position, word) in words.iter().enumerate() {
+            let word_chars = word.text.chars().count();
+            if let (Some(&first), Some(&last)) = (current.first(), current.last()) {
+                let exceeds_chars = current_chars + 1 + word_chars > max_chars;
+                let exceeds_duration = max_duration
+                    .is_some_and(|limit| word.end - words[first].start > limit.as_ticks());
+                let exceeds_gap = word.start - words[last].end > max_gap.as_ticks();
+                if exceeds_chars || exceeds_duration || exceeds_gap {
+                    groups.push(std::mem::take(&mut current));
+                }
+            }
+            current_chars = if current.is_empty() {
+                word_chars
+            } else {
+                current_chars + 1 + word_chars
+            };
+            current.push(position);
+        }
+        groups.push(current);
+        let starts: Vec<i64> = groups.iter().map(|group| words[group[0]].start).collect();
+        let last_start = *starts.last().expect("at least one chunk");
+        let track_limit = self
+            .snapshot
+            .elements
+            .iter()
+            .filter(|e| {
+                e.track_id == track
+                    && e.element_type == "text"
+                    && !targets.contains(&e.element_id)
+                    && e.start_time.as_ticks() >= last_start
+            })
+            .map(|e| e.start_time.as_ticks())
+            .min();
+        let mut chunks = Vec::with_capacity(groups.len());
+        let mut allocations = Vec::new();
+        for (ordinal, group) in groups.iter().enumerate() {
+            let text = group
+                .iter()
+                .map(|&position| words[position].text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let characters = text.chars().filter(|ch| !ch.is_whitespace()).count() as f64;
+            let start = starts[ordinal];
+            let natural_end = words[*group.last().expect("group is non-empty")].end;
+            let needed = (characters / max_cps * TICKS_PER_SECOND as f64).ceil() as i64;
+            let limit = if ordinal + 1 < groups.len() {
+                Some(starts[ordinal + 1])
+            } else {
+                track_limit
+            };
+            let mut end = natural_end.max(start.saturating_add(needed));
+            if let Some(limit) = limit {
+                end = end.min(limit);
+            }
+            if let Some(max) = max_duration {
+                end = end.min(start.saturating_add(max.as_ticks()));
+            }
+            end = end.max(natural_end);
+            let duration = end - start;
+            if duration <= 0 {
+                invalid(index, "caption is too short to rechunk")?;
+            }
+            let source = &sources[words[group[0]].source];
+            let element_id = match sources.get(ordinal) {
+                Some(reused) => reused.element_id.clone(),
+                None => {
+                    let allocation = self.allocate_mapping(
+                        "caption-element",
+                        &source.element_id,
+                        index,
+                        fingerprint,
+                        ordinal - sources.len(),
+                    )?;
+                    let id = allocation.resolved_id.clone();
+                    allocations.push(allocation);
+                    id
+                }
+            };
+            chunks.push(ResolvedCaptionChunk {
+                element_id,
+                source_element_id: source.element_id.clone(),
+                text,
+                start_time: MediaTime::from_ticks(start),
+                duration: MediaTime::from_ticks(duration),
+            });
+        }
+        Ok((chunks, allocations))
+    }
+
     /// Warns about captions that overlap or read faster than
     /// `CAPTION_MAX_CHARS_PER_SECOND` on `track` after an operation.
     fn caption_track_warnings(&self, track: &str, index: usize, warnings: &mut BTreeSet<Warning>) {
@@ -3143,13 +3501,29 @@ impl State {
                 });
             }
         }
-        for caption in captions {
+        self.caption_reading_speed_warnings(track, CAPTION_MAX_CHARS_PER_SECOND, index, warnings);
+    }
+
+    /// Warns about captions on `track` that read faster than `max_cps`.
+    fn caption_reading_speed_warnings(
+        &self,
+        track: &str,
+        max_cps: f64,
+        index: usize,
+        warnings: &mut BTreeSet<Warning>,
+    ) {
+        for caption in self
+            .snapshot
+            .elements
+            .iter()
+            .filter(|e| e.track_id == track && e.element_type == "text")
+        {
             let characters = caption_text(caption)
                 .chars()
                 .filter(|ch| !ch.is_whitespace())
                 .count() as f64;
             let seconds = caption.duration.to_seconds_f64();
-            if seconds > 0.0 && characters / seconds > CAPTION_MAX_CHARS_PER_SECOND {
+            if seconds > 0.0 && characters / seconds > max_cps {
                 warnings.insert(Warning {
                     code: WarningCode::CaptionReadingSpeed,
                     message: format!(

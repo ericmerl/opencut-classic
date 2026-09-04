@@ -567,6 +567,11 @@ integrationTest(
 				elementIds: [captionElementId],
 				style: { preset: "tiktok-classic-red" },
 			},
+			{
+				kind: "rechunk_captions",
+				trackId: captionTrackId,
+				maxChars: 14,
+			},
 		];
 		const appliedHash = requireProjectContentHash(appliedSnapshot);
 		const savedAfterApply = await harness.callTool("opencut_save_project", {
@@ -599,7 +604,7 @@ integrationTest(
 				savedAfterApply.receiptId,
 				"receiptId",
 			),
-			description: "Split and restyle the caption",
+			description: "Split, restyle, and rechunk the caption",
 			operations: restructureOperations,
 			policy: {
 				warningPolicy: "allow",
@@ -628,6 +633,28 @@ integrationTest(
 			kind: "restyle_captions",
 			resolvedParams: { fontFamily: "TikTok Sans", "background.color": "#ff0000" },
 		});
+		// Rust re-segments both halves into word-timed chunks under the budget
+		// and allocates ids for the chunks beyond the two existing captions.
+		const resolvedRechunk = requireRecords(
+			restructureEvaluation.resolvedOperations,
+			"resolvedOperations",
+		)[2];
+		expect(resolvedRechunk).toMatchObject({ kind: "rechunk_captions" });
+		const resolvedChunks = requireRecords(
+			requireRecord(resolvedRechunk, "rechunk").resolvedChunks,
+			"resolvedChunks",
+		);
+		expect(resolvedChunks.length).toBeGreaterThan(2);
+		for (const chunk of resolvedChunks) {
+			expect(requireString(chunk.text, "text").length).toBeLessThanOrEqual(14);
+			expect(requireNumber(chunk.duration, "duration")).toBeGreaterThan(0);
+		}
+		expect(
+			requireRecords(
+				requireRecord(resolvedRechunk, "rechunk").resolvedAllocations,
+				"resolvedAllocations",
+			),
+		).toHaveLength(resolvedChunks.length - 2);
 		const restructured = await harness.callTool("opencut_apply_edit_plan", {
 			...affinity(identity),
 			projectId,
@@ -657,7 +684,7 @@ integrationTest(
 			requireRecord(restructured.snapshot, "snapshot").elements,
 			"elements",
 		).filter((element) => element.type === "text");
-		expect(captionsAfter).toHaveLength(2);
+		expect(captionsAfter).toHaveLength(resolvedChunks.length);
 		expect(
 			requireProjectContentHash(requireRecord(restructured.snapshot, "snapshot")),
 		).toBe(requireString(restructureEvaluation.predictedProjectHash, "predicted"));

@@ -705,6 +705,16 @@ export const allocationRoleSchema = z.enum([
 	"split-nested-element",
 	"split-nested-transition",
 ]);
+const resolvedCaptionChunkSchema = z
+	.object({
+		elementId: z.string().min(1),
+		sourceElementId: z.string().min(1),
+		text: z.string().min(1),
+		startTime: z.number().int().nonnegative(),
+		duration: z.number().int().positive(),
+	})
+	.strict();
+
 const objectIdAllocationSchema = z
 	.object({
 		role: allocationRoleSchema,
@@ -979,6 +989,71 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 				"Style to apply; placement and play-height sizing are refused because restyle does not move captions.",
 			),
 			resolvedParams: elementParamRecordSchema.optional(),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("rechunk_captions"),
+			trackId: z.string().min(1),
+			elementIds: z
+				.array(z.string().min(1))
+				.min(1)
+				.optional()
+				.describe(
+					"Captions to re-segment; omitted re-segments every caption on the track.",
+				),
+			maxChars: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					"Character budget per caption, spaces included; defaults to 32. Word timings are interpolated by character share inside each source caption.",
+				),
+			maxCharsPerSecond: z
+				.number()
+				.positive()
+				.optional()
+				.describe(
+					"Reading speed each chunk grows to meet, up to the next chunk; defaults to 20. Chunks still faster than this are reported as CAPTION_READING_SPEED warnings.",
+				),
+			maxDuration: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe("Longest chunk in canonical media ticks."),
+			maxGap: z
+				.number()
+				.int()
+				.nonnegative()
+				.optional()
+				.describe(
+					"Longest pause in canonical media ticks a chunk may bridge; defaults to half a second.",
+				),
+			resolvedChunks: z.array(resolvedCaptionChunkSchema).optional(),
+			resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("repair_caption_overlaps"),
+			trackId: z.string().min(1),
+			elementIds: z
+				.array(z.string().min(1))
+				.min(1)
+				.optional()
+				.describe(
+					"Captions to repair; omitted repairs every caption on the track.",
+				),
+			minGap: z
+				.number()
+				.int()
+				.nonnegative()
+				.optional()
+				.describe(
+					"Gap in canonical media ticks kept between consecutive captions; each caption that runs into the next is shortened to leave it. A track with nothing to repair is rejected as a no-op.",
+				),
 		})
 		.strict(),
 	z
@@ -1373,6 +1448,7 @@ const resolvedAllocationKinds = new Set([
 	"duck_audio",
 	"update_caption",
 	"split_caption",
+	"rechunk_captions",
 	"set_retime",
 	"trim",
 	"split",
@@ -1382,6 +1458,7 @@ const resolvedAllocationKinds = new Set([
 /** Fields only the Rust evaluator may fill, per kind, beyond allocations. */
 const resolvedInternalFields = new Map<string, string[]>([
 	["restyle_captions", ["resolvedParams"]],
+	["rechunk_captions", ["resolvedChunks"]],
 ]);
 const resolvedSkipFields = new Map<string, Set<string>>(
 	[...resolvedAllocationKinds].map((kind) => [

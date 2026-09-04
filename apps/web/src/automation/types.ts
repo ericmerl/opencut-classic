@@ -606,6 +606,19 @@ export type AutomationOpenProjectResult =
 	| (AutomationProjectActivatedResult & { status: "opened" | "replayed" })
 	| { status: "rejected"; operationId: string; reason: string };
 
+/**
+ * One caption the Rust evaluator resolved for `rechunk_captions`: its id (a
+ * targeted caption's, reused in timeline order, or a freshly allocated one),
+ * the caption whose style it inherits, and its text and timing.
+ */
+export interface AutomationResolvedCaptionChunk {
+	elementId: string;
+	sourceElementId: string;
+	text: string;
+	startTime: MediaTime;
+	duration: MediaTime;
+}
+
 export type AutomationEditOperation =
 	| {
 			kind: "insert_text";
@@ -786,6 +799,24 @@ export type AutomationEditOperation =
 			style: SubtitleStyleOverrides;
 			/** Params the Rust evaluator resolved from the style; never caller-supplied. */
 			resolvedParams?: Record<string, string | number | boolean> | undefined;
+	  }
+	| {
+			kind: "rechunk_captions";
+			trackId: string;
+			elementIds?: string[] | undefined;
+			maxChars?: number | undefined;
+			maxCharsPerSecond?: number | undefined;
+			maxDuration?: MediaTime | undefined;
+			maxGap?: MediaTime | undefined;
+			/** Chunks the Rust evaluator resolved; never caller-supplied. */
+			resolvedChunks?: AutomationResolvedCaptionChunk[] | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
+	  }
+	| {
+			kind: "repair_caption_overlaps";
+			trackId: string;
+			elementIds?: string[] | undefined;
+			minGap?: MediaTime | undefined;
 	  }
 	| {
 			kind: "delete";
