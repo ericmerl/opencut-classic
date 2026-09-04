@@ -17,3 +17,4 @@ export {
 export { useBookmarkDrag } from "./hooks/use-bookmark-drag";
 export type { BookmarkDragState } from "./hooks/use-bookmark-drag";
 export { TimelineBookmarksRow } from "./components/bookmarks";
+export { findBookmarkIndexById, sortBookmarks } from "./utils";

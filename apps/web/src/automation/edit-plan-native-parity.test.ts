@@ -50,6 +50,8 @@ const { buildEditorProjectContentInput } =
 	await import("./project-content-identity");
 const { buildCanonicalProjectState, canonicalSerialize } =
 	await import("./project-content-hash");
+const { normalizeEditPlanFingerprintOperations } =
+	await import("./edit-plan-preflight-receipt");
 const { diffProjectSnapshots } =
 	await import("./edit-plan-evaluation-integrity");
 const { toAutomationResolvedOperation, toNativeEditOperations } =
@@ -484,6 +486,81 @@ const parityCases: NativeParityCase[] = [
 			kind: "remove_audio_replacement",
 			trackId: "scene-target-main",
 			elementId: "video-1",
+		},
+	},
+	{
+		name: "rename_track trims and applies the name",
+		state: richState,
+		operation: { kind: "rename_track", trackId: "text-track", name: "Titles" },
+	},
+	{
+		name: "reorder_tracks overlay order",
+		state: richState,
+		operation: {
+			kind: "reorder_tracks",
+			overlayTrackIds: ["text-track", "graphic-track", "compound-target"],
+		},
+	},
+	{
+		name: "remove_track deletes an occupied track",
+		state: richState,
+		operation: {
+			kind: "remove_track",
+			trackId: "text-track",
+			occupied: "delete",
+		},
+	},
+	{
+		name: "duplicate_track copies the main track with its transition",
+		state: richState,
+		operation: { kind: "duplicate_track", trackId: "scene-target-main" },
+	},
+	{
+		name: "set_main_track promotes an overlay video track",
+		state: richState,
+		operation: { kind: "set_main_track", trackId: "compound-target" },
+	},
+	{
+		name: "add_bookmark with identity and note",
+		state: bookmarkState,
+		operation: {
+			kind: "add_bookmark",
+			bookmarkId: "bookmark-new",
+			time: mediaTime({ ticks: 8_000 }),
+			note: "call to action",
+		},
+	},
+	{
+		name: "update_bookmark sets color and clears note",
+		state: bookmarkState,
+		operation: {
+			kind: "update_bookmark",
+			bookmarkId: "bookmark-1",
+			color: "#ff0000",
+			clear: ["note"],
+		},
+	},
+	{
+		name: "move_bookmark to a later frame",
+		state: bookmarkState,
+		operation: {
+			kind: "move_bookmark",
+			bookmarkId: "bookmark-1",
+			time: mediaTime({ ticks: 12_000 }),
+		},
+	},
+	{
+		name: "remove_bookmark by id",
+		state: bookmarkState,
+		operation: { kind: "remove_bookmark", bookmarkId: "bookmark-1" },
+	},
+	{
+		name: "instantiate_asset places a bin video with its intrinsic duration",
+		state: richState,
+		operation: {
+			kind: "instantiate_asset",
+			assetId: "media-video-2",
+			startTime: mediaTime({ ticks: 480_000 }),
 		},
 	},
 ];
@@ -930,6 +1007,119 @@ describe("Rust prediction and native editor parity", () => {
 		expect(state.activeSceneId).toBe("scene-active");
 	});
 
+	test("track lifecycle plans preserve pre-existing overlays", async () => {
+		const state = lifecycleTrackState();
+		const operations: AutomationEditOperation[] = [
+			{
+				kind: "duplicate_track",
+				trackId: "scene-target-main",
+				newTrackId: "lifecycle-copy",
+			},
+			{
+				kind: "duplicate_track",
+				trackId: "scene-target-main",
+				newTrackId: "lifecycle-secondary",
+			},
+			{ kind: "set_main_track", trackId: "lifecycle-copy" },
+			{
+				kind: "rename_track",
+				trackId: "lifecycle-copy",
+				name: "Lifecycle copy",
+			},
+			{
+				kind: "reorder_tracks",
+				overlayTrackIds: [
+					"lifecycle-secondary",
+					"scene-target-main",
+					"pre-existing-overlay",
+				],
+			},
+			{
+				kind: "remove_track",
+				trackId: "scene-target-main",
+				occupied: "delete",
+			},
+			{
+				kind: "add_bookmark",
+				bookmarkId: "lifecycle-bookmark",
+				time: mediaTime({ ticks: 0 }),
+				note: "hook",
+			},
+			{
+				kind: "move_bookmark",
+				bookmarkId: "lifecycle-bookmark",
+				time: mediaTime({ ticks: 8_000 }),
+			},
+			{
+				kind: "update_bookmark",
+				bookmarkId: "lifecycle-bookmark",
+				color: "#ff0000",
+				clear: ["note"],
+			},
+			{ kind: "remove_bookmark", bookmarkId: "lifecycle-bookmark" },
+			{
+				kind: "add_bookmark",
+				bookmarkId: "lifecycle-bookmark-final",
+				time: mediaTime({ ticks: 8_000 }),
+				color: "#ff0000",
+			},
+			{
+				kind: "instantiate_asset",
+				assetId: "lifecycle-media",
+				elementId: "lifecycle-instance",
+				startTime: mediaTime({ ticks: 0 }),
+			},
+		];
+		const nativeOperations = toNativeEditOperations(operations);
+		const prefixEvaluations = await evaluateRust(
+			await Promise.all(
+				nativeOperations.map((_, index) =>
+					options({
+						before: canonical(state),
+						operations: nativeOperations.slice(0, index + 1),
+					}),
+				),
+			),
+		);
+		for (const [index, prefixEvaluation] of prefixEvaluations.entries()) {
+			if (!prefixEvaluation || prefixEvaluation.status !== "validated")
+				continue;
+			const expectedPlanFingerprint = await hash({
+				contractVersion: "opencut.edit-plan-preflight.v2",
+				description: "native parity case",
+				operations: normalizeEditPlanFingerprintOperations(
+					operations.slice(0, index + 1),
+				),
+			});
+			if (prefixEvaluation.result.planFingerprint !== expectedPlanFingerprint) {
+				throw new Error(
+					`plan fingerprint diverged after operation ${index} (${operations[index]?.kind})`,
+				);
+			}
+		}
+		const evaluated = prefixEvaluations.at(-1);
+
+		if (!evaluated || evaluated.status !== "validated") {
+			throw new Error(
+				evaluated?.status === "rejected"
+					? evaluated.error.message
+					: "missing lifecycle track evaluation",
+			);
+		}
+		const resolvedRemove = evaluated.result.resolvedOperations.find(
+			(operation) => operation.kind === "remove_track",
+		);
+		expect(resolvedRemove?.resolvedCascadeElementIds).toEqual([]);
+		expectNativeParity({
+			parityCase: {
+				name: "track lifecycle plan with a pre-existing overlay",
+				operation: operations[0]!,
+				state: lifecycleTrackState,
+			},
+			evaluated,
+		});
+	});
+
 	test("rolls back earlier native operations when a later operation is invalid", () => {
 		const first = requireValidatedEvaluation(0);
 		const state = nativeState();
@@ -1069,6 +1259,22 @@ function invalidOperation(
 			};
 		case "add_track":
 			return { ...operation, trackId: "scene-target-main" };
+		case "rename_track":
+			return { ...operation, name: " " };
+		case "reorder_tracks":
+			return { ...operation, overlayTrackIds: ["missing-track"] };
+		case "remove_track":
+		case "duplicate_track":
+		case "set_main_track":
+			return { ...operation, trackId: "missing-track" };
+		case "add_bookmark":
+			return { ...operation, duration: mediaTime({ ticks: 0 }) };
+		case "update_bookmark":
+		case "move_bookmark":
+		case "remove_bookmark":
+			return { ...operation, bookmarkId: "missing-bookmark" };
+		case "instantiate_asset":
+			return { ...operation, assetId: "missing-asset" };
 		case "set_project_settings":
 			return {
 				...operation,
@@ -1164,6 +1370,51 @@ function nativeState(): NativeState {
 	};
 }
 
+function lifecycleTrackState(): NativeState {
+	const state = nativeState();
+	const asset = mediaAsset({
+		id: "lifecycle-media",
+		type: "video",
+		duration: 2,
+		hasAudio: true,
+	});
+	state.mediaAssets = [asset];
+	state.project = {
+		...state.project,
+		scenes: state.project.scenes.map((scene) =>
+			scene.id === "scene-target"
+				? {
+						...scene,
+						tracks: {
+							...scene.tracks,
+							main: {
+								...scene.tracks.main,
+								elements: [
+									videoElement({
+										id: "lifecycle-video",
+										asset,
+										startTime: 0,
+									}),
+								],
+							},
+							overlay: [
+								{
+									id: "pre-existing-overlay",
+									name: "Pre-existing overlay",
+									type: "video",
+									muted: false,
+									hidden: false,
+									elements: [],
+								},
+							],
+						},
+					}
+				: scene,
+		),
+	};
+	return state;
+}
+
 function richState(): NativeState {
 	registerDefaultMasks();
 	const state = nativeState();
@@ -1256,6 +1507,16 @@ function richState(): NativeState {
 		asset: secondVideoAsset,
 		startTime: 240_000,
 	});
+	const promotionFirst = videoElement({
+		id: "promotion-video-1",
+		asset: videoAsset,
+		startTime: 0,
+	});
+	const promotionSecond = videoElement({
+		id: "promotion-video-2",
+		asset: secondVideoAsset,
+		startTime: 240_000,
+	});
 	first.groupId = "group-existing";
 	second.groupId = "group-existing";
 	first.linkId = "link-existing";
@@ -1281,7 +1542,7 @@ function richState(): NativeState {
 				type: "video",
 				muted: false,
 				hidden: false,
-				elements: [],
+				elements: [promotionFirst, promotionSecond],
 			},
 			{
 				id: "graphic-track",
@@ -1314,6 +1575,19 @@ function richState(): NativeState {
 		audioAsset,
 		mediaAsset({ id: "media-matte", type: "image" }),
 		mediaAsset({ id: "media-clean-audio", type: "audio", duration: 4 }),
+	];
+	return state;
+}
+
+function bookmarkState(): NativeState {
+	const state = richState();
+	const target = state.project.scenes.find(
+		(scene) => scene.id === "scene-target",
+	);
+	if (!target) throw new Error("target scene fixture missing");
+	target.bookmarks = [
+		{ id: "bookmark-1", time: mediaTime({ ticks: 4_000 }), note: "hook" },
+		{ id: "bookmark-2", time: mediaTime({ ticks: 240_000 }), color: "#00ff00" },
 	];
 	return state;
 }

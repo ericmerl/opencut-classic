@@ -44,6 +44,65 @@ export function toAutomationResolvedOperation(
 				muted: optional(operation.muted),
 				hidden: optional(operation.hidden),
 			};
+		case "rename_track":
+		case "set_main_track":
+		case "remove_bookmark":
+			return operation;
+		case "reorder_tracks":
+			return {
+				...operation,
+				overlayTrackIds: optional(operation.overlayTrackIds),
+				audioTrackIds: optional(operation.audioTrackIds),
+			};
+		case "remove_track":
+			return {
+				...operation,
+				occupied: optional(operation.occupied),
+				targetTrackId: optional(operation.targetTrackId),
+				resolvedCascadeElementIds: optional(
+					operation.resolvedCascadeElementIds,
+				),
+			};
+		case "duplicate_track":
+			return {
+				...operation,
+				newTrackId: optional(operation.newTrackId),
+				name: optional(operation.name),
+				resolvedAllocations: optional(operation.resolvedAllocations),
+			};
+		case "add_bookmark":
+			return {
+				...operation,
+				bookmarkId: optional(operation.bookmarkId),
+				time: mediaTime({ ticks: operation.time }),
+				duration: optionalMediaTime(operation.duration),
+				note: optional(operation.note),
+				color: optional(operation.color),
+			};
+		case "update_bookmark":
+			return {
+				...operation,
+				note: optional(operation.note),
+				color: optional(operation.color),
+				duration: optionalMediaTime(operation.duration),
+				clear: optional(operation.clear),
+			};
+		case "move_bookmark":
+			return {
+				...operation,
+				time: mediaTime({ ticks: operation.time }),
+			};
+		case "instantiate_asset":
+			return {
+				...operation,
+				elementId: optional(operation.elementId),
+				name: optional(operation.name),
+				startTime: mediaTime({ ticks: operation.startTime }),
+				duration: optionalMediaTime(operation.duration),
+				trackId: optional(operation.trackId),
+				autoTrackId: optional(operation.autoTrackId),
+				resolvedAllocations: optional(operation.resolvedAllocations),
+			};
 		case "set_project_settings":
 			return {
 				...operation,
@@ -315,6 +374,68 @@ function toNativeEditOperation(
 				trackId: operation.trackId,
 				muted: operation.muted,
 				hidden: operation.hidden,
+			};
+		case "rename_track":
+		case "set_main_track":
+		case "remove_bookmark":
+			return operation;
+		case "reorder_tracks":
+			return {
+				kind: operation.kind,
+				overlayTrackIds: operation.overlayTrackIds,
+				audioTrackIds: operation.audioTrackIds,
+			};
+		case "remove_track":
+			return {
+				kind: operation.kind,
+				trackId: operation.trackId,
+				occupied: operation.occupied ?? "reject",
+				targetTrackId: operation.targetTrackId,
+				resolvedCascadeElementIds: operation.resolvedCascadeElementIds,
+			};
+		case "duplicate_track":
+			return {
+				kind: operation.kind,
+				trackId: operation.trackId,
+				newTrackId: operation.newTrackId,
+				name: operation.name,
+				resolvedAllocations: operation.resolvedAllocations,
+			};
+		case "add_bookmark":
+			return {
+				kind: operation.kind,
+				bookmarkId: operation.bookmarkId,
+				time: operation.time,
+				duration: operation.duration,
+				note: operation.note,
+				color: operation.color,
+			};
+		case "update_bookmark":
+			return {
+				kind: operation.kind,
+				bookmarkId: operation.bookmarkId,
+				note: operation.note,
+				color: operation.color,
+				duration: operation.duration,
+				clear: [...(operation.clear ?? [])],
+			};
+		case "move_bookmark":
+			return {
+				kind: operation.kind,
+				bookmarkId: operation.bookmarkId,
+				time: operation.time,
+			};
+		case "instantiate_asset":
+			return {
+				kind: operation.kind,
+				assetId: operation.assetId,
+				elementId: operation.elementId,
+				name: operation.name,
+				startTime: operation.startTime,
+				duration: operation.duration,
+				trackId: operation.trackId,
+				autoTrackId: operation.autoTrackId,
+				resolvedAllocations: operation.resolvedAllocations,
 			};
 		case "set_project_settings":
 			return {

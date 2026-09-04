@@ -20,18 +20,22 @@ export function ensureMainScene({ scenes }: { scenes: TScene[] }): TScene[] {
 export function buildDefaultScene({
 	name,
 	isMain,
+	sceneId = generateUUID(),
+	mainTrackId = generateUUID(),
 }: {
 	name: string;
 	isMain: boolean;
+	sceneId?: string;
+	mainTrackId?: string;
 }): TScene {
 	return {
-		id: generateUUID(),
+		id: sceneId,
 		name,
 		isMain,
 		tracks: {
 			overlay: [],
 			main: {
-				id: generateUUID(),
+				id: mainTrackId,
 				name: MAIN_TRACK_NAME,
 				type: "video",
 				elements: [],

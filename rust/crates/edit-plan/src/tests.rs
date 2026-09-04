@@ -832,7 +832,7 @@ fn all_41_operation_variants_have_a_strict_typed_transport_shape() {
 }
 
 #[test]
-fn all_41_operation_variants_have_valid_and_invalid_evaluator_coverage() {
+fn all_51_operation_variants_have_valid_and_invalid_evaluator_coverage() {
     let t = MediaTime::from_ticks;
     let reference = || ElementRef {
         track_id: "track-text".into(),
@@ -1329,8 +1329,106 @@ fn all_41_operation_variants_have_valid_and_invalid_evaluator_coverage() {
                 element_id: "audio-1".into(),
             }],
         ),
+        (
+            "rename_track",
+            full_snapshot(),
+            vec![EditOperation::RenameTrack {
+                track_id: "track-text".into(),
+                name: "Titles".into(),
+            }],
+        ),
+        (
+            "reorder_tracks",
+            full_snapshot(),
+            vec![EditOperation::ReorderTracks {
+                overlay_track_ids: Some(vec![
+                    "track-effect".into(),
+                    "track-graphic".into(),
+                    "track-text".into(),
+                ]),
+                audio_track_ids: None,
+            }],
+        ),
+        (
+            "remove_track",
+            full_snapshot(),
+            vec![EditOperation::RemoveTrack {
+                track_id: "track-effect".into(),
+                occupied: RemoveTrackOccupiedPolicy::Delete,
+                target_track_id: None,
+                resolved_cascade_element_ids: None,
+            }],
+        ),
+        (
+            "duplicate_track",
+            full_snapshot(),
+            vec![EditOperation::DuplicateTrack {
+                track_id: "track-graphic".into(),
+                new_track_id: None,
+                name: None,
+                resolved_allocations: None,
+            }],
+        ),
+        (
+            "set_main_track",
+            snapshot_with_overlay_video(),
+            vec![EditOperation::SetMainTrack {
+                track_id: "overlay-video".into(),
+            }],
+        ),
+        (
+            "add_bookmark",
+            full_snapshot_v3(),
+            vec![EditOperation::AddBookmark {
+                bookmark_id: Some("bookmark-new".into()),
+                time: t(8_008),
+                duration: None,
+                note: Some("call to action".into()),
+                color: None,
+            }],
+        ),
+        (
+            "update_bookmark",
+            full_snapshot_v3(),
+            vec![EditOperation::UpdateBookmark {
+                bookmark_id: "bookmark-0".into(),
+                note: Some("hook".into()),
+                color: Some("#ff0000".into()),
+                duration: None,
+                clear: vec![],
+            }],
+        ),
+        (
+            "move_bookmark",
+            full_snapshot_v3(),
+            vec![EditOperation::MoveBookmark {
+                bookmark_id: "bookmark-0".into(),
+                time: t(8_008),
+            }],
+        ),
+        (
+            "remove_bookmark",
+            full_snapshot_v3(),
+            vec![EditOperation::RemoveBookmark {
+                bookmark_id: "bookmark-0".into(),
+            }],
+        ),
+        (
+            "instantiate_asset",
+            full_snapshot(),
+            vec![EditOperation::InstantiateAsset {
+                asset_id: "media-image".into(),
+                element_id: None,
+                name: None,
+                start_time: t(300_000),
+                duration: None,
+                track_id: None,
+                auto_track_id: None,
+                resolved_allocations: None,
+            }],
+        ),
     ];
-    assert_eq!(cases.len(), 41);
+    assert_eq!(cases.len(), 51);
     for (name, before, operations) in cases {
         let valid = evaluate(options_with_before(before.clone(), operations.clone()));
         if let Err(error) = valid {
@@ -1734,6 +1832,30 @@ fn invalid_operations_for(operations: &[EditOperation]) -> Vec<EditOperation> {
         "remove_transition" => {
             object.insert("transitionId".into(), serde_json::json!("missing"));
         }
+        "rename_track" => {
+            object.insert("name".into(), serde_json::json!(""));
+        }
+        "reorder_tracks" => {
+            object.insert("overlayTrackIds".into(), serde_json::json!(["track-text"]));
+        }
+        "remove_track" => {
+            object.insert("occupied".into(), serde_json::json!("reject"));
+        }
+        "duplicate_track" => {
+            object.insert("trackId".into(), serde_json::json!("missing"));
+        }
+        "set_main_track" => {
+            object.insert("trackId".into(), serde_json::json!("track-text"));
+        }
+        "add_bookmark" => {
+            object.insert("time".into(), serde_json::json!(-1));
+        }
+        "update_bookmark" | "move_bookmark" | "remove_bookmark" => {
+            object.insert("bookmarkId".into(), serde_json::json!("missing"));
+        }
+        "instantiate_asset" => {
+            object.insert("assetId".into(), serde_json::json!("missing"));
+        }
         _ => {
             object.insert("elementId".into(), serde_json::json!("missing"));
         }
@@ -1785,6 +1907,70 @@ fn duplicate_compound_remaps_every_nested_identity_and_preserves_source() {
     };
     assert_ne!(tracks[0].id, "nested-main");
     assert_ne!(tracks[0].elements[0].common().id, "nested-image");
+}
+
+#[test]
+fn cascade_track_removal_uses_rust_resolved_transitive_relationships() {
+    let mut before = full_snapshot();
+    before.project.scenes[0]
+        .tracks
+        .iter_mut()
+        .flat_map(|track| track.elements.iter_mut())
+        .find(|element| element.common().id == "adjustment-1")
+        .unwrap()
+        .common_mut()
+        .group_id = Some("cascade-group".into());
+    before.project.scenes[0]
+        .tracks
+        .iter_mut()
+        .flat_map(|track| track.elements.iter_mut())
+        .find(|element| element.common().id == "text-1")
+        .unwrap()
+        .common_mut()
+        .group_id = Some("cascade-group".into());
+
+    let result = evaluate(options_with_before(
+        before,
+        vec![EditOperation::RemoveTrack {
+            track_id: "track-effect".into(),
+            occupied: RemoveTrackOccupiedPolicy::Cascade,
+            target_track_id: None,
+            resolved_cascade_element_ids: None,
+        }],
+    ))
+    .unwrap();
+
+    let scene = &result.predicted_after.project.scenes[0];
+    assert!(!scene.tracks.iter().any(|track| track.id == "track-effect"));
+    assert!(
+        !scene
+            .tracks
+            .iter()
+            .flat_map(|track| &track.elements)
+            .any(|element| {
+                matches!(
+                    element.common().id.as_str(),
+                    "adjustment-1" | "audio-1" | "text-1" | "video-1"
+                )
+            })
+    );
+    assert_eq!(
+        result.resolved_operations[0],
+        EditOperation::RemoveTrack {
+            track_id: "track-effect".into(),
+            occupied: RemoveTrackOccupiedPolicy::Cascade,
+            target_track_id: None,
+            resolved_cascade_element_ids: Some(vec![
+                "adjustment-1".into(),
+                "audio-1".into(),
+                "text-1".into(),
+                "video-1".into(),
+            ]),
+        }
+    );
+    assert!(result.relationship_expansion.iter().any(|expansion| {
+        expansion.cause_id == "track-effect" && expansion.affected_id == "text-1"
+    }));
 }
 
 #[test]
@@ -2423,4 +2609,71 @@ fn source_audio_separation_preserves_media_and_remaps_gain_keyframes() {
     };
     assert!(animations.contains_key("volume"));
     assert!(!animations.contains_key("opacity"));
+}
+
+/// Version 3 projection of the fixture with stable bookmark identities, which
+/// the bookmark operations require.
+fn full_snapshot_v3() -> ProjectSnapshot {
+    let mut snapshot = full_snapshot();
+    snapshot.projection_version = 3;
+    snapshot.project.id = Some("project".into());
+    for scene in &mut snapshot.project.scenes {
+        for (order, bookmark) in scene.bookmarks.iter_mut().enumerate() {
+            bookmark.id = Some(format!("bookmark-{order}"));
+        }
+    }
+    snapshot
+}
+
+/// The fixture with a canvas-compatible, duration-preserving overlay video track.
+fn snapshot_with_overlay_video() -> ProjectSnapshot {
+    let mut snapshot = full_snapshot();
+    let scene = &mut snapshot.project.scenes[0];
+    let mut track = scene
+        .tracks
+        .iter()
+        .find(|track| track.role == "main")
+        .expect("fixture main track")
+        .clone();
+    track.id = "overlay-video".into();
+    track.role = "overlay".into();
+    track.order = scene
+        .tracks
+        .iter()
+        .filter(|track| track.role == "overlay")
+        .count();
+    track.name = "B-roll".into();
+    for (order, element) in track.elements.iter_mut().enumerate() {
+        element.common_mut().id = format!("overlay-video-element-{order}");
+        element.common_mut().order = order;
+        element.common_mut().group_id = None;
+        element.common_mut().link_id = None;
+    }
+    track.transitions.clear();
+    scene.tracks.push(track);
+    snapshot
+}
+
+#[test]
+fn main_track_promotion_rejects_a_duration_change() {
+    let mut snapshot = snapshot_with_overlay_video();
+    let candidate = snapshot.project.scenes[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.id == "overlay-video")
+        .expect("fixture overlay video track");
+    for element in &mut candidate.elements {
+        element.common_mut().start_time = MediaTime::ZERO;
+        element.common_mut().duration = MediaTime::from_ticks(1);
+    }
+
+    let error = evaluate(options_with_before(
+        snapshot,
+        vec![EditOperation::SetMainTrack {
+            track_id: "overlay-video".into(),
+        }],
+    ))
+    .unwrap_err();
+    assert!(matches!(error.code, ErrorCode::IncompatibleTrack));
+    assert!(error.message.contains("duration"));
 }

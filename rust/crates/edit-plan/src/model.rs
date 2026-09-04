@@ -195,6 +195,7 @@ pub enum AllocationRole {
     DuplicateNestedTrack,
     DuplicateNestedElement,
     DuplicateNestedTransition,
+    Bookmark,
     BreakApartElement,
     SplitRight,
     SplitGroup,
@@ -243,6 +244,7 @@ impl AllocationRole {
             Self::DuplicateNestedTrack => "duplicate-nested-track",
             Self::DuplicateNestedElement => "duplicate-nested-element",
             Self::DuplicateNestedTransition => "duplicate-nested-transition",
+            Self::Bookmark => "bookmark",
             Self::BreakApartElement => "break-apart-element",
             Self::SplitRight => "split-right",
             Self::SplitGroup => "split-group",
@@ -298,6 +300,7 @@ const ALL_ALLOCATION_ROLES: &[AllocationRole] = &[
     AllocationRole::DuplicateNestedTrack,
     AllocationRole::DuplicateNestedElement,
     AllocationRole::DuplicateNestedTransition,
+    AllocationRole::Bookmark,
     AllocationRole::BreakApartElement,
     AllocationRole::SplitRight,
     AllocationRole::SplitGroup,
@@ -741,6 +744,66 @@ pub enum EditOperation {
         muted: Option<bool>,
         hidden: Option<bool>,
     },
+    RenameTrack {
+        track_id: String,
+        name: String,
+    },
+    ReorderTracks {
+        overlay_track_ids: Option<Vec<String>>,
+        audio_track_ids: Option<Vec<String>>,
+    },
+    RemoveTrack {
+        track_id: String,
+        #[serde(default)]
+        occupied: RemoveTrackOccupiedPolicy,
+        target_track_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_cascade_element_ids: Option<Vec<String>>,
+    },
+    DuplicateTrack {
+        track_id: String,
+        new_track_id: Option<String>,
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_allocations: Option<Vec<ObjectIdAllocation>>,
+    },
+    SetMainTrack {
+        track_id: String,
+    },
+    AddBookmark {
+        bookmark_id: Option<String>,
+        time: MediaTime,
+        duration: Option<MediaTime>,
+        note: Option<String>,
+        color: Option<String>,
+    },
+    UpdateBookmark {
+        bookmark_id: String,
+        note: Option<String>,
+        color: Option<String>,
+        duration: Option<MediaTime>,
+        #[serde(default)]
+        clear: Vec<BookmarkField>,
+    },
+    MoveBookmark {
+        bookmark_id: String,
+        time: MediaTime,
+    },
+    RemoveBookmark {
+        bookmark_id: String,
+    },
+    InstantiateAsset {
+        asset_id: String,
+        element_id: Option<String>,
+        name: Option<String>,
+        start_time: MediaTime,
+        duration: Option<MediaTime>,
+        track_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auto_track_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_allocations: Option<Vec<ObjectIdAllocation>>,
+    },
     SetProjectSettings {
         fps: Option<FrameRate>,
         canvas_size: Option<CanvasSize>,
@@ -1139,6 +1202,8 @@ pub(crate) struct ActiveSceneSnapshot {
     pub tracks: Vec<Track>,
     pub transitions: Vec<Transition>,
     pub elements: Vec<Element>,
+    #[serde(default)]
+    pub bookmarks: Vec<Bookmark>,
 }
 
 pub const PROJECT_CONTENT_PROJECTION: &str = "opencut-project-content";
@@ -1418,4 +1483,43 @@ pub enum CanonicalMediaSource {
 pub struct ImmutableHash {
     pub algorithm: String,
     pub digest: String,
+}
+
+/// What `remove_track` does when the track still carries elements.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoveTrackOccupiedPolicy {
+    /// Reject the removal while any element remains on the track.
+    #[default]
+    Reject,
+    /// Delete the track together with every element on it.
+    Delete,
+    /// Move every element onto `targetTrackId` before removing the track.
+    Move,
+    /// Delete the track elements and every transitively grouped or linked element.
+    Cascade,
+}
+
+/// Optional bookmark fields that `update_bookmark` can clear.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BookmarkField {
+    Note,
+    Color,
+    Duration,
+}
+
+/// Active-scene bookmark. The identity is only present for projection
+/// version 3 snapshots; bookmark operations require it.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Bookmark {
+    pub bookmark_id: Option<String>,
+    pub time: MediaTime,
+    pub duration: Option<MediaTime>,
+    pub note: Option<String>,
+    pub color: Option<String>,
 }

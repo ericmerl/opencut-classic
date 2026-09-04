@@ -104,6 +104,24 @@ import {
 	normalizeAudioInputSchema,
 	exportSubtitlesInputSchema,
 	openProjectInputSchema,
+	renameProjectInputSchema,
+	duplicateProjectInputSchema,
+	deleteProjectInputSchema,
+	listScenesInputSchema,
+	createSceneInputSchema,
+	cloneSceneInputSchema,
+	switchSceneInputSchema,
+	renameSceneInputSchema,
+	deleteSceneInputSchema,
+	setMainSceneInputSchema,
+	reorderScenesInputSchema,
+	listMediaUsagesInputSchema,
+	importMediaAssetInputSchema,
+	renameMediaAssetInputSchema,
+	preflightMediaRelinkInputSchema,
+	preflightLifecycleMutationInputSchema,
+	relinkMediaAssetInputSchema,
+	removeMediaAssetInputSchema,
 	saveProjectInputSchema,
 	getSaveReceiptInputSchema,
 	getPreviewFrameInputSchema,
@@ -132,6 +150,8 @@ import {
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 	withConnectionAffinity,
+	withLifecycleProjectMutationSafety,
+	withLifecycleTargetProjectMutationSafety,
 	withMutationOperationId,
 	withProjectMutationSafety,
 	undoInputSchema,
@@ -464,6 +484,440 @@ function createServer(): McpServer {
 							context,
 							bridge,
 							"open_project",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_rename_project",
+		{
+			description:
+				"Rename a saved OpenCut project by ID. Renaming the active project bumps its revision; other projects are updated in storage without switching.",
+			inputSchema: withLifecycleTargetProjectMutationSafety(
+				renameProjectInputSchema,
+			),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_rename_project",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"rename_project",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_duplicate_project",
+		{
+			description:
+				"Duplicate a saved project into a new project with independent scene, track, element, transition, and bookmark IDs. Media assets are shared by content identity. The editor stays on the current project.",
+			inputSchema: withLifecycleTargetProjectMutationSafety(
+				duplicateProjectInputSchema,
+			),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_duplicate_project",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"duplicate_project",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_delete_project",
+		{
+			description:
+				"Irreversibly delete a saved project and its project-scoped media bytes. Deleting the active project first activates fallbackProjectId, else the most recently updated remaining project, else a new blank project.",
+			inputSchema: withLifecycleTargetProjectMutationSafety(
+				deleteProjectInputSchema,
+			),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_delete_project",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"delete_project",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_preflight_lifecycle_mutation",
+		{
+			description:
+				"Validate a project, scene, or media-bin lifecycle mutation without changing editor, storage, history, or selection state. The returned fingerprint must be supplied to the matching mutation.",
+			inputSchema: withConnectionAffinity(
+				preflightLifecycleMutationInputSchema,
+			),
+		},
+		async (input) => {
+			const { method, request, ...connection } = input;
+			let stagedRequest: Record<string, unknown> = request;
+			if (method === "import_media_asset" || method === "relink_media_asset") {
+				const path = request.path;
+				if (typeof path !== "string") throw new Error("media path is required");
+				const ticket = await bridge.mediaTickets.create(path);
+				const { path: _path, ...rest } = request;
+				stagedRequest = {
+					...rest,
+					url: ticket.url,
+					name: ticket.name,
+					mimeType: ticket.mimeType,
+					sourceFingerprint: ticket.sourceFingerprint,
+				};
+			}
+			return toolResult(
+				await bridge.request("preflight_lifecycle_mutation", {
+					...connection,
+					method,
+					request: stagedRequest,
+				}),
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_list_scenes",
+		{
+			description:
+				"List every scene of the active project with main and active flags, order, counts, bookmarks with stable IDs, and a per-scene canonical content hash.",
+			inputSchema: withConnectionAffinity(listScenesInputSchema),
+		},
+		async (params) => toolResult(await bridge.request("list_scenes", params)),
+	);
+
+	server.registerTool(
+		"opencut_create_scene",
+		{
+			description:
+				"Create a new empty scene in the active project, optionally activating it.",
+			inputSchema: withLifecycleProjectMutationSafety(createSceneInputSchema),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_create_scene",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"create_scene",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_clone_scene",
+		{
+			description:
+				"Clone a scene with fresh track, element, transition, and bookmark IDs, optionally activating the copy.",
+			inputSchema: withLifecycleProjectMutationSafety(cloneSceneInputSchema),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute("opencut_clone_scene", params, (context) =>
+					requestLedgeredBrowserMutation(
+						context,
+						bridge,
+						"clone_scene",
+						params,
+					),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_switch_scene",
+		{
+			description:
+				"Make another scene of the active project the active scene as an undoable, ledgered mutation.",
+			inputSchema: withLifecycleProjectMutationSafety(switchSceneInputSchema),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_switch_scene",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"switch_scene",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_rename_scene",
+		{
+			description: "Rename a scene of the active project.",
+			inputSchema: withLifecycleProjectMutationSafety(renameSceneInputSchema),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_rename_scene",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"rename_scene",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_delete_scene",
+		{
+			description:
+				"Delete a scene. Deleting the active scene activates replacementSceneId (default: the main scene); deleting the main scene requires newMainSceneId to promote another scene first.",
+			inputSchema: withLifecycleProjectMutationSafety(deleteSceneInputSchema),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_delete_scene",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"delete_scene",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_set_main_scene",
+		{
+			description: "Promote a scene to be the project's main scene.",
+			inputSchema: withLifecycleProjectMutationSafety(setMainSceneInputSchema),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_set_main_scene",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"set_main_scene",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_reorder_scenes",
+		{
+			description:
+				"Reorder the project's scenes; sceneIds must list every scene exactly once.",
+			inputSchema: withLifecycleProjectMutationSafety(reorderScenesInputSchema),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_reorder_scenes",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"reorder_scenes",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_list_media_usages",
+		{
+			description:
+				"List every timeline, compound, matte, audio-replacement, provider, and package reference to media assets across the active project, plus the assets nothing references.",
+			inputSchema: withConnectionAffinity(listMediaUsagesInputSchema),
+		},
+		async (params) =>
+			toolResult(await bridge.request("list_media_usages", params)),
+	);
+
+	server.registerTool(
+		"opencut_import_media_asset",
+		{
+			description:
+				"Import an image, audio file, or video from an absolute local path into the project media bin without placing it on the timeline. Use the instantiate_asset edit-plan operation to place it later.",
+			inputSchema: withLifecycleProjectMutationSafety(
+				importMediaAssetInputSchema,
+			),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_import_media_asset",
+					input,
+					async (context) => {
+						const { path, ...params } = input;
+						const [ticket, preflightTicket] = await Promise.all([
+							bridge.mediaTickets.create(path),
+							bridge.mediaTickets.create(path),
+						]);
+						return requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"import_media_asset",
+							{
+								...params,
+								url: ticket.url,
+								preflightUrl: preflightTicket.url,
+								name: ticket.name,
+								mimeType: ticket.mimeType,
+								sourceFingerprint: ticket.sourceFingerprint,
+							},
+						);
+					},
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_rename_media_asset",
+		{
+			description: "Rename a media bin asset without changing its identity.",
+			inputSchema: withLifecycleProjectMutationSafety(
+				renameMediaAssetInputSchema,
+			),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_rename_media_asset",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"rename_media_asset",
+							params,
+						),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_preflight_media_relink",
+		{
+			description:
+				"Inspect a replacement media file without mutation. Returns compatibility, every metadata difference, and the number of affected usages at the exact project revision and content hash.",
+			inputSchema: withConnectionAffinity(preflightMediaRelinkInputSchema),
+		},
+		async (input) => {
+			const { path, ...params } = input;
+			const ticket = await bridge.mediaTickets.create(path);
+			return toolResult(
+				await bridge.request("preflight_media_relink", {
+					...params,
+					url: ticket.url,
+					name: ticket.name,
+					mimeType: ticket.mimeType,
+					sourceFingerprint: ticket.sourceFingerprint,
+				}),
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_relink_media_asset",
+		{
+			description:
+				"Replace the file behind a media bin asset while every timeline reference keeps its asset ID. Returns the compatibility differences (dimensions, duration, fps, audio, size); a media type change requires allowIncompatible.",
+			inputSchema: withLifecycleProjectMutationSafety(
+				relinkMediaAssetInputSchema,
+			),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_relink_media_asset",
+					input,
+					async (context) => {
+						const { path, ...params } = input;
+						const [ticket, preflightTicket] = await Promise.all([
+							bridge.mediaTickets.create(path),
+							bridge.mediaTickets.create(path),
+						]);
+						return requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"relink_media_asset",
+							{
+								...params,
+								url: ticket.url,
+								preflightUrl: preflightTicket.url,
+								name: ticket.name,
+								mimeType: ticket.mimeType,
+								sourceFingerprint: ticket.sourceFingerprint,
+							},
+						);
+					},
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_remove_media_asset",
+		{
+			description:
+				"Remove a media bin asset. The unused-only policy refuses referenced assets; cascade also removes every element, matte, and audio replacement that references it in every scene and compound.",
+			inputSchema: withLifecycleProjectMutationSafety(
+				removeMediaAssetInputSchema,
+			),
+		},
+		async (params) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_remove_media_asset",
+					params,
+					(context) =>
+						requestLedgeredBrowserMutation(
+							context,
+							bridge,
+							"remove_media_asset",
 							params,
 						),
 				),
@@ -1596,13 +2050,19 @@ function createServer(): McpServer {
 						(context) =>
 							executeCancelUnifiedJob(
 								jobService,
-								{ ...input, operationId: requiredOperationId(input.operationId) },
+								{
+									...input,
+									operationId: requiredOperationId(input.operationId),
+								},
 								context,
 							),
 						(context) =>
 							recoverCancelUnifiedJob(
 								jobService,
-								{ ...input, operationId: requiredOperationId(input.operationId) },
+								{
+									...input,
+									operationId: requiredOperationId(input.operationId),
+								},
 								context,
 							),
 					),
@@ -1626,13 +2086,19 @@ function createServer(): McpServer {
 						(context) =>
 							executeRetryJob(
 								jobService,
-								{ ...input, operationId: requiredOperationId(input.operationId) },
+								{
+									...input,
+									operationId: requiredOperationId(input.operationId),
+								},
 								context,
 							),
 						(context) =>
 							recoverRetryJob(
 								jobService,
-								{ ...input, operationId: requiredOperationId(input.operationId) },
+								{
+									...input,
+									operationId: requiredOperationId(input.operationId),
+								},
 								context,
 							),
 					),
@@ -1656,13 +2122,19 @@ function createServer(): McpServer {
 						(context) =>
 							executeResolveJob(
 								jobService,
-								{ ...input, operationId: requiredOperationId(input.operationId) },
+								{
+									...input,
+									operationId: requiredOperationId(input.operationId),
+								},
 								context,
 							),
 						(context) =>
 							recoverResolveJob(
 								jobService,
-								{ ...input, operationId: requiredOperationId(input.operationId) },
+								{
+									...input,
+									operationId: requiredOperationId(input.operationId),
+								},
 								context,
 							),
 					),
@@ -1796,9 +2268,7 @@ function operationCheckpoint(
  * transition, exhausted attempts) are returned as structured rejections
  * rather than thrown, so the ledger records the outcome and the agent can act.
  */
-async function jobToolResult(
-	run: () => Promise<unknown>,
-): Promise<unknown> {
+async function jobToolResult(run: () => Promise<unknown>): Promise<unknown> {
 	try {
 		return await run();
 	} catch (error) {

@@ -31,8 +31,8 @@ describe("V31 to V32 Migration", () => {
 		expect(asRecordArray(asRecord(scenes[0]).bookmarks)).toEqual([
 			{ id: "generated-1", time: 120_000, note: "hook", color: "#ff0000" },
 			{ id: "keep-me", time: 240_000 },
-			{ id: "generated-2", time: 360_000, duration: 12_000 },
-			{ id: "generated-3", time: 480_000 },
+			{ id: "keep-me", time: 360_000, duration: 12_000 },
+			{ id: "generated-2", time: 480_000 },
 		]);
 		expect(asRecord(scenes[1]).bookmarks).toBeUndefined();
 	});

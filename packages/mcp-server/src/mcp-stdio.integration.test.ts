@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { appendFile, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import {
+	appendFile,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	stat,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,6 +60,244 @@ afterEach(async () => {
 	}
 	await removeTemporaryDirectory(directory);
 });
+
+integrationTest(
+	"applies a preflighted scene lifecycle mutation through the MCP ledger",
+	async () => {
+		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
+		if (!baseUrl) {
+			throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		}
+		const browserPath = process.env.OPENCUT_HEADLESS_BROWSER_PATH;
+		if (!browserPath) {
+			throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
+		}
+		const harness = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort: await availablePort(),
+			profileDirectory: join(directory, "lifecycle-profile"),
+			receiptDirectory: join(directory, "lifecycle-receipts"),
+		});
+		await harness.callTool("opencut_start_editor_worker", {});
+		const status = await harness.callTool("opencut_connection_status", {});
+		const identity = requireRecord(
+			status.connectionIdentity,
+			"connectionIdentity",
+		);
+		const initial = await harness.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		const projectId = requireString(initial.projectId, "projectId");
+		const request = {
+			projectId,
+			expectedRevision: requireNumber(initial.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(initial),
+			name: "Lifecycle MCP regression",
+			activate: false,
+		};
+		const preflight = await harness.callTool(
+			"opencut_preflight_lifecycle_mutation",
+			{
+				...affinity(identity),
+				method: "create_scene",
+				request,
+			},
+		);
+		expect(preflight.status).toBe("validated");
+		const created = await harness.callTool("opencut_create_scene", {
+			...affinity(identity),
+			...request,
+			operationId: "mcp-lifecycle-create-scene",
+			preflightFingerprint: requireString(
+				preflight.preflightFingerprint,
+				"preflightFingerprint",
+			),
+		});
+		expect(created).toMatchObject({
+			status: "applied",
+			operationId: "mcp-lifecycle-create-scene",
+			activeSceneId: initial.sceneId,
+		});
+		expect(created.sceneId).not.toBe(initial.sceneId);
+
+		// Cloning the original scene with activation must ledger a snapshot
+		// whose active scene is the clone, not the source scene.
+		const cloneRequest = {
+			projectId,
+			expectedRevision: requireNumber(created.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(
+				requireRecord(created.snapshot, "snapshot"),
+			),
+			sceneId: requireString(initial.sceneId, "sceneId"),
+			name: "Lifecycle MCP clone",
+			activate: true,
+		};
+		const clonePreflight = await harness.callTool(
+			"opencut_preflight_lifecycle_mutation",
+			{
+				...affinity(identity),
+				method: "clone_scene",
+				request: cloneRequest,
+			},
+		);
+		expect(clonePreflight.status).toBe("validated");
+		const cloned = await harness.callTool("opencut_clone_scene", {
+			...affinity(identity),
+			...cloneRequest,
+			operationId: "mcp-lifecycle-clone-scene",
+			preflightFingerprint: requireString(
+				clonePreflight.preflightFingerprint,
+				"preflightFingerprint",
+			),
+		});
+		expect(cloned).toMatchObject({
+			status: "applied",
+			operationId: "mcp-lifecycle-clone-scene",
+		});
+		const clonedSceneId = requireString(cloned.sceneId, "sceneId");
+		expect(clonedSceneId).not.toBe(initial.sceneId);
+		expect(clonedSceneId).not.toBe(created.sceneId);
+		expect(cloned.activeSceneId).toBe(clonedSceneId);
+		expect(requireRecord(cloned.snapshot, "snapshot").sceneId).toBe(
+			clonedSceneId,
+		);
+
+		// Renaming the inactive scene must leave the clone active and ledger
+		// the operation against that active scene.
+		const renameRequest = {
+			projectId,
+			expectedRevision: requireNumber(cloned.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(
+				requireRecord(cloned.snapshot, "snapshot"),
+			),
+			sceneId: requireString(created.sceneId, "sceneId"),
+			name: "Lifecycle MCP regression renamed",
+		};
+		const renamePreflight = await harness.callTool(
+			"opencut_preflight_lifecycle_mutation",
+			{
+				...affinity(identity),
+				method: "rename_scene",
+				request: renameRequest,
+			},
+		);
+		expect(renamePreflight.status).toBe("validated");
+		const renamed = await harness.callTool("opencut_rename_scene", {
+			...affinity(identity),
+			...renameRequest,
+			operationId: "mcp-lifecycle-rename-scene",
+			preflightFingerprint: requireString(
+				renamePreflight.preflightFingerprint,
+				"preflightFingerprint",
+			),
+		});
+		expect(renamed).toMatchObject({
+			status: "applied",
+			operationId: "mcp-lifecycle-rename-scene",
+			sceneId: created.sceneId,
+			activeSceneId: clonedSceneId,
+		});
+
+		// The main scene cannot be deleted without naming its successor; the
+		// refusal surfaces at preflight rather than as an input schema error.
+		const deleteMainPreflight = await harness.callTool(
+			"opencut_preflight_lifecycle_mutation",
+			{
+				...affinity(identity),
+				method: "delete_scene",
+				request: {
+					projectId,
+					expectedRevision: requireNumber(renamed.revision, "revision"),
+					expectedProjectContentHash: requireProjectContentHash(
+						requireRecord(renamed.snapshot, "snapshot"),
+					),
+					sceneId: requireString(initial.sceneId, "sceneId"),
+				},
+			},
+		);
+		expect(deleteMainPreflight).toMatchObject({
+			status: "rejected",
+			reason: expect.stringContaining("newMainSceneId"),
+		});
+
+		// Media-bin mutations persist asset metadata outside the project write;
+		// each receipt must still verify against the fresh persisted state.
+		let revision = requireNumber(renamed.revision, "revision");
+		let contentHash = requireProjectContentHash(
+			requireRecord(renamed.snapshot, "snapshot"),
+		);
+		const mediaMutation = async (
+			tool: string,
+			operationId: string,
+			params: Record<string, unknown>,
+		) => {
+			const request = {
+				projectId,
+				expectedRevision: revision,
+				expectedProjectContentHash: contentHash,
+				...params,
+			};
+			const mediaPreflight = await harness.callTool(
+				"opencut_preflight_lifecycle_mutation",
+				{
+					...affinity(identity),
+					method: tool.replace(/^opencut_/, ""),
+					request,
+				},
+			);
+			expect(mediaPreflight.status).toBe("validated");
+			const result = await harness.callTool(tool, {
+				...affinity(identity),
+				...request,
+				operationId,
+				preflightFingerprint: requireString(
+					mediaPreflight.preflightFingerprint,
+					"preflightFingerprint",
+				),
+			});
+			expect(result).toMatchObject({ status: "applied", operationId });
+			revision = requireNumber(result.revision, "revision");
+			contentHash = requireProjectContentHash(
+				requireRecord(result.snapshot, "snapshot"),
+			);
+			return result;
+		};
+		const mediaPath = join(directory, "lifecycle-source.mp4");
+		await createSyntheticVideo(mediaPath);
+		const importedAsset = await mediaMutation(
+			"opencut_import_media_asset",
+			"mcp-lifecycle-bin-import",
+			{ path: mediaPath, assetName: "Lifecycle bin asset" },
+		);
+		const assetId = requireString(importedAsset.assetId, "assetId");
+		await mediaMutation("opencut_rename_media_asset", "mcp-lifecycle-bin-rename", {
+			assetId,
+			name: "Lifecycle bin asset renamed",
+		});
+		const relinkedAsset = await mediaMutation(
+			"opencut_relink_media_asset",
+			"mcp-lifecycle-bin-relink",
+			{ assetId, path: mediaPath },
+		);
+		expect(relinkedAsset.differences).toEqual([]);
+		await mediaMutation("opencut_remove_media_asset", "mcp-lifecycle-bin-remove", {
+			assetId,
+			policy: "unused-only",
+		});
+		expect(
+			requireRecords(
+				requireRecord(
+					await harness.callTool("opencut_get_project", affinity(identity)),
+					"project",
+				).mediaAssets,
+				"mediaAssets",
+			).some((asset) => asset.assetId === assetId),
+		).toBe(false);
+	},
+	90_000,
+);
 
 integrationTest(
 	"drives save, restart replay, and verified export through public MCP tools",
@@ -938,9 +1183,7 @@ integrationTest(
 				sample.timeSeconds,
 				`${position} sample time`,
 			);
-			const expectedTicks = Math.round(
-				sampleSeconds * MEDIA_TICKS_PER_SECOND,
-			);
+			const expectedTicks = Math.round(sampleSeconds * MEDIA_TICKS_PER_SECOND);
 			const previewFrame = await third.callTool(
 				"opencut_render_preview_frame",
 				{
@@ -995,17 +1238,14 @@ integrationTest(
 					projectId,
 					sceneId: previewRequest.sceneId,
 					expectedRevision: previewRequest.expectedRevision,
-					expectedProjectContentHash:
-						previewRequest.expectedProjectContentHash,
+					expectedProjectContentHash: previewRequest.expectedProjectContentHash,
 					expectedWriteVersion: previewRequest.expectedWriteVersion,
 					saveReceiptOperationId: previewRequest.saveReceiptOperationId,
 					expectedSaveReceiptId: previewRequest.expectedSaveReceiptId,
 					range: {
 						kind: "media-time",
 						startTicks: Math.round(startSeconds * MEDIA_TICKS_PER_SECOND),
-						endTicksExclusive: Math.round(
-							endSeconds * MEDIA_TICKS_PER_SECOND,
-						),
+						endTicksExclusive: Math.round(endSeconds * MEDIA_TICKS_PER_SECOND),
 					},
 					canvasSize: { width: 16, height: 16 },
 					output: {
@@ -1045,12 +1285,14 @@ integrationTest(
 				Math.round(actualEndSeconds * PARITY_AUDIO_SAMPLE_RATE) *
 					PARITY_AUDIO_CHANNELS,
 			);
-			expect(Math.abs(previewPcm.length - exportPcm.length)).toBeLessThanOrEqual(
+			expect(
+				Math.abs(previewPcm.length - exportPcm.length),
+			).toBeLessThanOrEqual(
 				PARITY_AUDIO_SAMPLE_RATE * PARITY_AUDIO_CHANNELS * 0.1,
 			);
 			const pcmMetrics = pcmComparisonMetrics(previewPcm, exportPcm);
 			console.log(
-				`[parity] ${position} audio ${actualStartSeconds.toFixed(3)}-${actualEndSeconds.toFixed(3)}s samples=${previewPcm.length}/${exportPcm.length} lag=${(pcmMetrics.lagFrames / PARITY_AUDIO_SAMPLE_RATE * 1000).toFixed(2)}ms aligned PCM MAE=${pcmMetrics.meanAbsoluteError.toFixed(1)}`,
+				`[parity] ${position} audio ${actualStartSeconds.toFixed(3)}-${actualEndSeconds.toFixed(3)}s samples=${previewPcm.length}/${exportPcm.length} lag=${((pcmMetrics.lagFrames / PARITY_AUDIO_SAMPLE_RATE) * 1000).toFixed(2)}ms aligned PCM MAE=${pcmMetrics.meanAbsoluteError.toFixed(1)}`,
 			);
 			assertMetricAtMost({
 				label: `${position} audio alignment lag (seconds)`,
@@ -1136,6 +1378,697 @@ integrationTest(
 				},
 			],
 		});
+
+		// -----------------------------------------------------------------
+		// Issue #20: project, scene, bookmark, track, and media-bin lifecycle
+		// on the real imported video. Every mutation chains revision and
+		// content hash so each step is ledgered against verified state.
+		// -----------------------------------------------------------------
+		let lifecycleRevision = requireNumber(thirdReloaded.revision, "revision");
+		let lifecycleHash = audioContentHash;
+		const lifecycleSceneId = requireString(thirdReloaded.sceneId, "sceneId");
+		const lifecycleMutation = async (
+			tool: string,
+			operationId: string,
+			params: Record<string, unknown>,
+		) => {
+			const request = {
+				projectId,
+				expectedRevision: lifecycleRevision,
+				expectedProjectContentHash: lifecycleHash,
+				...params,
+			};
+			const preflight = await third.callTool(
+				"opencut_preflight_lifecycle_mutation",
+				{
+					...affinity(thirdIdentity),
+					method: tool.replace(/^opencut_/, ""),
+					request,
+				},
+			);
+			expect(preflight.status).toBe("validated");
+			const noMutationProof = requireRecord(
+				preflight.noMutationProof,
+				"lifecycle no-mutation proof",
+			);
+			expect(noMutationProof.before).toBe(noMutationProof.after);
+			const result = await third.callTool(tool, {
+				...affinity(thirdIdentity),
+				...request,
+				operationId,
+				preflightFingerprint: requireString(
+					preflight.preflightFingerprint,
+					"lifecycle preflight fingerprint",
+				),
+			});
+			expect(result).toMatchObject({ status: "applied", operationId });
+			lifecycleRevision = requireNumber(result.revision, "revision");
+			lifecycleHash = requireProjectContentHash(
+				requireRecord(result.snapshot, "snapshot"),
+			);
+			return result;
+		};
+		const lifecycleSave = async (operationId: string) => {
+			const saved = await third.callTool("opencut_save_project", {
+				...affinity(thirdIdentity),
+				projectId,
+				sceneId: requireString(
+					requireRecord(
+						await third.callTool(
+							"opencut_get_project",
+							affinity(thirdIdentity),
+						),
+						"project",
+					).sceneId,
+					"sceneId",
+				),
+				operationId,
+				expectedRevision: lifecycleRevision,
+				expectedContentHash: lifecycleHash,
+			});
+			expect(saved).toMatchObject({
+				status: "saved",
+				contentHash: lifecycleHash,
+			});
+			return saved;
+		};
+
+		const lifecycleSaved = await lifecycleSave("public-lifecycle-save");
+		const scenesBefore = await third.callTool("opencut_list_scenes", {
+			...affinity(thirdIdentity),
+			projectId,
+		});
+		const scenesBeforeEntries = requireRecords(scenesBefore.scenes, "scenes");
+		expect(scenesBeforeEntries).toHaveLength(1);
+		expect(scenesBeforeEntries[0]).toMatchObject({
+			sceneId: lifecycleSceneId,
+			isMain: true,
+			isActive: true,
+			bookmarks: [],
+		});
+		expect(
+			requireString(scenesBeforeEntries[0]?.contentHash, "contentHash"),
+		).toMatch(/^[a-f0-9]{64}$/);
+
+		// Track and bookmark lifecycle through a preflighted edit plan.
+		const lifecycleTracks = requireRecords(
+			requireRecord(thirdReloaded, "project").tracks,
+			"tracks",
+		);
+		const lifecycleMainTrackId = lifecycleTracks.find(
+			(track) => track.role === "main",
+		)?.trackId;
+		if (typeof lifecycleMainTrackId !== "string") {
+			throw new Error("main track is missing");
+		}
+		const lifecycleExistingOverlayTrackIds = lifecycleTracks
+			.filter((track) => track.role === "overlay")
+			.map((track) => requireString(track.trackId, "overlay trackId"));
+		const lifecycleOperations = [
+			{
+				kind: "duplicate_track",
+				trackId: lifecycleMainTrackId,
+				newTrackId: "lifecycle-copy",
+			},
+			{
+				kind: "duplicate_track",
+				trackId: lifecycleMainTrackId,
+				newTrackId: "lifecycle-secondary",
+			},
+			{ kind: "set_main_track", trackId: "lifecycle-copy" },
+			{
+				kind: "rename_track",
+				trackId: "lifecycle-copy",
+				name: "Lifecycle copy",
+			},
+			{
+				kind: "reorder_tracks",
+				overlayTrackIds: [
+					"lifecycle-secondary",
+					lifecycleMainTrackId,
+					...lifecycleExistingOverlayTrackIds,
+				],
+			},
+			{
+				kind: "remove_track",
+				trackId: lifecycleMainTrackId,
+				occupied: "delete",
+			},
+			{
+				kind: "add_bookmark",
+				bookmarkId: "lifecycle-bookmark",
+				time: 0,
+				note: "hook",
+			},
+			{ kind: "move_bookmark", bookmarkId: "lifecycle-bookmark", time: 8_000 },
+			{
+				kind: "update_bookmark",
+				bookmarkId: "lifecycle-bookmark",
+				color: "#ff0000",
+				clear: ["note"],
+			},
+			{ kind: "remove_bookmark", bookmarkId: "lifecycle-bookmark" },
+			{
+				kind: "add_bookmark",
+				bookmarkId: "lifecycle-bookmark-final",
+				time: 8_000,
+				color: "#ff0000",
+			},
+			{
+				kind: "instantiate_asset",
+				assetId: requireString(imported.assetId, "assetId"),
+				elementId: "lifecycle-instance",
+				startTime: 0,
+			},
+		];
+		const lifecyclePreflight = await third.callTool(
+			"opencut_preflight_edit_plan",
+			{
+				contractVersion: 2,
+				bridgeProtocolVersion: 2,
+				expectedConnectionIdentity: thirdIdentity,
+				preflightId: "public-lifecycle-preflight",
+				projectId,
+				sceneId: lifecycleSceneId,
+				expectedRevision: lifecycleRevision,
+				expectedProjectContentHash: lifecycleHash,
+				expectedWriteVersion: requireNumber(
+					lifecycleSaved.writeVersion,
+					"writeVersion",
+				),
+				saveReceiptOperationId: "public-lifecycle-save",
+				expectedSaveReceiptId: requireString(
+					lifecycleSaved.receiptId,
+					"receiptId",
+				),
+				description: "Track, bookmark, and media-bin lifecycle operations",
+				operations: lifecycleOperations,
+				policy: {
+					warningPolicy: "allow",
+					providerExecution: "forbidden",
+					costPolicy: "require-exact",
+				},
+			},
+			5 * 60_000,
+		);
+		expect(lifecyclePreflight).toMatchObject({
+			disposition: "evaluated",
+			result: { status: "validated" },
+		});
+		const lifecycleEvaluation = requireRecord(
+			requireRecord(lifecyclePreflight.result, "result").evaluation,
+			"evaluation",
+		);
+		const lifecycleEdited = await third.callTool("opencut_apply_edit_plan", {
+			...affinity(thirdIdentity),
+			projectId,
+			operationId: "public-lifecycle-edit",
+			expectedRevision: lifecycleRevision,
+			expectedProjectContentHash: lifecycleHash,
+			description: "Track, bookmark, and media-bin lifecycle operations",
+			operations: lifecycleOperations,
+			preflight: {
+				receiptId: lifecyclePreflight.receiptId,
+				planFingerprint: lifecycleEvaluation.planFingerprint,
+				preflightFingerprint: lifecycleEvaluation.preflightFingerprint,
+				planDiffHash: lifecycleEvaluation.planDiffHash,
+			},
+		});
+		expect(lifecycleEdited.status).toBe("applied");
+		const lifecycleEditedSnapshot = requireRecord(
+			lifecycleEdited.snapshot,
+			"snapshot",
+		);
+		lifecycleRevision = requireNumber(lifecycleEdited.revision, "revision");
+		lifecycleHash = requireProjectContentHash(lifecycleEditedSnapshot);
+		expect(lifecycleHash).toBe(
+			requireString(lifecycleEvaluation.predictedProjectHash, "predicted hash"),
+		);
+		expect(
+			requireRecords(lifecycleEditedSnapshot.tracks, "tracks").find(
+				(track) => track.trackId === "lifecycle-copy",
+			),
+		).toMatchObject({ role: "main", name: "Lifecycle copy" });
+		expect(
+			requireRecords(lifecycleEditedSnapshot.tracks, "tracks").find(
+				(track) => track.trackId === "lifecycle-secondary",
+			),
+		).toMatchObject({ role: "overlay" });
+		expect(
+			requireRecords(lifecycleEditedSnapshot.tracks, "tracks").some(
+				(track) => track.trackId === lifecycleMainTrackId,
+			),
+		).toBe(false);
+		expect(
+			requireRecords(lifecycleEditedSnapshot.bookmarks, "bookmarks"),
+		).toEqual([
+			{ bookmarkId: "lifecycle-bookmark-final", time: 8_000, color: "#ff0000" },
+		]);
+		expect(
+			requireRecords(lifecycleEditedSnapshot.elements, "elements").find(
+				(element) => element.elementId === "lifecycle-instance",
+			),
+		).toMatchObject({ type: "video", mediaId: imported.assetId });
+		await lifecycleSave("public-lifecycle-save-tracks");
+
+		// Scene lifecycle.
+		const created = await lifecycleMutation(
+			"opencut_create_scene",
+			"public-lifecycle-create-scene",
+			{ name: "Lifecycle scene", activate: false },
+		);
+		const createdSceneId = requireString(created.sceneId, "sceneId");
+		expect(created.activeSceneId).toBe(lifecycleSceneId);
+		const cloned = await lifecycleMutation(
+			"opencut_clone_scene",
+			"public-lifecycle-clone-scene",
+			{ sceneId: lifecycleSceneId, name: "Lifecycle clone", activate: true },
+		);
+		const clonedSceneId = requireString(cloned.sceneId, "sceneId");
+		expect(cloned.activeSceneId).toBe(clonedSceneId);
+		const clonedSnapshot = requireRecord(cloned.snapshot, "snapshot");
+		expect(clonedSnapshot.sceneId).toBe(clonedSceneId);
+		expect(
+			requireRecords(clonedSnapshot.elements, "elements").some(
+				(element) => element.elementId === "lifecycle-instance",
+			),
+		).toBe(false);
+		expect(requireRecords(clonedSnapshot.bookmarks, "bookmarks")).toHaveLength(
+			1,
+		);
+		expect(
+			requireRecords(clonedSnapshot.bookmarks, "bookmarks")[0]?.bookmarkId,
+		).not.toBe("lifecycle-bookmark-final");
+		await lifecycleMutation(
+			"opencut_rename_scene",
+			"public-lifecycle-rename-scene",
+			{
+				sceneId: createdSceneId,
+				name: "Lifecycle scene renamed",
+			},
+		);
+		await lifecycleMutation(
+			"opencut_set_main_scene",
+			"public-lifecycle-set-main-scene",
+			{ sceneId: createdSceneId },
+		);
+		await lifecycleMutation(
+			"opencut_reorder_scenes",
+			"public-lifecycle-reorder",
+			{
+				sceneIds: [createdSceneId, clonedSceneId, lifecycleSceneId],
+			},
+		);
+		const switched = await lifecycleMutation(
+			"opencut_switch_scene",
+			"public-lifecycle-switch-scene",
+			{ sceneId: lifecycleSceneId },
+		);
+		expect(switched.activeSceneId).toBe(lifecycleSceneId);
+		const scenesAfter = await third.callTool("opencut_list_scenes", {
+			...affinity(thirdIdentity),
+			projectId,
+		});
+		expect(
+			requireRecords(scenesAfter.scenes, "scenes").map((scene) => [
+				scene.sceneId,
+				scene.name,
+				scene.isMain,
+				scene.isActive,
+			]),
+		).toEqual([
+			[createdSceneId, "Lifecycle scene renamed", true, false],
+			[clonedSceneId, "Lifecycle clone", false, false],
+			[
+				lifecycleSceneId,
+				requireString(thirdReloaded.sceneName, "sceneName"),
+				false,
+				true,
+			],
+		]);
+		// Deleting the main scene without naming its successor is refused at
+		// preflight, so no fingerprint exists to apply it with.
+		const deletedMainRejected = await third.callTool(
+			"opencut_preflight_lifecycle_mutation",
+			{
+				...affinity(thirdIdentity),
+				method: "delete_scene",
+				request: {
+					projectId,
+					expectedRevision: lifecycleRevision,
+					expectedProjectContentHash: lifecycleHash,
+					sceneId: createdSceneId,
+				},
+			},
+		);
+		expect(deletedMainRejected).toMatchObject({
+			status: "rejected",
+			reason: expect.stringContaining("newMainSceneId"),
+		});
+		await lifecycleMutation(
+			"opencut_delete_scene",
+			"public-lifecycle-delete-scene",
+			{
+				sceneId: createdSceneId,
+				newMainSceneId: lifecycleSceneId,
+			},
+		);
+		await lifecycleMutation(
+			"opencut_delete_scene",
+			"public-lifecycle-delete-clone",
+			{ sceneId: clonedSceneId },
+		);
+		const scenesFinal = await third.callTool("opencut_list_scenes", {
+			...affinity(thirdIdentity),
+			projectId,
+		});
+		expect(requireRecords(scenesFinal.scenes, "scenes")).toHaveLength(1);
+		expect(scenesFinal).toMatchObject({
+			activeSceneId: lifecycleSceneId,
+			mainSceneId: lifecycleSceneId,
+		});
+
+		// Media-bin lifecycle.
+		const binImport = await lifecycleMutation(
+			"opencut_import_media_asset",
+			"public-lifecycle-bin-import",
+			{ path: sourcePath, assetName: "Bin copy" },
+		);
+		const binAssetId = requireString(binImport.assetId, "assetId");
+		expect(binAssetId).not.toBe(imported.assetId);
+		const usages = await third.callTool("opencut_list_media_usages", {
+			...affinity(thirdIdentity),
+			projectId,
+		});
+		expect(requireRecords(usages.usages, "usages")).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					assetId: imported.assetId,
+					elementId: "lifecycle-instance",
+					kind: "source",
+				}),
+			]),
+		);
+		expect(usages.unusedAssetIds).toEqual([binAssetId]);
+		await lifecycleMutation(
+			"opencut_rename_media_asset",
+			"public-lifecycle-bin-rename",
+			{ assetId: binAssetId, name: "Bin copy renamed" },
+		);
+		const relinkPreflight = await third.callTool(
+			"opencut_preflight_media_relink",
+			{
+				...affinity(thirdIdentity),
+				projectId,
+				assetId: binAssetId,
+				path: sourcePath,
+				expectedRevision: lifecycleRevision,
+				expectedProjectContentHash: lifecycleHash,
+			},
+		);
+		expect(relinkPreflight).toMatchObject({
+			status: "validated",
+			compatible: true,
+			differences: [],
+			usageCount: 0,
+			revision: lifecycleRevision,
+		});
+		const relinked = await lifecycleMutation(
+			"opencut_relink_media_asset",
+			"public-lifecycle-bin-relink",
+			{ assetId: binAssetId, path: sourcePath },
+		);
+		expect(relinked.differences).toEqual([]);
+		const removeReferenced = await third.callTool(
+			"opencut_preflight_lifecycle_mutation",
+			{
+				...affinity(thirdIdentity),
+				method: "remove_media_asset",
+				request: {
+					projectId,
+					expectedRevision: lifecycleRevision,
+					expectedProjectContentHash: lifecycleHash,
+					assetId: requireString(imported.assetId, "assetId"),
+					policy: "unused-only",
+				},
+			},
+		);
+		expect(removeReferenced.status).toBe("rejected");
+		await lifecycleMutation(
+			"opencut_remove_media_asset",
+			"public-lifecycle-bin-remove",
+			{ assetId: binAssetId, policy: "unused-only" },
+		);
+		expect(
+			requireRecords(
+				requireRecord(
+					await third.callTool("opencut_get_project", affinity(thirdIdentity)),
+					"project",
+				).mediaAssets,
+				"mediaAssets",
+			).some((asset) => asset.assetId === binAssetId),
+		).toBe(false);
+		await lifecycleSave("public-lifecycle-save-media");
+
+		// Project lifecycle.
+		const projectPreflight = requireRecord(
+			requireRecords(
+				requireRecord(
+					await third.callTool(
+						"opencut_list_projects",
+						affinity(thirdIdentity),
+					),
+					"project list",
+				).projects,
+				"projects",
+			).find((candidate) => candidate.projectId === projectId)?.persistence,
+			"project persistence",
+		);
+		const preflightProjectLifecycle = async (
+			method: "rename_project" | "duplicate_project" | "delete_project",
+			request: Record<string, unknown>,
+		) => {
+			const result = await third.callTool(
+				"opencut_preflight_lifecycle_mutation",
+				{ ...affinity(thirdIdentity), method, request },
+			);
+			expect(result.status).toBe("validated");
+			return requireString(
+				result.preflightFingerprint,
+				"project lifecycle preflight fingerprint",
+			);
+		};
+		const renameProjectRequest = {
+			projectId,
+			name: "Lifecycle renamed project",
+			expectedTargetContentHash: requireString(
+				projectPreflight.contentHash,
+				"target content hash",
+			),
+			expectedTargetWriteVersion: requireNumber(
+				projectPreflight.writeVersion,
+				"target write version",
+			),
+		};
+		const renamedProject = await third.callTool("opencut_rename_project", {
+			...affinity(thirdIdentity),
+			...renameProjectRequest,
+			operationId: "public-lifecycle-rename-project",
+			preflightFingerprint: await preflightProjectLifecycle(
+				"rename_project",
+				renameProjectRequest,
+			),
+		});
+		expect(renamedProject).toMatchObject({
+			status: "renamed",
+			projectId,
+			renamedProjectId: projectId,
+			name: "Lifecycle renamed project",
+			persistence: {
+				status: "verified",
+				projectId,
+				contentHashProjectionVersion: 3,
+			},
+		});
+		lifecycleRevision = requireNumber(renamedProject.revision, "revision");
+		lifecycleHash = requireProjectContentHash(
+			requireRecord(renamedProject.snapshot, "snapshot"),
+		);
+		const sourceProjectBeforeDuplicate = await third.callTool(
+			"opencut_get_project",
+			affinity(thirdIdentity),
+		);
+		const renamedPersistence = requireRecord(
+			renamedProject.persistence,
+			"renamed persistence",
+		);
+		const duplicateProjectRequest = {
+			projectId,
+			name: "Lifecycle duplicate",
+			expectedTargetContentHash: requireString(
+				renamedPersistence.contentHash,
+				"renamed content hash",
+			),
+			expectedTargetWriteVersion: requireNumber(
+				renamedPersistence.writeVersion,
+				"renamed write version",
+			),
+		};
+		const duplicatePreflightFingerprint = await preflightProjectLifecycle(
+			"duplicate_project",
+			duplicateProjectRequest,
+		);
+		const duplicatedProject = await third.callTool(
+			"opencut_duplicate_project",
+			{
+				...affinity(thirdIdentity),
+				...duplicateProjectRequest,
+				operationId: "public-lifecycle-duplicate-project",
+				preflightFingerprint: duplicatePreflightFingerprint,
+			},
+		);
+		expect(duplicatedProject).toMatchObject({
+			status: "duplicated",
+			projectId,
+			sourceProjectId: projectId,
+			name: "Lifecycle duplicate",
+			persistence: {
+				status: "verified",
+				contentHashProjectionVersion: 3,
+			},
+		});
+		const duplicateProjectId = requireString(
+			duplicatedProject.duplicateProjectId,
+			"duplicateProjectId",
+		);
+		expect(duplicatedProject).toMatchObject({
+			mediaIdentity: "shared",
+			mediaBytes: "copied",
+			persistence: { projectId: duplicateProjectId },
+		});
+		expect(duplicateProjectId).not.toBe(projectId);
+		const projectsAfterDuplicate = await third.callTool(
+			"opencut_list_projects",
+			affinity(thirdIdentity),
+		);
+		expect(
+			requireRecords(projectsAfterDuplicate.projects, "projects").map(
+				(project) => project.projectId,
+			),
+		).toEqual(expect.arrayContaining([projectId, duplicateProjectId]));
+		const replayedDuplicate = await third.callTool(
+			"opencut_duplicate_project",
+			{
+				...affinity(thirdIdentity),
+				...duplicateProjectRequest,
+				operationId: "public-lifecycle-duplicate-project",
+				preflightFingerprint: duplicatePreflightFingerprint,
+			},
+		);
+		// The ledger answers a repeated operation from its durable record, so
+		// the original result comes back unchanged under a replayed disposition.
+		expect(replayedDuplicate).toMatchObject({
+			status: "duplicated",
+			durableOperationStatus: "replayed",
+			duplicateProjectId,
+		});
+		const deleteProjectRequest = {
+			projectId,
+			fallbackProjectId: duplicateProjectId,
+			expectedTargetContentHash: requireString(
+				renamedPersistence.contentHash,
+				"renamed content hash",
+			),
+			expectedTargetWriteVersion: requireNumber(
+				renamedPersistence.writeVersion,
+				"renamed write version",
+			),
+		};
+		const deletedProject = await third.callTool("opencut_delete_project", {
+			...affinity(thirdIdentity),
+			...deleteProjectRequest,
+			operationId: "public-lifecycle-delete-project",
+			preflightFingerprint: await preflightProjectLifecycle(
+				"delete_project",
+				deleteProjectRequest,
+			),
+		});
+		expect(deletedProject).toMatchObject({
+			status: "deleted",
+			projectId: duplicateProjectId,
+			activeProjectId: duplicateProjectId,
+			deletedProjectId: projectId,
+			fallback: "opened-existing",
+			recoverability: "irreversible",
+			persistence: {
+				status: "deleted-verified",
+				projectId,
+			},
+		});
+		const duplicateSnapshot = await third.callTool(
+			"opencut_get_project",
+			affinity(thirdIdentity),
+		);
+		expect(duplicateSnapshot.projectId).toBe(duplicateProjectId);
+		for (const [collection, identity] of [
+			["scenes", "sceneId"],
+			["tracks", "trackId"],
+			["elements", "elementId"],
+			["bookmarks", "bookmarkId"],
+		] as const) {
+			const sourceIds = new Set(
+				requireRecords(
+					sourceProjectBeforeDuplicate[collection],
+					collection,
+				).map((item) => requireString(item[identity], identity)),
+			);
+			const duplicateIds = requireRecords(
+				duplicateSnapshot[collection],
+				collection,
+			).map((item) => requireString(item[identity], identity));
+			expect(duplicateIds).toHaveLength(sourceIds.size);
+			expect(duplicateIds.every((id) => !sourceIds.has(id))).toBe(true);
+		}
+		expect(
+			requireRecords(duplicateSnapshot.mediaAssets, "mediaAssets")
+				.map((asset) => requireString(asset.assetId, "assetId"))
+				.sort(),
+		).toEqual(
+			requireRecords(sourceProjectBeforeDuplicate.mediaAssets, "mediaAssets")
+				.map((asset) => requireString(asset.assetId, "assetId"))
+				.sort(),
+		);
+		expect(
+			requireRecords(
+				(await third.callTool("opencut_list_projects", affinity(thirdIdentity)))
+					.projects,
+				"projects",
+			).some((project) => project.projectId === projectId),
+		).toBe(false);
+		const lifecycleHistory = await third.callTool(
+			"opencut_list_operation_history",
+			{ projectId, limit: 100 },
+		);
+		const lifecycleOperationIds = new Set(
+			requireRecords(lifecycleHistory.entries, "entries").map((entry) =>
+				requireString(
+					requireRecord(entry.record, "record").operationId,
+					"operationId",
+				),
+			),
+		);
+		for (const operationId of [
+			"public-lifecycle-edit",
+			"public-lifecycle-create-scene",
+			"public-lifecycle-delete-clone",
+			"public-lifecycle-bin-import",
+			"public-lifecycle-bin-remove",
+			"public-lifecycle-rename-project",
+			"public-lifecycle-duplicate-project",
+			"public-lifecycle-delete-project",
+		]) {
+			expect(lifecycleOperationIds.has(operationId)).toBe(true);
+		}
 		await third.callTool("opencut_stop_editor_worker", {});
 	},
 	10 * 60_000,
@@ -1263,7 +2196,9 @@ class McpStdioHarness {
 		return requireRecord(JSON.parse(text.text), `${name} payload`);
 	}
 
-	private async persistDiagnostics(childPid: number | undefined): Promise<void> {
+	private async persistDiagnostics(
+		childPid: number | undefined,
+	): Promise<void> {
 		const diagnosticsDirectory =
 			process.env.OPENCUT_INTEGRATION_DIAGNOSTICS_DIR;
 		if (!diagnosticsDirectory || !this.diagnostics) return;
@@ -1494,7 +2429,10 @@ async function extractRgba(path: string, seconds?: number): Promise<Buffer> {
 	});
 }
 
-function rgbaComparisonMetrics(left: Buffer, right: Buffer): {
+function rgbaComparisonMetrics(
+	left: Buffer,
+	right: Buffer,
+): {
 	meanAbsoluteError: number;
 	psnrDb: number;
 } {
@@ -1557,7 +2495,9 @@ async function extractPcmI16(path: string): Promise<Int16Array> {
 			}
 			const bytes = Buffer.concat(output);
 			if (bytes.byteLength === 0 || bytes.byteLength % 2 !== 0) {
-				reject(new Error("decoded PCM must contain complete non-empty i16 samples"));
+				reject(
+					new Error("decoded PCM must contain complete non-empty i16 samples"),
+				);
 				return;
 			}
 			const copy = bytes.buffer.slice(
@@ -1568,7 +2508,6 @@ async function extractPcmI16(path: string): Promise<Int16Array> {
 		});
 	});
 }
-
 
 function pcmComparisonMetrics(
 	before: Int16Array,
@@ -1616,7 +2555,9 @@ function pcmComparisonMetrics(
 	);
 	const best = candidates
 		.filter((candidate) => candidate.meanAbsoluteError <= minimum * 1.02)
-		.sort((left, right) => Math.abs(left.lagFrames) - Math.abs(right.lagFrames))[0]!;
+		.sort(
+			(left, right) => Math.abs(left.lagFrames) - Math.abs(right.lagFrames),
+		)[0]!;
 	return { ...best, comparedFrames };
 }
 

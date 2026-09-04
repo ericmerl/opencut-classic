@@ -23,6 +23,116 @@ afterEach(async () => {
 });
 
 integrationTest(
+	"applies a Rust-planned scene lifecycle mutation through the real browser",
+	async () => {
+		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
+		if (!baseUrl)
+			throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		const bridge = new EditorBridge({
+			token: randomBytes(32).toString("hex"),
+			port: Number(
+				process.env.OPENCUT_HEADLESS_INTEGRATION_BRIDGE_PORT ?? "32292",
+			),
+		});
+		let browserDiagnostics = "";
+		const spawnWithDiagnostics = ((
+			command: string,
+			args: readonly string[],
+		) => {
+			const child = spawn(command, args, {
+				stdio: ["ignore", "pipe", "pipe"],
+				windowsHide: true,
+			});
+			child.stdout?.on("data", (data) => {
+				browserDiagnostics += String(data);
+			});
+			child.stderr?.on("data", (data) => {
+				browserDiagnostics += String(data);
+			});
+			return child;
+		}) as typeof spawn;
+		const worker = new ManagedEditorWorker(bridge, {
+			baseUrl,
+			browserPath: process.env.OPENCUT_HEADLESS_BROWSER_PATH,
+			profileDirectory: join(directory, "lifecycle-profile"),
+			connectionTimeoutMs: 90_000,
+			spawnProcess: spawnWithDiagnostics,
+			browserArguments: ["--enable-logging=stderr", "--v=0"],
+		});
+
+		try {
+			await worker.ensureConnected();
+			const connectionIdentity = bridge.getStatus().connectionIdentity;
+			if (!connectionIdentity) {
+				throw new Error("negotiated editor identity is missing");
+			}
+			const initial = requireRecord(
+				await bridge.request(
+					"read_project",
+					{
+						bridgeProtocolVersion: 2,
+						expectedConnectionIdentity: connectionIdentity,
+					},
+					undefined,
+					connectionIdentity,
+				),
+			);
+			const projectId = requireString(initial.projectId, "projectId");
+			const request = {
+				bridgeProtocolVersion: 2 as const,
+				expectedConnectionIdentity: connectionIdentity,
+				projectId,
+				expectedRevision: requireNumber(initial.revision, "revision"),
+				expectedProjectContentHash: requireProjectContentHash(initial),
+				name: "Lifecycle browser regression",
+				activate: false,
+			};
+			const preflight = requireRecord(
+				await bridge.request(
+					"preflight_lifecycle_mutation",
+					{ method: "create_scene", request },
+					undefined,
+					connectionIdentity,
+				),
+			);
+			expect(preflight.status).toBe("validated");
+			const created = requireRecord(
+				await bridge.request(
+					"create_scene",
+					{
+						...request,
+						operationId: "managed-lifecycle-create-scene",
+						preflightFingerprint: requireString(
+							preflight.preflightFingerprint,
+							"preflightFingerprint",
+						),
+					},
+					undefined,
+					connectionIdentity,
+				),
+			);
+			expect(created).toMatchObject({
+				status: "applied",
+				operationId: "managed-lifecycle-create-scene",
+				activeSceneId: initial.sceneId,
+			});
+			expect(created.sceneId).not.toBe(initial.sceneId);
+		} catch (error) {
+			const focusedDiagnostics = browserDiagnostics
+				.split(/\r?\n/)
+				.filter((line) => /CONSOLE|ERROR|lifecycle|scene|wasm/i.test(line))
+				.join("\n");
+			console.error(focusedDiagnostics.slice(-30_000));
+			throw error;
+		} finally {
+			await worker.stop();
+			bridge.stop();
+		}
+	},
+	90_000,
+);
+
+integrationTest(
 	"connects the real web editor through a one-time bootstrap ticket",
 	async () => {
 		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;

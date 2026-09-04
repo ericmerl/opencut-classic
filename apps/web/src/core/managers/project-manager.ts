@@ -96,11 +96,26 @@ export class ProjectManager {
 		await this.storageMigrationPromise;
 	}
 
-	async createNewProject({ name }: { name: string }): Promise<string> {
-		const mainScene = buildDefaultScene({ name: "Main scene", isMain: true });
+	async createNewProject({
+		name,
+		projectId = generateUUID(),
+		mainSceneId,
+		mainTrackId,
+	}: {
+		name: string;
+		projectId?: string;
+		mainSceneId?: string;
+		mainTrackId?: string;
+	}): Promise<string> {
+		const mainScene = buildDefaultScene({
+			name: "Main scene",
+			isMain: true,
+			sceneId: mainSceneId,
+			mainTrackId,
+		});
 		const newProject: TProject = {
 			metadata: {
-				id: generateUUID(),
+				id: projectId,
 				name,
 				duration: getProjectDurationFromScenes({ scenes: [mainScene] }),
 				createdAt: new Date(),
@@ -398,9 +413,34 @@ export class ProjectManager {
 		}
 	}
 
-	async duplicateProjects({ ids }: { ids: string[] }): Promise<string[]> {
+	async duplicateProjects({
+		ids,
+		newProjectIds,
+		newProjectNames,
+	}: {
+		ids: string[];
+		newProjectIds?: string[];
+		newProjectNames?: string[];
+	}): Promise<string[]> {
 		const uniqueIds = Array.from(new Set(ids));
 		if (uniqueIds.length === 0) return [];
+		if (newProjectIds && newProjectIds.length !== uniqueIds.length) {
+			throw new Error(
+				"newProjectIds must match the unique source project count",
+			);
+		}
+		if (newProjectNames && newProjectNames.length !== uniqueIds.length) {
+			throw new Error(
+				"newProjectNames must match the unique source project count",
+			);
+		}
+		if (
+			newProjectIds?.some((id) =>
+				this.savedProjects.some((project) => project.id === id),
+			)
+		) {
+			throw new Error("a requested duplicate project id already exists");
+		}
 
 		try {
 			const getDuplicateBaseName = ({ name }: { name: string }) => {
@@ -460,20 +500,20 @@ export class ProjectManager {
 				nextNumberByBaseName.set(baseName, maxNumber + 1);
 			}
 
-			const duplicationPlans = projectsToDuplicate.map((project) => {
+			const duplicationPlans = projectsToDuplicate.map((project, index) => {
 				const { baseName } = getDuplicateBaseName({
 					name: project.metadata.name,
 				});
 				const nextNumber = nextNumberByBaseName.get(baseName) ?? 1;
 				nextNumberByBaseName.set(baseName, nextNumber + 1);
 
-				const newProjectId = generateUUID();
+				const newProjectId = newProjectIds?.[index] ?? generateUUID();
 				const newProject: TProject = {
 					...project,
 					metadata: {
 						...project.metadata,
 						id: newProjectId,
-						name: `(${nextNumber}) ${baseName}`,
+						name: newProjectNames?.[index] ?? `(${nextNumber}) ${baseName}`,
 						createdAt: new Date(),
 						updatedAt: new Date(),
 					},

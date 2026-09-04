@@ -18,6 +18,7 @@ import {
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
 	openProjectInputSchema,
+	preflightLifecycleMutationInputSchema,
 	saveProjectInputSchema,
 	listExportBatchesInputSchema,
 	listExportJobsInputSchema,
@@ -39,6 +40,51 @@ import {
 	withProjectMutationSafety,
 	undoInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut lifecycle preflight contract", () => {
+	const schema = withConnectionAffinity(preflightLifecycleMutationInputSchema);
+
+	test("accepts typed project, scene, and media plans with exact source bindings", () => {
+		for (const input of [
+			{
+				method: "rename_project",
+				request: {
+					projectId: "project-1",
+					name: "Renamed",
+					expectedTargetContentHash: "a".repeat(64),
+					expectedTargetWriteVersion: 2,
+				},
+			},
+			{
+				method: "create_scene",
+				request: {
+					projectId: "project-1",
+					name: "Alternate",
+					expectedRevision: 3,
+					expectedProjectContentHash: "b".repeat(64),
+				},
+			},
+			{
+				method: "relink_media_asset",
+				request: {
+					projectId: "project-1",
+					assetId: "asset-1",
+					path: "C:/media/replacement.mp4",
+					expectedRevision: 3,
+					expectedProjectContentHash: "b".repeat(64),
+				},
+			},
+		]) {
+			expect(
+				schema.safeParse({
+					...input,
+					bridgeProtocolVersion: 2,
+					expectedConnectionIdentity: connectionIdentity,
+				}).success,
+			).toBe(true);
+		}
+	});
+});
 
 const connectionIdentity = {
 	serverInstanceId: "server-1",

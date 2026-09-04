@@ -23,6 +23,20 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_import_subtitles",
 				"opencut_normalize_audio",
 				"opencut_open_project",
+				"opencut_rename_project",
+				"opencut_duplicate_project",
+				"opencut_delete_project",
+				"opencut_create_scene",
+				"opencut_clone_scene",
+				"opencut_switch_scene",
+				"opencut_rename_scene",
+				"opencut_delete_scene",
+				"opencut_set_main_scene",
+				"opencut_reorder_scenes",
+				"opencut_import_media_asset",
+				"opencut_rename_media_asset",
+				"opencut_relink_media_asset",
+				"opencut_remove_media_asset",
 				"opencut_queue_export",
 				"opencut_queue_export_batch",
 				"opencut_record_export_inspection",
@@ -40,7 +54,7 @@ describe("mutating MCP tool manifest", () => {
 				"opencut_undo",
 			].sort(),
 		);
-		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(33);
+		expect(Object.keys(MUTATING_TOOL_MANIFEST)).toHaveLength(47);
 	});
 
 	test("exempts only pre-affinity worker lifecycle controls from the v2 gate", () => {
@@ -59,6 +73,18 @@ describe("mutating MCP tool manifest", () => {
 			Object.values(MUTATING_TOOL_MANIFEST).filter(
 				(definition) => definition.protocolMutationPolicy === "v2-required",
 			),
-		).toHaveLength(31);
+		).toHaveLength(45);
+	});
+
+	test("declares target-specific persistence verification for project lifecycle mutations", () => {
+		for (const toolName of [
+			"opencut_rename_project",
+			"opencut_duplicate_project",
+			"opencut_delete_project",
+		] as const) {
+			const definition = MUTATING_TOOL_MANIFEST[toolName];
+			expect(definition.requiresSaveVerification).toBeFalse();
+			expect(definition.selfVerifiesPersistence).toBeTrue();
+		}
 	});
 });

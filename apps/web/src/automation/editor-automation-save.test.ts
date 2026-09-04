@@ -673,6 +673,72 @@ describe("EditorAutomation save barrier", () => {
 		});
 	});
 
+	test("records the active scene identity for a non-activating scene mutation", async () => {
+		const project = buildProject("Non-activating scene mutation");
+		const activeScene = project.scenes[0]!;
+		const createdScene = {
+			...activeScene,
+			id: "scene-2",
+			name: "Created without activation",
+			isMain: false,
+		};
+		project.scenes.push(createdScene);
+		const automation = new EditorAutomation(
+			createEditor({
+				project,
+				scene: activeScene,
+				onFlush: () => undefined,
+			}),
+		);
+		const snapshot = await automation.readProject();
+		if (snapshot.contentIdentity.status !== "hashed") {
+			throw new Error("hash blocked");
+		}
+		const requestWithoutBinding = {
+			operationId: "create-scene-non-active",
+		};
+		const binding = {
+			version: 1 as const,
+			outerOperationId: requestWithoutBinding.operationId,
+			outerToolName: "opencut_create_scene",
+			outerRequestFingerprint: "a".repeat(64),
+			role: "direct-terminal" as const,
+			stepId: "opencut_create_scene:direct",
+			browserMethod: "create_scene",
+			browserRequestFingerprint: createHash("sha256")
+				.update(stableSerializeForTest(requestWithoutBinding))
+				.digest("hex"),
+		};
+		let stored: unknown = null;
+		storageService.loadProjectFresh = async () =>
+			readback({ project, writeVersion: 10 });
+		storageService.saveOperationReceipt = async (receipt) => {
+			stored = receipt;
+		};
+
+		await automation.recordOperationReceipt({
+			method: "create_scene",
+			request: { ...requestWithoutBinding, operationReceiptBinding: binding },
+			result: {
+				status: "applied",
+				operationId: requestWithoutBinding.operationId,
+				projectId: project.metadata.id,
+				sceneId: createdScene.id,
+				activeSceneId: activeScene.id,
+				revision: snapshot.revision,
+				snapshot,
+			},
+		});
+
+		expect(stored).toMatchObject({
+			operationId: binding.outerOperationId,
+			afterState: {
+				sceneId: activeScene.id,
+				durableWriteVersion: 10,
+			},
+		});
+	});
+
 	test("retains a verified mutating browser result before its operation receipt", async () => {
 		const project = buildProject("Durable browser edit");
 		const scene = project.scenes[0]!;

@@ -296,6 +296,44 @@ describe("edit-plan preflight service", () => {
 		}
 	});
 
+	test("attributes track-removal timing consequences to elements owned by that track", async () => {
+		const directory = await mkdtemp(
+			join(tmpdir(), "opencut-preflight-service-"),
+		);
+		directories.push(directory);
+		const store = new EditPlanPreflightStore(directory);
+		const request = input();
+		request.description = "remove an occupied overlay track";
+		request.operations = [
+			{
+				kind: "remove_track",
+				trackId: "track-1",
+				occupied: "delete",
+			},
+		];
+		const response = validatedResponse(request);
+		Object.assign(response.evaluation, {
+			resolvedOperations: [
+				{
+					kind: "remove_track",
+					trackId: "track-1",
+					occupied: "delete",
+					targetTrackId: null,
+					resolvedCascadeElementIds: [],
+				},
+			],
+		});
+		const service = new EditPlanPreflightService(
+			new DurableTestBrowser(() => response),
+			store,
+		);
+
+		await expect(service.preflight(request)).resolves.toMatchObject({
+			result: { status: "validated" },
+		});
+		store.close();
+	});
+
 	test("validates and removes authenticated bridge metadata before receipt parsing", async () => {
 		const directory = await mkdtemp(
 			join(tmpdir(), "opencut-preflight-service-"),
@@ -427,7 +465,7 @@ class DurableTestBrowser {
 	}
 }
 
-function input() {
+function input(): PreflightEditPlanInput {
 	return {
 		contractVersion: 2 as const,
 		bridgeProtocolVersion: 2 as const,

@@ -303,6 +303,7 @@ export const editPlanProjectSnapshotSchema = z
 								z
 									.object({
 										order: z.number().int().nonnegative(),
+										id: z.string().min(1).optional(),
 										time: z.number().int().nonnegative(),
 										duration: z.number().int().nonnegative().nullable(),
 										note: nullableStringSchema,
@@ -350,6 +351,38 @@ export const editPlanProjectSnapshotSchema = z
 				path: ["project", "id"],
 				message: "project-content v1 does not contain project.id",
 			});
+		}
+		for (const [sceneIndex, scene] of snapshot.project.scenes.entries()) {
+			for (const [bookmarkIndex, bookmark] of scene.bookmarks.entries()) {
+				if (snapshot.projectionVersion >= 3 && !bookmark.id) {
+					context.addIssue({
+						code: "custom",
+						path: [
+							"project",
+							"scenes",
+							sceneIndex,
+							"bookmarks",
+							bookmarkIndex,
+							"id",
+						],
+						message: "project-content v3 requires bookmark.id",
+					});
+				}
+				if (snapshot.projectionVersion < 3 && bookmark.id !== undefined) {
+					context.addIssue({
+						code: "custom",
+						path: [
+							"project",
+							"scenes",
+							sceneIndex,
+							"bookmarks",
+							bookmarkIndex,
+							"id",
+						],
+						message: "project-content v1 and v2 do not contain bookmark.id",
+					});
+				}
+			}
 		}
 	});
 
@@ -939,6 +972,7 @@ function normalizeRustOperationOptions(
 	operation: PreflightEditOperation,
 ): CanonicalEditPlanValue {
 	const value = { ...operation } as { [key: string]: unknown };
+	delete value.resolvedCascadeElementIds;
 	const optional: Partial<Record<PreflightEditOperation["kind"], string[]>> = {
 		insert_text: ["elementId"],
 		insert_graphic: ["elementId", "name", "trackId", "params"],
@@ -961,6 +995,12 @@ function normalizeRustOperationOptions(
 		trim: ["startTime", "duration"],
 		split: ["rightElementId", "retainSide"],
 		set_mask: ["params"],
+		reorder_tracks: ["overlayTrackIds", "audioTrackIds"],
+		remove_track: ["targetTrackId"],
+		duplicate_track: ["newTrackId", "name"],
+		add_bookmark: ["bookmarkId", "duration", "note", "color"],
+		update_bookmark: ["note", "color", "duration"],
+		instantiate_asset: ["elementId", "name", "duration", "trackId"],
 	};
 	for (const key of optional[operation.kind] ?? []) {
 		if (!(key in value)) value[key] = null;

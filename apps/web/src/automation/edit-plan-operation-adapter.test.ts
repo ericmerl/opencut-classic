@@ -16,9 +16,8 @@ mock.module("opencut-wasm", () => ({
 }));
 
 const { mediaTime } = await import("@/wasm");
-const { toAutomationResolvedOperation, toNativeEditOperations } = await import(
-	"./edit-plan-operation-adapter"
-);
+const { toAutomationResolvedOperation, toNativeEditOperations } =
+	await import("./edit-plan-operation-adapter");
 
 const tick = (ticks: number) => mediaTime({ ticks });
 const ref = { trackId: "video-track", elementId: "video-element" };
@@ -28,8 +27,8 @@ describe("edit-plan operation WASM adapter", () => {
 		const operations = allOperations();
 		const native = toNativeEditOperations(operations);
 
-		expect(native).toHaveLength(41);
-		expect(new Set(native.map((operation) => operation.kind)).size).toBe(41);
+		expect(native).toHaveLength(51);
+		expect(new Set(native.map((operation) => operation.kind)).size).toBe(51);
 		expect(native.map((operation) => operation.kind)).toEqual(
 			operations.map((operation) => operation.kind),
 		);
@@ -66,11 +65,13 @@ describe("edit-plan operation WASM adapter", () => {
 		const native = toNativeEditOperations(allOperations());
 		const browser = native.map(toAutomationResolvedOperation);
 
-		expect(browser).toHaveLength(41);
+		expect(browser).toHaveLength(51);
 		expect(browser.map((operation) => operation.kind)).toEqual(
 			native.map((operation) => operation.kind),
 		);
-		expect(browser.find((operation) => operation.kind === "duck_audio")).toEqual(
+		expect(
+			browser.find((operation) => operation.kind === "duck_audio"),
+		).toEqual(
 			expect.objectContaining({
 				attackDuration: tick(1),
 				releaseDuration: tick(1),
@@ -80,18 +81,20 @@ describe("edit-plan operation WASM adapter", () => {
 	});
 
 	test("preserves exact auto-track allocations for every insertion family", () => {
-		const insertions = allOperations().slice(0, 4).map((operation, index) => ({
-			...operation,
-			elementId: `element-${index}`,
-			autoTrackId: `track-${index}`,
-			resolvedAllocations: [
-				{
-					role: "element-auto-track" as const,
-					sourceId: `element-${index}`,
-					resolvedId: `track-${index}`,
-				},
-			],
-		}));
+		const insertions = allOperations()
+			.slice(0, 4)
+			.map((operation, index) => ({
+				...operation,
+				elementId: `element-${index}`,
+				autoTrackId: `track-${index}`,
+				resolvedAllocations: [
+					{
+						role: "element-auto-track" as const,
+						sourceId: `element-${index}`,
+						resolvedId: `track-${index}`,
+					},
+				],
+			}));
 		const resolved = toNativeEditOperations(insertions).map(
 			toAutomationResolvedOperation,
 		);
@@ -156,15 +159,23 @@ function allOperations(): AutomationEditOperation[] {
 		},
 		{ kind: "add_track", trackType: "video", trackId: "new-track" },
 		{ kind: "set_track_state", trackId: ref.trackId, muted: true },
+		{ kind: "rename_track", trackId: ref.trackId, name: "Renamed" },
+		{ kind: "reorder_tracks", overlayTrackIds: [ref.trackId] },
+		{ kind: "remove_track", trackId: ref.trackId, occupied: "delete" },
+		{ kind: "duplicate_track", trackId: ref.trackId },
+		{ kind: "set_main_track", trackId: ref.trackId },
+		{ kind: "add_bookmark", time: tick(4), note: "hook" },
+		{ kind: "update_bookmark", bookmarkId: "bookmark-1", clear: ["note"] },
+		{ kind: "move_bookmark", bookmarkId: "bookmark-1", time: tick(8) },
+		{ kind: "remove_bookmark", bookmarkId: "bookmark-1" },
+		{ kind: "instantiate_asset", assetId: "asset-1", startTime: tick(0) },
 		{
 			kind: "set_project_settings",
 			canvasSize: { width: 1080, height: 1920 },
 		},
 		{
 			kind: "insert_captions",
-			captions: [
-				{ text: "Caption", startTime: tick(0), duration: tick(10) },
-			],
+			captions: [{ text: "Caption", startTime: tick(0), duration: tick(10) }],
 		},
 		{ kind: "update_caption", ...ref, text: "Corrected" },
 		{ kind: "delete", ...ref },
@@ -175,9 +186,17 @@ function allOperations(): AutomationEditOperation[] {
 			elements: [ref, { trackId: ref.trackId, elementId: "second" }],
 		},
 		{ kind: "break_apart_compound", ...ref },
-		{ kind: "set_group", groupId: "group", elements: [ref, { ...ref, elementId: "second" }] },
+		{
+			kind: "set_group",
+			groupId: "group",
+			elements: [ref, { ...ref, elementId: "second" }],
+		},
 		{ kind: "clear_group", groupId: "group" },
-		{ kind: "set_link", linkId: "link", elements: [ref, { ...ref, elementId: "second" }] },
+		{
+			kind: "set_link",
+			linkId: "link",
+			elements: [ref, { ...ref, elementId: "second" }],
+		},
 		{ kind: "clear_link", linkId: "link" },
 		{ kind: "move", ...ref, startTime: tick(5) },
 		{ kind: "set_params", ...ref, params: { opacity: 0.5 } },
@@ -230,7 +249,11 @@ function allOperations(): AutomationEditOperation[] {
 			transitionType: "crossfade",
 			duration: tick(3),
 		},
-		{ kind: "remove_transition", trackId: ref.trackId, transitionId: "transition" },
+		{
+			kind: "remove_transition",
+			trackId: ref.trackId,
+			transitionId: "transition",
+		},
 		{ kind: "set_retime", ...ref, rate: 1.25 },
 		{ kind: "trim", ...ref, trimStart: tick(1), trimEnd: tick(1) },
 		{ kind: "split", ...ref, splitTime: tick(5) },

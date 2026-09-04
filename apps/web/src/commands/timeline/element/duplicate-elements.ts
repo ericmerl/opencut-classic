@@ -195,7 +195,7 @@ export class DuplicateElementsCommand extends Command {
 	}
 }
 
-function buildDuplicateElement({
+export function buildDuplicateElement({
 	element,
 	id,
 	startTime,
@@ -369,7 +369,7 @@ export function cloneCompoundTracks({
 	};
 }
 
-function buildDuplicateRelationshipIds({
+export function buildDuplicateRelationshipIds({
 	elements,
 	property,
 	role,

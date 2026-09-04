@@ -144,3 +144,19 @@ export function getBookmarksActiveAtTime({
 		return time >= start && time <= end;
 	});
 }
+
+export function findBookmarkIndexById({
+	bookmarks,
+	bookmarkId,
+}: {
+	bookmarks: Bookmark[];
+	bookmarkId: string;
+}): number {
+	return bookmarks.findIndex((bookmark) => bookmark.id === bookmarkId);
+}
+
+export function sortBookmarks(bookmarks: Bookmark[]): Bookmark[] {
+	return bookmarks
+		.slice()
+		.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+}

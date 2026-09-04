@@ -9,6 +9,31 @@ import type {
 	AutomationEditPlanPreflightRequest,
 	AutomationExportRequest,
 	AutomationImportRequest,
+	AutomationRenameProjectRequest,
+	AutomationRenameProjectResult,
+	AutomationDuplicateProjectRequest,
+	AutomationDuplicateProjectResult,
+	AutomationDeleteProjectRequest,
+	AutomationDeleteProjectResult,
+	AutomationListScenesRequest,
+	AutomationListScenesResult,
+	AutomationCreateSceneRequest,
+	AutomationCloneSceneRequest,
+	AutomationSwitchSceneRequest,
+	AutomationRenameSceneRequest,
+	AutomationDeleteSceneRequest,
+	AutomationSetMainSceneRequest,
+	AutomationReorderScenesRequest,
+	AutomationSceneMutationResult,
+	AutomationListMediaUsagesRequest,
+	AutomationListMediaUsagesResult,
+	AutomationImportMediaAssetRequest,
+	AutomationRenameMediaAssetRequest,
+	AutomationPreflightMediaRelinkRequest,
+	AutomationPreflightLifecycleMutationRequest,
+	AutomationRelinkMediaAssetRequest,
+	AutomationRemoveMediaAssetRequest,
+	AutomationMediaMutationResult,
 	AutomationImportSubtitlesRequest,
 	AutomationRenderPreviewFrameRequest,
 	AutomationRenderPreviewRangeRequest,
@@ -171,6 +196,114 @@ type BridgeRequest =
 			id: string;
 			method: "transfer_source_media";
 			params: AutomationTransferSourceRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "rename_project";
+			params: AutomationRenameProjectRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "duplicate_project";
+			params: AutomationDuplicateProjectRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "delete_project";
+			params: AutomationDeleteProjectRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "list_scenes";
+			params: AutomationListScenesRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "create_scene";
+			params: AutomationCreateSceneRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "clone_scene";
+			params: AutomationCloneSceneRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "switch_scene";
+			params: AutomationSwitchSceneRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "rename_scene";
+			params: AutomationRenameSceneRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "delete_scene";
+			params: AutomationDeleteSceneRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "set_main_scene";
+			params: AutomationSetMainSceneRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "reorder_scenes";
+			params: AutomationReorderScenesRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "preflight_lifecycle_mutation";
+			params: AutomationPreflightLifecycleMutationRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "list_media_usages";
+			params: AutomationListMediaUsagesRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "import_media_asset";
+			params: AutomationImportMediaAssetRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "rename_media_asset";
+			params: AutomationRenameMediaAssetRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "preflight_media_relink";
+			params: AutomationPreflightMediaRelinkRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "relink_media_asset";
+			params: AutomationRelinkMediaAssetRequest;
+	  }
+	| {
+			kind: "request";
+			id: string;
+			method: "remove_media_asset";
+			params: AutomationRemoveMediaAssetRequest;
 	  }
 	| {
 			kind: "request";
@@ -424,7 +557,8 @@ export class AutomationBridgeClient {
 			if (
 				activatedProjectId &&
 				(message.method === "create_project" ||
-					message.method === "open_project")
+					message.method === "open_project" ||
+					message.method === "delete_project")
 			) {
 				queueMicrotask(() =>
 					this.options.onActiveProjectChange?.(activatedProjectId),
@@ -586,6 +720,42 @@ export class AutomationBridgeClient {
 				return this.automation.renderPreviewRange(message.params);
 			case "compare_project_states":
 				return this.automation.compareProjectStates(message.params);
+			case "rename_project":
+				return this.automation.renameProject(message.params);
+			case "duplicate_project":
+				return this.automation.duplicateProject(message.params);
+			case "delete_project":
+				return this.automation.deleteProject(message.params);
+			case "preflight_lifecycle_mutation":
+				return this.automation.preflightLifecycleMutation(message.params);
+			case "list_scenes":
+				return this.automation.listScenes(message.params);
+			case "create_scene":
+				return this.automation.createScene(message.params);
+			case "clone_scene":
+				return this.automation.cloneScene(message.params);
+			case "switch_scene":
+				return this.automation.switchScene(message.params);
+			case "rename_scene":
+				return this.automation.renameScene(message.params);
+			case "delete_scene":
+				return this.automation.deleteScene(message.params);
+			case "set_main_scene":
+				return this.automation.setMainScene(message.params);
+			case "reorder_scenes":
+				return this.automation.reorderScenes(message.params);
+			case "list_media_usages":
+				return this.automation.listMediaUsages(message.params);
+			case "import_media_asset":
+				return this.automation.importMediaAsset(message.params);
+			case "rename_media_asset":
+				return this.automation.renameMediaAsset(message.params);
+			case "preflight_media_relink":
+				return this.automation.preflightMediaRelink(message.params);
+			case "relink_media_asset":
+				return this.automation.relinkMediaAsset(message.params);
+			case "remove_media_asset":
+				return this.automation.removeMediaAsset(message.params);
 			case "import_media":
 				return this.automation.importMedia(message.params);
 			case "import_subtitles":
@@ -789,6 +959,7 @@ function getActivatedProjectId(value: unknown): string | null {
 		!("status" in value) ||
 		(value.status !== "created" &&
 			value.status !== "opened" &&
+			value.status !== "deleted" &&
 			value.status !== "replayed")
 	) {
 		return null;

@@ -94,7 +94,7 @@ export class McpLedgerBoundary {
 		const before = comparisonBefore
 			? comparisonBefore
 			: !operationUsesProjectPreconditions(toolName)
-				? {}
+				? projectLifecycleTarget(toolName, input)
 				: existing
 					? {
 							projectId:
@@ -105,7 +105,7 @@ export class McpLedgerBoundary {
 							sceneId:
 								definition.operationKind === "create-project"
 									? null
-									: (stringField(input, "sceneId") ??
+									: (activeSceneInput(toolName, input) ??
 										(requiresVerifiedBrowserHash
 											? existing.record.sceneId
 											: suppliedContentHash
@@ -116,7 +116,11 @@ export class McpLedgerBoundary {
 							contentHashProjectionVersion:
 								existing.record.contentHashProjectionVersionBefore,
 						}
-					: await this.resolveBeforeState(input, requiresVerifiedBrowserHash);
+					: await this.resolveBeforeState(
+							toolName,
+							input,
+							requiresVerifiedBrowserHash,
+						);
 		const result = await executeLedgeredOperation({
 			ledger: this.ledger,
 			input,
@@ -270,6 +274,7 @@ export class McpLedgerBoundary {
 	}
 
 	private async resolveBeforeState(
+		toolName: MutatingToolName,
 		input: ToolInput,
 		requiresVerifiedBrowserHash: boolean,
 	) {
@@ -279,7 +284,7 @@ export class McpLedgerBoundary {
 			? null
 			: (stringField(input, "expectedProjectContentHash") ??
 				stringField(input, "expectedContentHash"));
-		let sceneId = stringField(input, "sceneId");
+		let sceneId = activeSceneInput(toolName, input);
 		let contentHashProjectionVersion: 1 | 2 | 3 | null = contentHash
 			? CURRENT_PROJECT_CONTENT_PROJECTION_VERSION
 			: null;
@@ -371,8 +376,9 @@ export class McpLedgerBoundary {
 			stringField(input, "projectId") ??
 			(snapshot && stringField(snapshot, "projectId"));
 		const sceneId =
-			(result && stringField(result, "sceneId")) ??
-			(snapshot && stringField(snapshot, "sceneId"));
+			(result && stringField(result, "activeSceneId")) ??
+			(snapshot && stringField(snapshot, "sceneId")) ??
+			(result && stringField(result, "sceneId"));
 		const revision =
 			result && typeof result.revision === "number" ? result.revision : null;
 		const hash = snapshot ? contentHashOf(snapshot) : null;
@@ -661,8 +667,57 @@ function operationUsesProjectPreconditions(
 		"opencut_stop_editor_worker",
 		"opencut_create_project",
 		"opencut_open_project",
+		"opencut_rename_project",
+		"opencut_duplicate_project",
+		"opencut_delete_project",
 	]).has(toolName);
 }
+
+/**
+ * The ledger's sceneId is the active scene the operation is verified against,
+ * so only an input sceneId that names the active scene may seed it. The scene
+ * lifecycle tools take a sceneId that names the scene they act on, which may
+ * be inactive or, for a clone or a delete, differ from the scene that is
+ * active once they finish.
+ */
+function activeSceneInput(
+	toolName: MutatingToolName,
+	input: ToolInput,
+): string | null {
+	return SCENE_TARGET_TOOLS.has(toolName)
+		? null
+		: stringField(input, "sceneId");
+}
+
+const SCENE_TARGET_TOOLS = new Set<MutatingToolName>([
+	"opencut_clone_scene",
+	"opencut_switch_scene",
+	"opencut_rename_scene",
+	"opencut_delete_scene",
+	"opencut_set_main_scene",
+]);
+
+/**
+ * Project lifecycle tools carry no revision or hash preconditions, but their
+ * records still belong to the project they act on so that project's operation
+ * history lists them. The worker controls stay unbound: their default project
+ * is the bootstrap placeholder, not an identity.
+ */
+function projectLifecycleTarget(
+	toolName: MutatingToolName,
+	input: ToolInput,
+): { projectId?: string } {
+	return PROJECT_TARGET_TOOLS.has(toolName)
+		? { projectId: stringField(input, "projectId") ?? undefined }
+		: {};
+}
+
+const PROJECT_TARGET_TOOLS = new Set<MutatingToolName>([
+	"opencut_open_project",
+	"opencut_rename_project",
+	"opencut_duplicate_project",
+	"opencut_delete_project",
+]);
 
 function browserReceiptIsTerminal(toolName: MutatingToolName): boolean {
 	return toolName in DIRECT_BROWSER_METHODS;
@@ -671,6 +726,20 @@ function browserReceiptIsTerminal(toolName: MutatingToolName): boolean {
 const DIRECT_BROWSER_METHODS = {
 	opencut_create_project: "create_project",
 	opencut_open_project: "open_project",
+	opencut_rename_project: "rename_project",
+	opencut_duplicate_project: "duplicate_project",
+	opencut_delete_project: "delete_project",
+	opencut_create_scene: "create_scene",
+	opencut_clone_scene: "clone_scene",
+	opencut_switch_scene: "switch_scene",
+	opencut_rename_scene: "rename_scene",
+	opencut_delete_scene: "delete_scene",
+	opencut_set_main_scene: "set_main_scene",
+	opencut_reorder_scenes: "reorder_scenes",
+	opencut_import_media_asset: "import_media_asset",
+	opencut_rename_media_asset: "rename_media_asset",
+	opencut_relink_media_asset: "relink_media_asset",
+	opencut_remove_media_asset: "remove_media_asset",
 	opencut_save_project: "save_project",
 	opencut_sync_audio: "sync_audio",
 	opencut_attach_clean_audio: "attach_clean_audio",
@@ -852,6 +921,20 @@ function operationAction(
 	toolName: MutatingToolName,
 ): OperationAffectedObject["action"] {
 	if (toolName === "opencut_open_project") return "opened";
+	if (
+		toolName === "opencut_duplicate_project" ||
+		toolName === "opencut_create_scene" ||
+		toolName === "opencut_clone_scene"
+	)
+		return "created";
+	if (
+		toolName === "opencut_delete_project" ||
+		toolName === "opencut_delete_scene" ||
+		toolName === "opencut_remove_media_asset"
+	)
+		return "deleted";
+	if (toolName === "opencut_import_media_asset") return "imported";
+	if (toolName === "opencut_switch_scene") return "opened";
 	if (toolName === "opencut_save_project") return "saved";
 	if (
 		toolName === "opencut_import_media" ||
@@ -1225,8 +1308,9 @@ function immutableResultState(value: unknown): {
 		stringField(value, "projectId") ??
 		(snapshot ? stringField(snapshot, "projectId") : null);
 	const sceneId =
-		stringField(value, "sceneId") ??
-		(snapshot ? stringField(snapshot, "sceneId") : null);
+		stringField(value, "activeSceneId") ??
+		(snapshot ? stringField(snapshot, "sceneId") : null) ??
+		stringField(value, "sceneId");
 	const revision = typeof value.revision === "number" ? value.revision : null;
 	const contentHash =
 		stringField(value, "contentHash") ??
@@ -1296,6 +1380,20 @@ const DIRECT_BROWSER_SUCCESS: Partial<
 > = {
 	opencut_create_project: new Set(["created", "replayed"]),
 	opencut_open_project: new Set(["opened", "replayed"]),
+	opencut_rename_project: new Set(["renamed", "replayed"]),
+	opencut_duplicate_project: new Set(["duplicated", "replayed"]),
+	opencut_delete_project: new Set(["deleted", "replayed"]),
+	opencut_create_scene: new Set(["applied", "replayed"]),
+	opencut_clone_scene: new Set(["applied", "replayed"]),
+	opencut_switch_scene: new Set(["applied", "replayed"]),
+	opencut_rename_scene: new Set(["applied", "replayed"]),
+	opencut_delete_scene: new Set(["applied", "replayed"]),
+	opencut_set_main_scene: new Set(["applied", "replayed"]),
+	opencut_reorder_scenes: new Set(["applied", "replayed"]),
+	opencut_import_media_asset: new Set(["applied", "replayed"]),
+	opencut_rename_media_asset: new Set(["applied", "replayed"]),
+	opencut_relink_media_asset: new Set(["applied", "replayed"]),
+	opencut_remove_media_asset: new Set(["applied", "replayed"]),
 	opencut_save_project: new Set(["saved", "replayed"]),
 	opencut_sync_audio: new Set(["applied", "replayed"]),
 	opencut_attach_clean_audio: new Set(["applied", "replayed"]),
@@ -1372,6 +1470,20 @@ const MUTATOR_RESULT_CONTRACTS = {
 	),
 	opencut_create_project: contract(["created", "replayed"], rejected),
 	opencut_open_project: contract(["opened", "replayed"], rejectedOrMissing),
+	opencut_rename_project: contract(["renamed", "replayed"], rejectedOrMissing),
+	opencut_duplicate_project: contract(["duplicated", "replayed"], rejectedOrMissing),
+	opencut_delete_project: contract(["deleted", "replayed"], rejectedOrMissing),
+	opencut_create_scene: contract(["applied", "replayed"], rejected),
+	opencut_clone_scene: contract(["applied", "replayed"], rejected),
+	opencut_switch_scene: contract(["applied", "replayed"], rejected),
+	opencut_rename_scene: contract(["applied", "replayed"], rejected),
+	opencut_delete_scene: contract(["applied", "replayed"], rejected),
+	opencut_set_main_scene: contract(["applied", "replayed"], rejected),
+	opencut_reorder_scenes: contract(["applied", "replayed"], rejected),
+	opencut_import_media_asset: contract(["applied", "replayed"], rejected),
+	opencut_rename_media_asset: contract(["applied", "replayed"], rejected),
+	opencut_relink_media_asset: contract(["applied", "replayed"], rejected),
+	opencut_remove_media_asset: contract(["applied", "replayed"], rejected),
 	opencut_save_project: contract(["saved", "replayed"], rejected),
 	opencut_normalize_audio: contract(["normalized", "replayed"], rejected),
 	opencut_sync_audio: contract(["applied", "replayed"], rejected),

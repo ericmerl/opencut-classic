@@ -26,6 +26,15 @@
 				"NEXT_PUBLIC_OPENCUT_BRIDGE_PORT"
 			]
 		},
+		"opencut-wasm#build": {
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/Cargo.toml",
+				"$TURBO_ROOT$/Cargo.lock",
+				"$TURBO_ROOT$/rust/crates/**"
+			],
+			"outputs": ["pkg/**"]
+		},
 		"check-types": {
 			"dependsOn": ["^check-types"]
 		},

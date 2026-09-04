@@ -3,11 +3,11 @@ use std::collections::BTreeMap;
 use time::{FrameRate, MediaTime};
 
 use crate::{
-    ActiveSceneSnapshot, Background, CanonicalEffect, CanonicalElement, CanonicalElementCommon,
-    CanonicalMask, CanonicalObject, CanonicalTrack, CanonicalTransition, CanonicalValue,
-    CanvasSize, EditPlanError, Effect, Element, ErrorCode, FreeformPathPoint, Keyframe, Mask,
-    MaskParamValue, MaskParams, Params, ProjectSettings, ProjectSnapshot, Scalar, Track,
-    Transition,
+    ActiveSceneSnapshot, Background, Bookmark, CanonicalBookmark, CanonicalEffect,
+    CanonicalElement, CanonicalElementCommon, CanonicalMask, CanonicalObject, CanonicalTrack,
+    CanonicalTransition, CanonicalValue, CanvasSize, EditPlanError, Effect, Element, ErrorCode,
+    FreeformPathPoint, Keyframe, Mask, MaskParamValue, MaskParams, Params, ProjectSettings,
+    ProjectSnapshot, Scalar, Track, Transition,
 };
 
 pub(crate) fn validate_projection(
@@ -101,6 +101,17 @@ pub(crate) fn extract_active(
                 .map(|element| active_element(&track.id, element))
         })
         .collect();
+    let bookmarks = scene
+        .bookmarks
+        .iter()
+        .map(|bookmark| Bookmark {
+            bookmark_id: bookmark.id.clone(),
+            time: bookmark.time,
+            duration: bookmark.duration,
+            note: bookmark.note.clone(),
+            color: bookmark.color.clone(),
+        })
+        .collect();
     Ok(ActiveSceneSnapshot {
         schema_version: super::SNAPSHOT_VERSION.into(),
         project_id: project_id.into(),
@@ -112,6 +123,7 @@ pub(crate) fn extract_active(
         tracks,
         transitions,
         elements,
+        bookmarks,
     })
 }
 
@@ -199,6 +211,19 @@ pub(crate) fn merge_active(
         _ => 3,
     });
     normalize_track_orders(&mut scene.tracks);
+    scene.bookmarks = active
+        .bookmarks
+        .iter()
+        .enumerate()
+        .map(|(order, bookmark)| CanonicalBookmark {
+            order,
+            id: bookmark.bookmark_id.clone(),
+            time: bookmark.time,
+            duration: bookmark.duration,
+            note: bookmark.note.clone(),
+            color: bookmark.color.clone(),
+        })
+        .collect();
     Ok(result)
 }
 

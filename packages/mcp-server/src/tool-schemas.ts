@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as z from "zod/v4";
+import { BOOTSTRAP_PROJECT_ID } from "./managed-editor-worker";
 import { operationIdSchema } from "./operation-tool-schemas";
 
 const legacyCompatibleOperationIdSchema = operationIdSchema.optional();
@@ -100,6 +101,70 @@ export function withProjectMutationSafety<T extends z.ZodType>(schema: T) {
 			});
 		}
 	});
+}
+
+export function withTargetProjectMutationSafety<T extends z.ZodType>(
+	schema: T,
+) {
+	return withMutationOperationId(schema).superRefine((value, context) => {
+		if (value.bridgeProtocolVersion !== 2) return;
+		const fields = value as Record<string, unknown>;
+		if (!fields.expectedTargetContentHash) {
+			context.addIssue({
+				code: "custom",
+				path: ["expectedTargetContentHash"],
+				message: "bridge protocol v2 requires expectedTargetContentHash",
+			});
+		}
+		if (!fields.expectedTargetWriteVersion) {
+			context.addIssue({
+				code: "custom",
+				path: ["expectedTargetWriteVersion"],
+				message: "bridge protocol v2 requires expectedTargetWriteVersion",
+			});
+		}
+	});
+}
+
+const lifecyclePreflightBindingSchema = z.object({
+	preflightFingerprint: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.optional(),
+});
+
+function requireLifecyclePreflight<T extends z.ZodType>(schema: T) {
+	return schema.superRefine((value, context) => {
+		const fields = value as Record<string, unknown>;
+		if (fields.bridgeProtocolVersion === 2 && !fields.preflightFingerprint) {
+			context.addIssue({
+				code: "custom",
+				path: ["preflightFingerprint"],
+				message:
+					"bridge protocol v2 lifecycle mutations require a preflightFingerprint",
+			});
+		}
+	});
+}
+
+export function withLifecycleProjectMutationSafety<T extends z.ZodType>(
+	schema: T,
+) {
+	return requireLifecyclePreflight(
+		withProjectMutationSafety(
+			z.intersection(schema, lifecyclePreflightBindingSchema),
+		),
+	);
+}
+
+export function withLifecycleTargetProjectMutationSafety<T extends z.ZodType>(
+	schema: T,
+) {
+	return requireLifecyclePreflight(
+		withTargetProjectMutationSafety(
+			z.intersection(schema, lifecyclePreflightBindingSchema),
+		),
+	);
 }
 
 const frameRateSchema = z
@@ -613,6 +678,7 @@ export const allocationRoleSchema = z.enum([
 	"duplicate-nested-track",
 	"duplicate-nested-element",
 	"duplicate-nested-transition",
+	"bookmark",
 	"break-apart-element",
 	"split-right",
 	"split-group",
@@ -703,6 +769,120 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 			(value) => value.muted !== undefined || value.hidden !== undefined,
 			{ message: "at least one track state is required" },
 		),
+	z.object({
+		kind: z.literal("rename_track"),
+		trackId: z.string().min(1),
+		name: z.string().trim().min(1).max(256),
+	}),
+	z
+		.object({
+			kind: z.literal("reorder_tracks"),
+			overlayTrackIds: z
+				.array(z.string().min(1))
+				.describe("Every overlay track ID in the new top-to-bottom order.")
+				.optional(),
+			audioTrackIds: z
+				.array(z.string().min(1))
+				.describe("Every audio track ID in the new top-to-bottom order.")
+				.optional(),
+		})
+		.refine(
+			(value) =>
+				value.overlayTrackIds !== undefined ||
+				value.audioTrackIds !== undefined,
+			{ message: "at least one track order is required" },
+		),
+	z
+		.object({
+			kind: z.literal("remove_track"),
+			trackId: z.string().min(1),
+			occupied: z
+				.enum(["reject", "delete", "move", "cascade"])
+				.describe(
+					"What to do when the track still holds elements: reject (default), delete them, move them to targetTrackId, or cascade through transitive group/link relationships.",
+				)
+				.default("reject"),
+			targetTrackId: z.string().min(1).optional(),
+			resolvedCascadeElementIds: z.array(z.string().min(1)).optional(),
+		})
+		.refine(
+			(value) => value.occupied !== "move" || value.targetTrackId !== undefined,
+			{ message: "the move policy requires targetTrackId" },
+		),
+	z.object({
+		kind: z.literal("duplicate_track"),
+		trackId: z.string().min(1),
+		newTrackId: z.string().min(1).optional(),
+		name: z.string().trim().min(1).max(256).optional(),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
+	}),
+	z.object({
+		kind: z.literal("set_main_track"),
+		trackId: z
+			.string()
+			.min(1)
+			.describe(
+				"An overlay video track to promote; the current main track becomes the top overlay.",
+			),
+	}),
+	z.object({
+		kind: z.literal("add_bookmark"),
+		bookmarkId: z.string().min(1).optional(),
+		time: z.number().int().nonnegative(),
+		duration: z.number().int().positive().optional(),
+		note: z.string().max(4_096).optional(),
+		color: z.string().trim().min(1).max(64).optional(),
+	}),
+	z
+		.object({
+			kind: z.literal("update_bookmark"),
+			bookmarkId: z.string().min(1),
+			note: z.string().max(4_096).optional(),
+			color: z.string().trim().min(1).max(64).optional(),
+			duration: z.number().int().positive().optional(),
+			clear: z
+				.array(z.enum(["note", "color", "duration"]))
+				.describe("Optional bookmark fields to clear.")
+				.default([]),
+		})
+		.refine(
+			(value) =>
+				value.note !== undefined ||
+				value.color !== undefined ||
+				value.duration !== undefined ||
+				value.clear.length > 0,
+			{ message: "at least one bookmark update is required" },
+		),
+	z.object({
+		kind: z.literal("move_bookmark"),
+		bookmarkId: z.string().min(1),
+		time: z.number().int().nonnegative(),
+	}),
+	z.object({
+		kind: z.literal("remove_bookmark"),
+		bookmarkId: z.string().min(1),
+	}),
+	z.object({
+		kind: z.literal("instantiate_asset"),
+		assetId: z
+			.string()
+			.min(1)
+			.describe("A timeline media asset already in the project bin."),
+		elementId: z.string().min(1).optional(),
+		name: z.string().trim().min(1).optional(),
+		startTime: z.number().int().nonnegative(),
+		duration: z
+			.number()
+			.int()
+			.positive()
+			.describe(
+				"Defaults to the asset's intrinsic duration; images default to five seconds.",
+			)
+			.optional(),
+		trackId: z.string().min(1).optional(),
+		autoTrackId: z.string().trim().min(1).optional(),
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
+	}),
 	z
 		.object({
 			kind: z.literal("set_project_settings"),
@@ -1128,6 +1308,8 @@ const resolvedAllocationKinds = new Set([
 	"set_retime",
 	"trim",
 	"split",
+	"duplicate_track",
+	"instantiate_asset",
 ]);
 const resolvedSkipFields = new Map<string, Set<string>>(
 	[...resolvedAllocationKinds].map((kind) => [
@@ -1140,6 +1322,7 @@ const resolvedSkipFields = new Map<string, Set<string>>(
 				"insert_sticker",
 				"insert_adjustment_layer",
 				"create_compound",
+				"instantiate_asset",
 			].includes(kind)
 				? ["autoTrackId"]
 				: []),
@@ -1648,7 +1831,7 @@ export const runExportJobsInputSchema = withMutationOperationId(
 export const startEditorWorkerInputSchema = withMutationOperationId(
 	z.object({
 		operationId: legacyCompatibleOperationIdSchema,
-		projectId: z.string().min(1).default("__opencut_automation_bootstrap__"),
+		projectId: z.string().min(1).default(BOOTSTRAP_PROJECT_ID),
 	}),
 );
 
@@ -1734,4 +1917,256 @@ export const resolveJobInputSchema = withMutationOperationId(
 		resolution: z.enum(["rerun-as-new-attempt", "mark-failed"]),
 		reason: z.string().trim().min(1).max(500).optional(),
 	}),
+);
+
+// ---------------------------------------------------------------------------
+// Project, scene, and media-bin lifecycle (issue #20)
+// ---------------------------------------------------------------------------
+
+export const renameProjectInputSchema = z.object({
+	operationId: legacyCompatibleOperationIdSchema,
+	projectId: z.string().min(1),
+	name: z.string().trim().min(1).max(256),
+	expectedTargetContentHash: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.optional(),
+	expectedTargetWriteVersion: z.number().int().positive().optional(),
+});
+
+export const duplicateProjectInputSchema = z.object({
+	operationId: legacyCompatibleOperationIdSchema,
+	projectId: z.string().min(1),
+	name: z
+		.string()
+		.trim()
+		.min(1)
+		.max(256)
+		.describe(
+			"Name for the copy; defaults to the editor's numbered duplicate name.",
+		)
+		.optional(),
+	expectedTargetContentHash: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.optional(),
+	expectedTargetWriteVersion: z.number().int().positive().optional(),
+});
+
+export const deleteProjectInputSchema = z.object({
+	operationId: legacyCompatibleOperationIdSchema,
+	projectId: z.string().min(1),
+	fallbackProjectId: z
+		.string()
+		.min(1)
+		.describe(
+			"Project to activate when the active project is deleted. Defaults to the most recently updated remaining project, or a new blank project when none remains.",
+		)
+		.optional(),
+	expectedTargetContentHash: z
+		.string()
+		.regex(/^[a-f0-9]{64}$/)
+		.optional(),
+	expectedTargetWriteVersion: z.number().int().positive().optional(),
+});
+
+const activeProjectMutationSchema = z.object({
+	projectId: z.string().min(1),
+	operationId: legacyCompatibleOperationIdSchema,
+	expectedRevision: z.number().int().nonnegative(),
+});
+
+export const listScenesInputSchema = z.object({
+	projectId: z.string().min(1).optional(),
+});
+
+export const createSceneInputSchema = activeProjectMutationSchema.extend({
+	name: z.string().trim().min(1).max(256),
+	activate: z
+		.boolean()
+		.default(false)
+		.describe("Switch to the new scene after creating it."),
+});
+
+export const cloneSceneInputSchema = activeProjectMutationSchema.extend({
+	sceneId: z.string().min(1),
+	newSceneId: z.string().min(1).optional(),
+	name: z.string().trim().min(1).max(256).optional(),
+	activate: z.boolean().default(false),
+});
+
+export const switchSceneInputSchema = activeProjectMutationSchema.extend({
+	sceneId: z.string().min(1),
+});
+
+export const renameSceneInputSchema = activeProjectMutationSchema.extend({
+	sceneId: z.string().min(1),
+	name: z.string().trim().min(1).max(256),
+});
+
+export const deleteSceneInputSchema = activeProjectMutationSchema.extend({
+	sceneId: z.string().min(1),
+	replacementSceneId: z
+		.string()
+		.min(1)
+		.describe(
+			"Scene to activate when the deleted scene is active; defaults to the main scene.",
+		)
+		.optional(),
+	newMainSceneId: z
+		.string()
+		.min(1)
+		.describe(
+			"Required when deleting the main scene: the scene promoted to main first.",
+		)
+		.optional(),
+});
+
+export const setMainSceneInputSchema = activeProjectMutationSchema.extend({
+	sceneId: z.string().min(1),
+});
+
+export const reorderScenesInputSchema = activeProjectMutationSchema.extend({
+	sceneIds: z
+		.array(z.string().min(1))
+		.min(1)
+		.describe("Every scene ID in the new order."),
+});
+
+export const listMediaUsagesInputSchema = z.object({
+	projectId: z.string().min(1).optional(),
+	assetId: z.string().min(1).optional(),
+});
+
+export const importMediaAssetInputSchema = activeProjectMutationSchema.extend({
+	path: z.string().min(1).describe("Absolute local path of the media file."),
+	assetName: z.string().trim().min(1).max(256).optional(),
+});
+
+export const renameMediaAssetInputSchema = activeProjectMutationSchema.extend({
+	assetId: z.string().min(1),
+	name: z.string().trim().min(1).max(256),
+});
+
+export const relinkMediaAssetInputSchema = activeProjectMutationSchema.extend({
+	assetId: z.string().min(1),
+	path: z
+		.string()
+		.min(1)
+		.describe("Absolute local path of the replacement media file."),
+	allowIncompatible: z
+		.boolean()
+		.default(false)
+		.describe(
+			"Allow a replacement whose media type differs from the current asset.",
+		),
+});
+
+export const preflightMediaRelinkInputSchema = z.object({
+	projectId: z.string().min(1),
+	assetId: z.string().min(1),
+	path: z
+		.string()
+		.min(1)
+		.describe("Absolute local path of the replacement media file."),
+	expectedRevision: z.number().int().nonnegative(),
+	expectedProjectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export const removeMediaAssetInputSchema = activeProjectMutationSchema.extend({
+	assetId: z.string().min(1),
+	policy: z
+		.enum(["unused-only", "cascade"])
+		.default("unused-only")
+		.describe(
+			"unused-only refuses to remove a referenced asset; cascade also removes every element, matte, and audio replacement that references it in every scene.",
+		),
+});
+
+const lifecyclePreflightActiveBinding = {
+	expectedProjectContentHash: z.string().regex(/^[a-f0-9]{64}$/),
+};
+
+export const preflightLifecycleMutationInputSchema = z.discriminatedUnion(
+	"method",
+	[
+		z.object({
+			method: z.literal("rename_project"),
+			request: renameProjectInputSchema.omit({ operationId: true }),
+		}),
+		z.object({
+			method: z.literal("duplicate_project"),
+			request: duplicateProjectInputSchema.omit({ operationId: true }),
+		}),
+		z.object({
+			method: z.literal("delete_project"),
+			request: deleteProjectInputSchema.omit({ operationId: true }),
+		}),
+		z.object({
+			method: z.literal("create_scene"),
+			request: createSceneInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("clone_scene"),
+			request: cloneSceneInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("switch_scene"),
+			request: switchSceneInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("rename_scene"),
+			request: renameSceneInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("delete_scene"),
+			request: deleteSceneInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("set_main_scene"),
+			request: setMainSceneInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("reorder_scenes"),
+			request: reorderScenesInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("import_media_asset"),
+			request: importMediaAssetInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("rename_media_asset"),
+			request: renameMediaAssetInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("relink_media_asset"),
+			request: relinkMediaAssetInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+		z.object({
+			method: z.literal("remove_media_asset"),
+			request: removeMediaAssetInputSchema
+				.omit({ operationId: true })
+				.extend(lifecyclePreflightActiveBinding),
+		}),
+	],
 );

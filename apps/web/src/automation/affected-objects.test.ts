@@ -7,7 +7,9 @@ describe("authoritative automation affected-object diffs", () => {
 	test("reports created tracks, imported media, inserted elements, and relationships", () => {
 		const before = snapshot();
 		const after = snapshot({
-			tracks: [{ trackId: "track-1", name: "Video", type: "video", role: "main" }],
+			tracks: [
+				{ trackId: "track-1", name: "Video", type: "video", role: "main" },
+			],
 			mediaAssets: [
 				{ assetId: "media-1", name: "clip.mp4", type: "video", size: 42 },
 			],
@@ -54,7 +56,9 @@ describe("authoritative automation affected-object diffs", () => {
 
 	test("returns no effects for unchanged snapshots", () => {
 		const before = snapshot();
-		expect(diffAutomationSnapshots(before, structuredClone(before))).toEqual([]);
+		expect(diffAutomationSnapshots(before, structuredClone(before))).toEqual(
+			[],
+		);
 	});
 });
 
@@ -85,6 +89,8 @@ function snapshot(
 		tracks: [],
 		transitions: [],
 		mediaAssets: [],
+		scenes: [],
+		bookmarks: [],
 		elements: [],
 		...overrides,
 	};

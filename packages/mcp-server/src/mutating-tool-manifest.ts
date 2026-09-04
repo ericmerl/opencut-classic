@@ -19,6 +19,79 @@ export const MUTATING_TOOL_MANIFEST = {
 		requiresSaveVerification: false,
 		protocolMutationPolicy: "v2-required",
 	},
+	opencut_rename_project: {
+		operationKind: "rename-project",
+		requiresSaveVerification: false,
+		selfVerifiesPersistence: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_duplicate_project: {
+		operationKind: "duplicate-project",
+		requiresSaveVerification: false,
+		selfVerifiesPersistence: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_delete_project: {
+		operationKind: "delete-project",
+		requiresSaveVerification: false,
+		selfVerifiesPersistence: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_create_scene: {
+		operationKind: "create-scene",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_clone_scene: {
+		operationKind: "clone-scene",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_switch_scene: {
+		operationKind: "switch-scene",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_rename_scene: {
+		operationKind: "rename-scene",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_delete_scene: {
+		operationKind: "delete-scene",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_set_main_scene: {
+		operationKind: "set-main-scene",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_reorder_scenes: {
+		operationKind: "reorder-scenes",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_import_media_asset: {
+		operationKind: "import-media-asset",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_rename_media_asset: {
+		operationKind: "rename-media-asset",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_relink_media_asset: {
+		operationKind: "relink-media-asset",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_remove_media_asset: {
+		operationKind: "remove-media-asset",
+		requiresSaveVerification: true,
+		protocolMutationPolicy: "v2-required",
+	},
 	opencut_save_project: {
 		operationKind: "save-project",
 		requiresSaveVerification: true,

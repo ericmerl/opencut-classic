@@ -23,6 +23,20 @@ import {
 	importSubtitlesInputSchema,
 	normalizeAudioInputSchema,
 	openProjectInputSchema,
+	renameProjectInputSchema,
+	duplicateProjectInputSchema,
+	deleteProjectInputSchema,
+	createSceneInputSchema,
+	cloneSceneInputSchema,
+	switchSceneInputSchema,
+	renameSceneInputSchema,
+	deleteSceneInputSchema,
+	setMainSceneInputSchema,
+	reorderScenesInputSchema,
+	importMediaAssetInputSchema,
+	renameMediaAssetInputSchema,
+	relinkMediaAssetInputSchema,
+	removeMediaAssetInputSchema,
 	queueExportBatchInputSchema,
 	queueExportInputSchema,
 	recordExportInspectionInputSchema,
@@ -40,6 +54,8 @@ import {
 	undoInputSchema,
 	withMutationOperationId,
 	withProjectMutationSafety,
+	withLifecycleProjectMutationSafety,
+	withLifecycleTargetProjectMutationSafety,
 } from "./tool-schemas";
 
 const identity = {
@@ -62,6 +78,7 @@ const project = (input: Record<string, unknown>) => ({
 	projectId: "project-1",
 	expectedRevision: 1,
 	expectedProjectContentHash: hash,
+	preflightFingerprint: hash,
 	...input,
 });
 
@@ -85,6 +102,94 @@ const cases: SchemaCase[] = [
 		name: "opencut_open_project",
 		schema: withMutationOperationId(openProjectInputSchema),
 		input: { projectId: "project-1" },
+	},
+	{
+		name: "opencut_rename_project",
+		schema: withLifecycleTargetProjectMutationSafety(renameProjectInputSchema),
+		input: {
+			projectId: "project-1",
+			name: "Renamed",
+			expectedTargetContentHash: hash,
+			expectedTargetWriteVersion: 1,
+			preflightFingerprint: hash,
+		},
+	},
+	{
+		name: "opencut_duplicate_project",
+		schema: withLifecycleTargetProjectMutationSafety(
+			duplicateProjectInputSchema,
+		),
+		input: {
+			projectId: "project-1",
+			expectedTargetContentHash: hash,
+			expectedTargetWriteVersion: 1,
+			preflightFingerprint: hash,
+		},
+	},
+	{
+		name: "opencut_delete_project",
+		schema: withLifecycleTargetProjectMutationSafety(deleteProjectInputSchema),
+		input: {
+			projectId: "project-1",
+			expectedTargetContentHash: hash,
+			expectedTargetWriteVersion: 1,
+			preflightFingerprint: hash,
+		},
+	},
+	{
+		name: "opencut_create_scene",
+		schema: withLifecycleProjectMutationSafety(createSceneInputSchema),
+		input: project({ name: "Scene 2" }),
+	},
+	{
+		name: "opencut_clone_scene",
+		schema: withLifecycleProjectMutationSafety(cloneSceneInputSchema),
+		input: project({ sceneId: "scene-1" }),
+	},
+	{
+		name: "opencut_switch_scene",
+		schema: withLifecycleProjectMutationSafety(switchSceneInputSchema),
+		input: project({ sceneId: "scene-2" }),
+	},
+	{
+		name: "opencut_rename_scene",
+		schema: withLifecycleProjectMutationSafety(renameSceneInputSchema),
+		input: project({ sceneId: "scene-1", name: "Intro" }),
+	},
+	{
+		name: "opencut_delete_scene",
+		schema: withLifecycleProjectMutationSafety(deleteSceneInputSchema),
+		input: project({ sceneId: "scene-2" }),
+	},
+	{
+		name: "opencut_set_main_scene",
+		schema: withLifecycleProjectMutationSafety(setMainSceneInputSchema),
+		input: project({ sceneId: "scene-2" }),
+	},
+	{
+		name: "opencut_reorder_scenes",
+		schema: withLifecycleProjectMutationSafety(reorderScenesInputSchema),
+		input: project({ sceneIds: ["scene-2", "scene-1"] }),
+	},
+	{
+		name: "opencut_import_media_asset",
+		schema: withLifecycleProjectMutationSafety(importMediaAssetInputSchema),
+		input: project({ path: "C:/clip.mp4" }),
+	},
+	{
+		name: "opencut_rename_media_asset",
+		schema: withLifecycleProjectMutationSafety(renameMediaAssetInputSchema),
+		input: project({ assetId: "asset-1", name: "B-roll" }),
+	},
+	{
+		name: "opencut_relink_media_asset",
+		schema: withLifecycleProjectMutationSafety(relinkMediaAssetInputSchema),
+		input: project({ assetId: "asset-1", path: "C:/clip-v2.mp4" }),
+	},
+	{
+		name: "opencut_remove_media_asset",
+		schema: withLifecycleProjectMutationSafety(removeMediaAssetInputSchema),
+		input: project({ assetId: "asset-1" }),
 	},
 	{
 		name: "opencut_save_project",
@@ -344,7 +449,7 @@ const cases: SchemaCase[] = [
 ];
 
 describe("all mutating public MCP schema versions", () => {
-	test("covers exactly the 33 registered mutation identities", () => {
+	test("covers exactly the 47 registered mutation identities", () => {
 		expect(cases.map(({ name }) => String(name)).sort()).toEqual(
 			Object.keys(MUTATING_TOOL_MANIFEST).map(String).sort(),
 		);
@@ -375,4 +480,34 @@ describe("all mutating public MCP schema versions", () => {
 			}
 		});
 	}
+
+	test("requires an apply-bound preflight fingerprint for every v2 lifecycle mutation", () => {
+		const lifecycleNames = new Set([
+			"opencut_rename_project",
+			"opencut_duplicate_project",
+			"opencut_delete_project",
+			"opencut_create_scene",
+			"opencut_clone_scene",
+			"opencut_switch_scene",
+			"opencut_rename_scene",
+			"opencut_delete_scene",
+			"opencut_set_main_scene",
+			"opencut_reorder_scenes",
+			"opencut_import_media_asset",
+			"opencut_rename_media_asset",
+			"opencut_relink_media_asset",
+			"opencut_remove_media_asset",
+		]);
+		for (const entry of cases.filter(({ name }) => lifecycleNames.has(name))) {
+			const { preflightFingerprint: _preflight, ...input } = entry.input;
+			expect(
+				entry.schema.safeParse({
+					...input,
+					operationId: `${entry.name}:v2`,
+					bridgeProtocolVersion: 2,
+					expectedConnectionIdentity: identity,
+				}).success,
+			).toBe(false);
+		}
+	});
 });

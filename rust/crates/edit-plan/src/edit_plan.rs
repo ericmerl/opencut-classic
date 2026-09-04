@@ -407,6 +407,10 @@ fn clear_internal_resolved_fields(operations: &mut [EditOperation]) {
                 resolved_allocations,
                 ..
             } => *resolved_allocations = None,
+            EditOperation::RemoveTrack {
+                resolved_cascade_element_ids,
+                ..
+            } => *resolved_cascade_element_ids = None,
             _ => {}
         }
     }
@@ -666,6 +670,20 @@ impl State {
             )?;
             positive(transition.duration, operation_index, "transition.duration")?;
         }
+        for bookmark in &self.snapshot.bookmarks {
+            if let Some(bookmark_id) = &bookmark.bookmark_id {
+                validate_id(bookmark_id, operation_index, "bookmarkId")?;
+                unique(&mut ids, bookmark_id, operation_index)?;
+            }
+            if bookmark.time < MediaTime::ZERO {
+                return Err(error(
+                    ErrorCode::InvalidValue,
+                    "bookmark time must be non-negative",
+                    operation_index,
+                    Some("bookmark.time"),
+                ));
+            }
+        }
         self.snapshot
             .settings
             .fps
@@ -689,6 +707,30 @@ impl State {
         fingerprint: &str,
     ) -> Result<EditOperation, EditPlanError> {
         match &mut operation {
+            EditOperation::RemoveTrack {
+                track_id,
+                occupied,
+                resolved_cascade_element_ids,
+                ..
+            } => {
+                if *occupied == RemoveTrackOccupiedPolicy::Cascade {
+                    let track = self.track_mut(track_id, index)?.clone();
+                    let seeds: Vec<String> = self
+                        .snapshot
+                        .elements
+                        .iter()
+                        .filter(|element| element.track_id == track.track_id)
+                        .map(|element| element.element_id.clone())
+                        .collect();
+                    let mut expanded = BTreeSet::new();
+                    for seed in seeds {
+                        expanded.extend(self.related_ids(&seed, RelationshipScope::All));
+                    }
+                    *resolved_cascade_element_ids = Some(expanded.into_iter().collect());
+                } else {
+                    *resolved_cascade_element_ids = Some(Vec::new());
+                }
+            }
             EditOperation::InsertText {
                 element_id,
                 start_time,
@@ -861,6 +903,104 @@ impl State {
             }
             EditOperation::AddTrack { track_id, .. } => {
                 self.record_created_id(track_id, "track", None, index)?
+            }
+            EditOperation::DuplicateTrack {
+                track_id,
+                new_track_id,
+                resolved_allocations,
+                ..
+            } => {
+                if !self
+                    .snapshot
+                    .tracks
+                    .iter()
+                    .any(|track| track.track_id == *track_id)
+                {
+                    return Err(error(
+                        ErrorCode::UnknownReference,
+                        "unknown track",
+                        Some(index),
+                        Some("trackId"),
+                    ));
+                }
+                self.resolve_created_id(
+                    new_track_id,
+                    "duplicate-track",
+                    Some(track_id),
+                    index,
+                    fingerprint,
+                    0,
+                )?;
+                let mut allocations = vec![ObjectIdAllocation {
+                    role: AllocationRole::DuplicateTrack,
+                    source_id: track_id.clone(),
+                    resolved_id: required(new_track_id).into(),
+                }];
+                let mut identity_sources = Vec::<(String, String)>::new();
+                for element in self
+                    .snapshot
+                    .elements
+                    .iter()
+                    .filter(|element| element.track_id == *track_id)
+                {
+                    identity_sources.push(("duplicate-element".into(), element.element_id.clone()));
+                    collect_owned_identity_sources(element, "duplicate", &mut identity_sources);
+                }
+                for transition in self
+                    .snapshot
+                    .transitions
+                    .iter()
+                    .filter(|transition| transition.track_id == *track_id)
+                {
+                    identity_sources.push((
+                        "duplicate-transition".into(),
+                        transition.transition_id.clone(),
+                    ));
+                }
+                identity_sources.sort();
+                identity_sources.dedup();
+                for (ordinal, (role, source)) in identity_sources.iter().enumerate() {
+                    allocations.push(self.allocate_mapping(
+                        role,
+                        source,
+                        index,
+                        fingerprint,
+                        ordinal + 1,
+                    )?);
+                }
+                *resolved_allocations = Some(allocations);
+            }
+            EditOperation::AddBookmark { bookmark_id, .. } => {
+                self.resolve_created_id(bookmark_id, "bookmark", None, index, fingerprint, 0)?;
+            }
+            EditOperation::InstantiateAsset {
+                asset_id,
+                element_id,
+                start_time,
+                duration,
+                track_id,
+                auto_track_id,
+                resolved_allocations,
+                ..
+            } => {
+                let asset = self.require_timeline_asset(asset_id, index)?;
+                let element_type = media_element_type(&asset, index)?;
+                let resolved_duration = resolve_asset_duration(&asset, *duration, index)?;
+                *duration = Some(resolved_duration);
+                self.resolve_created_id(element_id, "element", None, index, fingerprint, 0)?;
+                self.resolve_insert_track(
+                    InsertTrackResolution {
+                        element_type,
+                        explicit_track_id: track_id.as_deref(),
+                        element_id: required(element_id),
+                        start_time: *start_time,
+                        duration: resolved_duration,
+                        auto_track_id,
+                        resolved_allocations,
+                    },
+                    index,
+                    fingerprint,
+                )?;
             }
             EditOperation::CreateCompound {
                 compound_id,
@@ -1652,6 +1792,125 @@ impl State {
                     resolved_allocations.as_deref().unwrap_or_default(),
                     index,
                 )
+            }
+            EditOperation::RenameTrack { track_id, name } => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return invalid(index, "track name is required");
+                }
+                let track = self.track_mut(track_id, index)?;
+                if track.name == name {
+                    return Err(error(
+                        ErrorCode::SilentNoOp,
+                        "track name already matches the requested value",
+                        Some(index),
+                        None,
+                    ));
+                }
+                track.name = name.to_owned();
+                Ok(())
+            }
+            EditOperation::ReorderTracks {
+                overlay_track_ids,
+                audio_track_ids,
+            } => self.reorder_tracks(
+                overlay_track_ids.as_deref(),
+                audio_track_ids.as_deref(),
+                index,
+            ),
+            EditOperation::RemoveTrack {
+                track_id,
+                occupied,
+                target_track_id,
+                resolved_cascade_element_ids,
+            } => self.remove_track(
+                track_id,
+                *occupied,
+                target_track_id.as_deref(),
+                resolved_cascade_element_ids.as_deref().unwrap_or_default(),
+                index,
+                relationships,
+                warnings,
+            ),
+            EditOperation::DuplicateTrack {
+                track_id,
+                new_track_id,
+                name,
+                resolved_allocations,
+            } => self.duplicate_track(
+                track_id,
+                required(new_track_id),
+                name.as_deref(),
+                resolved_allocations.as_deref().unwrap_or_default(),
+                index,
+                relationships,
+            ),
+            EditOperation::SetMainTrack { track_id } => self.set_main_track(track_id, index),
+            EditOperation::AddBookmark {
+                bookmark_id,
+                time,
+                duration,
+                note,
+                color,
+            } => self.add_bookmark(
+                required(bookmark_id),
+                *time,
+                *duration,
+                note.clone(),
+                color.clone(),
+                index,
+            ),
+            EditOperation::UpdateBookmark {
+                bookmark_id,
+                note,
+                color,
+                duration,
+                clear,
+            } => self.update_bookmark(
+                bookmark_id,
+                note.clone(),
+                color.clone(),
+                *duration,
+                clear,
+                index,
+            ),
+            EditOperation::MoveBookmark { bookmark_id, time } => {
+                self.move_bookmark(bookmark_id, *time, index)
+            }
+            EditOperation::RemoveBookmark { bookmark_id } => {
+                self.remove_bookmark(bookmark_id, index)
+            }
+            EditOperation::InstantiateAsset {
+                asset_id,
+                element_id,
+                name,
+                start_time,
+                duration,
+                track_id,
+                auto_track_id,
+                resolved_allocations,
+            } => {
+                let asset = self.require_timeline_asset(asset_id, index)?;
+                let element_type = media_element_type(&asset, index)?;
+                let resolved_duration = resolve_asset_duration(&asset, *duration, index)?;
+                let resolved_name = name.clone().unwrap_or_else(|| asset.name.clone());
+                let element = media_element(
+                    required(element_id),
+                    element_type,
+                    &resolved_name,
+                    &asset,
+                    *start_time,
+                    resolved_duration,
+                );
+                self.insert_with_placement(
+                    element,
+                    track_id.as_deref(),
+                    auto_track_id.as_deref(),
+                    resolved_allocations.as_deref().unwrap_or_default(),
+                    index,
+                )?;
+                increment_reference(&mut self.media_reference_counts, asset_id);
+                Ok(())
             }
             EditOperation::AddTrack {
                 track_type,
@@ -2564,6 +2823,737 @@ impl State {
                 Some("elementId"),
             ))
         }
+    }
+    fn reorder_tracks(
+        &mut self,
+        overlay: Option<&[String]>,
+        audio: Option<&[String]>,
+        index: usize,
+    ) -> Result<(), EditPlanError> {
+        if overlay.is_none() && audio.is_none() {
+            return invalid(index, "a track order is required");
+        }
+        let reorder = |role: &str, requested: &[String]| -> Result<Vec<Track>, EditPlanError> {
+            let current: Vec<&Track> = self
+                .snapshot
+                .tracks
+                .iter()
+                .filter(|track| track.role == role)
+                .collect();
+            let mut seen = BTreeSet::new();
+            let complete = requested.len() == current.len()
+                && requested.iter().all(|id| seen.insert(id.as_str()))
+                && current
+                    .iter()
+                    .all(|track| requested.iter().any(|id| *id == track.track_id));
+            if !complete {
+                return Err(invalid_error(
+                    index,
+                    &format!("{role} track order must list every {role} track exactly once"),
+                ));
+            }
+            Ok(requested
+                .iter()
+                .map(|id| {
+                    (*current
+                        .iter()
+                        .find(|track| track.track_id == *id)
+                        .expect("validated track order"))
+                    .clone()
+                })
+                .collect())
+        };
+        let overlay_tracks = match overlay {
+            Some(ids) => reorder("overlay", ids)?,
+            None => self
+                .snapshot
+                .tracks
+                .iter()
+                .filter(|track| track.role == "overlay")
+                .cloned()
+                .collect(),
+        };
+        let audio_tracks = match audio {
+            Some(ids) => reorder("audio", ids)?,
+            None => self
+                .snapshot
+                .tracks
+                .iter()
+                .filter(|track| track.role == "audio")
+                .cloned()
+                .collect(),
+        };
+        let main_tracks: Vec<Track> = self
+            .snapshot
+            .tracks
+            .iter()
+            .filter(|track| track.role == "main")
+            .cloned()
+            .collect();
+        let next: Vec<Track> = overlay_tracks
+            .into_iter()
+            .chain(main_tracks)
+            .chain(audio_tracks)
+            .collect();
+        if next.iter().map(|track| &track.track_id).eq(self
+            .snapshot
+            .tracks
+            .iter()
+            .map(|track| &track.track_id))
+        {
+            return Err(error(
+                ErrorCode::SilentNoOp,
+                "track order already matches the requested order",
+                Some(index),
+                None,
+            ));
+        }
+        self.snapshot.tracks = next;
+        Ok(())
+    }
+
+    fn remove_track(
+        &mut self,
+        track_id: &str,
+        occupied: RemoveTrackOccupiedPolicy,
+        target_track_id: Option<&str>,
+        resolved_cascade_element_ids: &[String],
+        index: usize,
+        relationships: &mut BTreeSet<Expansion>,
+        warnings: &mut BTreeSet<Warning>,
+    ) -> Result<(), EditPlanError> {
+        let track = self.track_mut(track_id, index)?.clone();
+        if track.role == "main" {
+            return incompatible(
+                index,
+                "the main track cannot be removed; promote another video track first",
+            );
+        }
+        if target_track_id.is_some() && occupied != RemoveTrackOccupiedPolicy::Move {
+            return invalid(index, "targetTrackId is only used with the move policy");
+        }
+        let element_ids: BTreeSet<String> = self
+            .snapshot
+            .elements
+            .iter()
+            .filter(|element| element.track_id == track_id)
+            .map(|element| element.element_id.clone())
+            .collect();
+        if !element_ids.is_empty() {
+            match occupied {
+                RemoveTrackOccupiedPolicy::Reject => {
+                    return incompatible(
+                        index,
+                        "track still holds elements; pass an occupied policy of delete or move",
+                    );
+                }
+                RemoveTrackOccupiedPolicy::Delete | RemoveTrackOccupiedPolicy::Cascade => {
+                    let removed_ids = if occupied == RemoveTrackOccupiedPolicy::Cascade {
+                        let expected: BTreeSet<String> = element_ids
+                            .iter()
+                            .flat_map(|seed| self.related_ids(seed, RelationshipScope::All))
+                            .collect();
+                        let resolved: BTreeSet<String> =
+                            resolved_cascade_element_ids.iter().cloned().collect();
+                        if resolved != expected {
+                            return invalid(
+                                index,
+                                "resolved cascade elements do not match relationship expansion",
+                            );
+                        }
+                        for affected in expected.difference(&element_ids) {
+                            relationships.insert(Expansion {
+                                operation_index: index,
+                                cause_id: track_id.to_owned(),
+                                affected_id: affected.clone(),
+                            });
+                        }
+                        expected
+                    } else {
+                        element_ids.clone()
+                    };
+                    self.snapshot
+                        .elements
+                        .retain(|element| !removed_ids.contains(&element.element_id));
+                    let before = self.snapshot.transitions.len();
+                    self.snapshot.transitions.retain(|transition| {
+                        !removed_ids.contains(&transition.from_element_id)
+                            && !removed_ids.contains(&transition.to_element_id)
+                    });
+                    if before != self.snapshot.transitions.len() {
+                        warnings.insert(Warning {
+                            code: WarningCode::TransitionRemoved,
+                            message: "dependent transition removed".into(),
+                            operation_index: index,
+                            object_id: Some(track_id.to_owned()),
+                        });
+                    }
+                }
+                RemoveTrackOccupiedPolicy::Move => {
+                    let target_id = target_track_id.ok_or_else(|| {
+                        invalid_error(index, "the move policy requires targetTrackId")
+                    })?;
+                    if target_id == track_id {
+                        return invalid(index, "a track cannot receive its own elements");
+                    }
+                    let target = self.track_mut(target_id, index)?.clone();
+                    if target.track_type != track.track_type {
+                        return incompatible(
+                            index,
+                            "elements cannot move onto a track of another type",
+                        );
+                    }
+                    let moving: Vec<(MediaTime, MediaTime)> = self
+                        .snapshot
+                        .elements
+                        .iter()
+                        .filter(|element| element_ids.contains(&element.element_id))
+                        .map(|element| (element.start_time, element.duration))
+                        .collect();
+                    for (start, duration) in &moving {
+                        let end = add(*start, *duration, index)?;
+                        for candidate in self
+                            .snapshot
+                            .elements
+                            .iter()
+                            .filter(|element| element.track_id == target_id)
+                        {
+                            let candidate_end =
+                                add(candidate.start_time, candidate.duration, index)?;
+                            if !(end <= candidate.start_time || *start >= candidate_end) {
+                                return incompatible(
+                                    index,
+                                    "target track does not have room for every element",
+                                );
+                            }
+                        }
+                    }
+                    for element in &mut self.snapshot.elements {
+                        if element_ids.contains(&element.element_id) {
+                            element.track_id = target_id.to_owned();
+                        }
+                    }
+                    for transition in &mut self.snapshot.transitions {
+                        if transition.track_id == track_id {
+                            transition.track_id = target_id.to_owned();
+                        }
+                    }
+                    // The native command appends the moved elements and sorts
+                    // the target by start time, so mirror that order here.
+                    let mut target_elements: Vec<Element> = Vec::new();
+                    let mut others: Vec<Element> = Vec::new();
+                    for element in self.snapshot.elements.drain(..) {
+                        if element.track_id == target_id {
+                            target_elements.push(element);
+                        } else {
+                            others.push(element);
+                        }
+                    }
+                    target_elements.sort_by_key(|element| element.start_time);
+                    others.extend(target_elements);
+                    self.snapshot.elements = others;
+                }
+            }
+        }
+        self.snapshot
+            .tracks
+            .retain(|candidate| candidate.track_id != track_id);
+        Ok(())
+    }
+
+    fn duplicate_track(
+        &mut self,
+        track_id: &str,
+        new_track_id: &str,
+        name: Option<&str>,
+        allocations: &[ObjectIdAllocation],
+        index: usize,
+        relationships: &mut BTreeSet<Expansion>,
+    ) -> Result<(), EditPlanError> {
+        let position = self
+            .snapshot
+            .tracks
+            .iter()
+            .position(|track| track.track_id == track_id)
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::UnknownReference,
+                    "unknown track",
+                    Some(index),
+                    Some("trackId"),
+                )
+            })?;
+        validate_id(new_track_id, Some(index), "newTrackId")?;
+        if self
+            .snapshot
+            .tracks
+            .iter()
+            .any(|track| track.track_id == new_track_id)
+        {
+            return duplicate(index, new_track_id);
+        }
+        let mapping: BTreeMap<_, _> = allocations
+            .iter()
+            .map(|allocation| {
+                (
+                    (allocation.role.as_str(), allocation.source_id.as_str()),
+                    allocation.resolved_id.as_str(),
+                )
+            })
+            .collect();
+        if mapping.get(&("duplicate-track", track_id)) != Some(&new_track_id) {
+            return invalid(index, "duplicate track allocation is inconsistent");
+        }
+        let source = self.snapshot.tracks[position].clone();
+        let copy = Track {
+            track_id: new_track_id.to_owned(),
+            name: name
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{} copy", source.name)),
+            track_type: source.track_type.clone(),
+            role: if source.role == "main" {
+                "overlay".into()
+            } else {
+                source.role.clone()
+            },
+            muted: source.muted,
+            hidden: source.hidden,
+        };
+        // The copy sits directly after its source; the main track duplicates
+        // onto the top of the overlay stack.
+        let insert_at = if source.role == "main" {
+            0
+        } else {
+            position + 1
+        };
+        self.snapshot.tracks.insert(insert_at, copy);
+        let mut copies = Vec::new();
+        let mut element_ids = BTreeMap::new();
+        for element in self
+            .snapshot
+            .elements
+            .iter()
+            .filter(|element| element.track_id == track_id)
+        {
+            let resolved = mapping
+                .get(&("duplicate-element", element.element_id.as_str()))
+                .ok_or_else(|| {
+                    error(
+                        ErrorCode::InvalidValue,
+                        "missing resolved duplicate element ID",
+                        Some(index),
+                        Some("resolvedAllocations"),
+                    )
+                })?;
+            element_ids.insert(element.element_id.clone(), (*resolved).to_owned());
+            let mut copy = element.clone();
+            copy.element_id = (*resolved).to_owned();
+            copy.name = format!("{} (copy)", copy.name);
+            copy.track_id = new_track_id.to_owned();
+            if let Some(group_id) = copy.group_id.as_mut()
+                && let Some(resolved) = mapping.get(&("duplicate-group", group_id.as_str()))
+            {
+                *group_id = (*resolved).into();
+            }
+            if let Some(link_id) = copy.link_id.as_mut()
+                && let Some(resolved) = mapping.get(&("duplicate-link", link_id.as_str()))
+            {
+                *link_id = (*resolved).into();
+            }
+            remap_owned_identities(&mut copy, allocations, "duplicate");
+            copies.push(copy);
+        }
+        for (source_id, copy_id) in &element_ids {
+            if self
+                .snapshot
+                .elements
+                .iter()
+                .any(|e| e.element_id == *copy_id)
+            {
+                return duplicate(index, copy_id);
+            }
+            relationships.insert(Expansion {
+                operation_index: index,
+                cause_id: source_id.clone(),
+                affected_id: copy_id.clone(),
+            });
+        }
+        let transition_copies: Vec<Transition> = self
+            .snapshot
+            .transitions
+            .iter()
+            .filter(|transition| transition.track_id == track_id)
+            .map(|transition| {
+                let transition_id = mapping
+                    .get(&("duplicate-transition", transition.transition_id.as_str()))
+                    .ok_or_else(|| {
+                        error(
+                            ErrorCode::InvalidValue,
+                            "missing resolved duplicate transition ID",
+                            Some(index),
+                            Some("resolvedAllocations"),
+                        )
+                    })?;
+                Ok(Transition {
+                    transition_id: (*transition_id).to_owned(),
+                    track_id: new_track_id.to_owned(),
+                    from_element_id: element_ids[&transition.from_element_id].clone(),
+                    to_element_id: element_ids[&transition.to_element_id].clone(),
+                    transition_type: transition.transition_type.clone(),
+                    duration: transition.duration,
+                })
+            })
+            .collect::<Result<_, EditPlanError>>()?;
+        self.snapshot.elements.extend(copies);
+        self.snapshot.transitions.extend(transition_copies);
+        Ok(())
+    }
+
+    fn set_main_track(&mut self, track_id: &str, index: usize) -> Result<(), EditPlanError> {
+        let position = self
+            .snapshot
+            .tracks
+            .iter()
+            .position(|track| track.track_id == track_id)
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::UnknownReference,
+                    "unknown track",
+                    Some(index),
+                    Some("trackId"),
+                )
+            })?;
+        let candidate = &self.snapshot.tracks[position];
+        if candidate.role == "main" {
+            return Err(error(
+                ErrorCode::SilentNoOp,
+                "track is already the main track",
+                Some(index),
+                None,
+            ));
+        }
+        if candidate.role != "overlay" {
+            return incompatible(index, "only overlay tracks can become the main track");
+        }
+        if candidate.track_type != "video" {
+            return incompatible(index, "only video tracks can become the main track");
+        }
+        self.validate_main_track_consequences(track_id, index)?;
+        let mut promoted = self.snapshot.tracks.remove(position);
+        promoted.role = "main".into();
+        promoted.name = MAIN_TRACK_NAME.into();
+        let main_position = self
+            .snapshot
+            .tracks
+            .iter()
+            .position(|track| track.role == "main")
+            .ok_or_else(|| invalid_error(index, "scene has no main track"))?;
+        let mut demoted = self.snapshot.tracks.remove(main_position);
+        demoted.role = "overlay".into();
+        if demoted.name == MAIN_TRACK_NAME {
+            demoted.name = "Video Track".into();
+        }
+        self.snapshot.tracks.insert(0, demoted);
+        let main_slot = self
+            .snapshot
+            .tracks
+            .iter()
+            .position(|track| track.role == "audio")
+            .unwrap_or(self.snapshot.tracks.len());
+        self.snapshot.tracks.insert(main_slot, promoted);
+        Ok(())
+    }
+
+    fn validate_main_track_consequences(
+        &self,
+        candidate_track_id: &str,
+        index: usize,
+    ) -> Result<(), EditPlanError> {
+        let current_main_track_id = self
+            .snapshot
+            .tracks
+            .iter()
+            .find(|track| track.role == "main")
+            .map(|track| track.track_id.as_str())
+            .ok_or_else(|| invalid_error(index, "scene has no main track"))?;
+        let current_duration = self.track_end_time(current_main_track_id, index)?;
+        let candidate_duration = self.track_end_time(candidate_track_id, index)?;
+        if candidate_duration == MediaTime::ZERO {
+            return incompatible(index, "the promoted main track cannot be empty");
+        }
+        if candidate_duration != current_duration {
+            return incompatible(
+                index,
+                "the promoted main track must preserve the current main-track duration",
+            );
+        }
+
+        let canvas = &self.snapshot.settings.canvas_size;
+        if canvas.width == 0 || canvas.height == 0 {
+            return Err(invalid_error(
+                index,
+                "project canvas dimensions must be positive",
+            ));
+        }
+        for element in self
+            .snapshot
+            .elements
+            .iter()
+            .filter(|element| element.track_id == candidate_track_id)
+        {
+            let media_id = match element.canonical_source.as_ref() {
+                Some(CanonicalElement::Video { media_id, .. })
+                | Some(CanonicalElement::Image { media_id, .. }) => Some(media_id),
+                _ => None,
+            };
+            if let Some(media_id) = media_id {
+                let asset = self.media_assets.get(media_id).ok_or_else(|| {
+                    error(
+                        ErrorCode::UnknownReference,
+                        "promoted main-track media asset is missing",
+                        Some(index),
+                        Some("trackId"),
+                    )
+                })?;
+                if asset.width.unwrap_or(0) == 0 || asset.height.unwrap_or(0) == 0 {
+                    return incompatible(
+                        index,
+                        "promoted main-track media must have valid dimensions for the project canvas",
+                    );
+                }
+            }
+        }
+
+        let mut group_counts = BTreeMap::<&str, usize>::new();
+        let mut link_counts = BTreeMap::<&str, usize>::new();
+        for element in &self.snapshot.elements {
+            if let Some(group_id) = element.group_id.as_deref() {
+                *group_counts.entry(group_id).or_default() += 1;
+            }
+            if let Some(link_id) = element.link_id.as_deref() {
+                *link_counts.entry(link_id).or_default() += 1;
+            }
+        }
+        for element in self.snapshot.elements.iter().filter(|element| {
+            element.track_id == candidate_track_id || element.track_id == current_main_track_id
+        }) {
+            if element
+                .group_id
+                .as_deref()
+                .is_some_and(|id| group_counts.get(id).copied().unwrap_or_default() < 2)
+                || element
+                    .link_id
+                    .as_deref()
+                    .is_some_and(|id| link_counts.get(id).copied().unwrap_or_default() < 2)
+            {
+                return Err(invalid_error(
+                    index,
+                    "main-track promotion would retain an invalid downstream relationship",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn track_end_time(&self, track_id: &str, index: usize) -> Result<MediaTime, EditPlanError> {
+        self.snapshot
+            .elements
+            .iter()
+            .filter(|element| element.track_id == track_id)
+            .try_fold(MediaTime::ZERO, |latest, element| {
+                add(element.start_time, element.duration, index)
+                    .map(|end| std::cmp::max(latest, end))
+            })
+    }
+
+    fn require_bookmark_identity(&self, index: usize) -> Result<(), EditPlanError> {
+        if self
+            .snapshot
+            .bookmarks
+            .iter()
+            .any(|bookmark| bookmark.bookmark_id.is_none())
+        {
+            return invalid(
+                index,
+                "bookmark operations require projection version 3 bookmark identities",
+            );
+        }
+        Ok(())
+    }
+
+    fn bookmark_position(&self, bookmark_id: &str, index: usize) -> Result<usize, EditPlanError> {
+        self.require_bookmark_identity(index)?;
+        self.snapshot
+            .bookmarks
+            .iter()
+            .position(|bookmark| bookmark.bookmark_id.as_deref() == Some(bookmark_id))
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::UnknownReference,
+                    "unknown bookmark",
+                    Some(index),
+                    Some("bookmarkId"),
+                )
+            })
+    }
+
+    fn bookmark_frame_time(
+        &self,
+        time: MediaTime,
+        index: usize,
+    ) -> Result<MediaTime, EditPlanError> {
+        if time < MediaTime::ZERO {
+            return Err(error(
+                ErrorCode::InvalidValue,
+                "bookmark time must be non-negative",
+                Some(index),
+                Some("time"),
+            ));
+        }
+        time.round_to_frame(self.snapshot.settings.fps)
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::UnsupportedFrameRate,
+                    "fps does not map to integral 120000-timebase ticks",
+                    Some(index),
+                    Some("settings.fps"),
+                )
+            })
+    }
+
+    fn sort_bookmarks(&mut self) {
+        self.snapshot.bookmarks.sort_by(|left, right| {
+            left.time
+                .cmp(&right.time)
+                .then_with(|| left.bookmark_id.cmp(&right.bookmark_id))
+        });
+    }
+
+    fn add_bookmark(
+        &mut self,
+        bookmark_id: &str,
+        time: MediaTime,
+        duration: Option<MediaTime>,
+        note: Option<String>,
+        color: Option<String>,
+        index: usize,
+    ) -> Result<(), EditPlanError> {
+        self.require_bookmark_identity(index)?;
+        validate_id(bookmark_id, Some(index), "bookmarkId")?;
+        if self
+            .snapshot
+            .bookmarks
+            .iter()
+            .any(|bookmark| bookmark.bookmark_id.as_deref() == Some(bookmark_id))
+        {
+            return duplicate(index, bookmark_id);
+        }
+        let time = self.bookmark_frame_time(time, index)?;
+        if let Some(duration) = duration {
+            positive(duration, Some(index), "duration")?;
+        }
+        self.snapshot.bookmarks.push(Bookmark {
+            bookmark_id: Some(bookmark_id.to_owned()),
+            time,
+            duration,
+            note,
+            color,
+        });
+        self.sort_bookmarks();
+        Ok(())
+    }
+
+    fn update_bookmark(
+        &mut self,
+        bookmark_id: &str,
+        note: Option<String>,
+        color: Option<String>,
+        duration: Option<MediaTime>,
+        clear: &[BookmarkField],
+        index: usize,
+    ) -> Result<(), EditPlanError> {
+        let position = self.bookmark_position(bookmark_id, index)?;
+        if note.is_none() && color.is_none() && duration.is_none() && clear.is_empty() {
+            return invalid(index, "bookmark update is empty");
+        }
+        let conflicting = (note.is_some() && clear.contains(&BookmarkField::Note))
+            || (color.is_some() && clear.contains(&BookmarkField::Color))
+            || (duration.is_some() && clear.contains(&BookmarkField::Duration));
+        if conflicting {
+            return invalid(index, "a bookmark field cannot be both set and cleared");
+        }
+        if let Some(duration) = duration {
+            positive(duration, Some(index), "duration")?;
+        }
+        let bookmark = &mut self.snapshot.bookmarks[position];
+        if let Some(note) = note {
+            bookmark.note = Some(note);
+        }
+        if let Some(color) = color {
+            bookmark.color = Some(color);
+        }
+        if let Some(duration) = duration {
+            bookmark.duration = Some(duration);
+        }
+        for field in clear {
+            match field {
+                BookmarkField::Note => bookmark.note = None,
+                BookmarkField::Color => bookmark.color = None,
+                BookmarkField::Duration => bookmark.duration = None,
+            }
+        }
+        Ok(())
+    }
+
+    fn move_bookmark(
+        &mut self,
+        bookmark_id: &str,
+        time: MediaTime,
+        index: usize,
+    ) -> Result<(), EditPlanError> {
+        let position = self.bookmark_position(bookmark_id, index)?;
+        let time = self.bookmark_frame_time(time, index)?;
+        if self.snapshot.bookmarks[position].time == time {
+            return Err(error(
+                ErrorCode::SilentNoOp,
+                "bookmark already sits at the requested frame",
+                Some(index),
+                None,
+            ));
+        }
+        self.snapshot.bookmarks[position].time = time;
+        self.sort_bookmarks();
+        Ok(())
+    }
+
+    fn remove_bookmark(&mut self, bookmark_id: &str, index: usize) -> Result<(), EditPlanError> {
+        let position = self.bookmark_position(bookmark_id, index)?;
+        self.snapshot.bookmarks.remove(position);
+        Ok(())
+    }
+
+    fn require_timeline_asset(
+        &self,
+        asset_id: &str,
+        index: usize,
+    ) -> Result<CanonicalMediaAsset, EditPlanError> {
+        let asset = self.media_assets.get(asset_id).cloned().ok_or_else(|| {
+            error(
+                ErrorCode::UnknownReference,
+                "unknown media asset",
+                Some(index),
+                Some("assetId"),
+            )
+        })?;
+        if asset.role.as_deref().is_some_and(|role| role != "timeline") {
+            return Err(error(
+                ErrorCode::IncompatibleTrack,
+                "only timeline media assets can be instantiated",
+                Some(index),
+                Some("assetId"),
+            ));
+        }
+        Ok(asset)
     }
     fn add_track(&mut self, kind: &str, id: &str, index: usize) -> Result<(), EditPlanError> {
         self.insert_track(kind, id, false, index)
@@ -5181,6 +6171,12 @@ fn project_object_ids(project: &ProjectSnapshot) -> BTreeSet<String> {
     ids.extend(project.media_assets.iter().map(|asset| asset.id.clone()));
     for scene in &project.project.scenes {
         ids.insert(scene.id.clone());
+        ids.extend(
+            scene
+                .bookmarks
+                .iter()
+                .filter_map(|bookmark| bookmark.id.clone()),
+        );
         collect_track_object_ids(&scene.tracks, &mut ids);
     }
     ids
@@ -6524,3 +7520,149 @@ fn sha256(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests;
+
+/// Name the native editor gives a promoted main track.
+const MAIN_TRACK_NAME: &str = "Main Track";
+/// Duration the native editor assigns to elements without an intrinsic
+/// duration (images): five seconds at the 120000 tick timebase.
+const DEFAULT_NEW_ELEMENT_DURATION: MediaTime = MediaTime::from_ticks(5 * 120_000);
+
+fn media_element_type(
+    asset: &CanonicalMediaAsset,
+    index: usize,
+) -> Result<&'static str, EditPlanError> {
+    match asset.asset_type.as_str() {
+        "video" => Ok("video"),
+        "image" => Ok("image"),
+        "audio" => Ok("audio"),
+        _ => Err(error(
+            ErrorCode::IncompatibleTrack,
+            "asset type cannot be placed on the timeline",
+            Some(index),
+            Some("assetId"),
+        )),
+    }
+}
+
+/// Mirrors the native import path: an explicit duration wins, otherwise the
+/// asset's intrinsic duration rounded to ticks, and images fall back to the
+/// editor's default new-element duration.
+fn resolve_asset_duration(
+    asset: &CanonicalMediaAsset,
+    requested: Option<MediaTime>,
+    index: usize,
+) -> Result<MediaTime, EditPlanError> {
+    if let Some(duration) = requested {
+        positive(duration, Some(index), "duration")?;
+        return Ok(duration);
+    }
+    match asset.duration {
+        Some(seconds) => MediaTime::from_seconds_f64(seconds)
+            .filter(|duration| *duration > MediaTime::ZERO)
+            .ok_or_else(|| invalid_error(index, "asset duration is not a valid media time")),
+        None if asset.asset_type == "image" => Ok(DEFAULT_NEW_ELEMENT_DURATION),
+        None => Err(invalid_error(
+            index,
+            "asset has no duration; pass duration explicitly",
+        )),
+    }
+}
+
+fn default_reframe_params() -> Params {
+    [
+        ("reframe.mode", Scalar::String("contain".into())),
+        ("reframe.cropX", Scalar::Number(0.0)),
+        ("reframe.cropY", Scalar::Number(0.0)),
+        ("reframe.cropWidth", Scalar::Number(1.0)),
+        ("reframe.cropHeight", Scalar::Number(1.0)),
+        ("reframe.focalX", Scalar::Number(0.5)),
+        ("reframe.focalY", Scalar::Number(0.5)),
+        ("reframe.targetX", Scalar::Number(0.0)),
+        ("reframe.targetY", Scalar::Number(0.0)),
+        ("reframe.targetWidth", Scalar::Number(1.0)),
+        ("reframe.targetHeight", Scalar::Number(1.0)),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_owned(), value))
+    .collect()
+}
+
+fn default_audio_params() -> Params {
+    [
+        ("volume", Scalar::Number(0.0)),
+        ("muted", Scalar::Boolean(false)),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_owned(), value))
+    .collect()
+}
+
+/// Builds the same element the native `buildElementFromMedia` helper builds,
+/// including the canonical media identity the projection needs.
+fn media_element(
+    id: &str,
+    element_type: &str,
+    name: &str,
+    asset: &CanonicalMediaAsset,
+    start_time: MediaTime,
+    duration: MediaTime,
+) -> Element {
+    let mut element = new_element(id, element_type, name, start_time, duration);
+    let mut params = Params::new();
+    if element_type != "audio" {
+        params.extend(default_visual_params());
+        params.extend(default_reframe_params());
+    }
+    if element_type != "image" {
+        params.extend(default_audio_params());
+        element.source_duration = Some(duration);
+    }
+    element.params = params;
+    element.muted = Some(false);
+    if element_type == "video" {
+        element.source_audio_separated = Some(false);
+    }
+    let common = Box::new(CanonicalElementCommon {
+        order: 0,
+        id: id.to_owned(),
+        name: name.to_owned(),
+        group_id: None,
+        link_id: None,
+        start_time,
+        duration,
+        trim_start: MediaTime::ZERO,
+        trim_end: MediaTime::ZERO,
+        source_duration: element.source_duration,
+        params: CanonicalValue::Object(BTreeMap::new()),
+        animations: CanonicalValue::Object(BTreeMap::new()),
+    });
+    element.canonical_source = Some(match element_type {
+        "audio" => CanonicalElement::Audio {
+            common,
+            source_type: "upload".into(),
+            media_id: Some(asset.id.clone()),
+            source_url: None,
+            retime: CanonicalValue::Null(()),
+            audio_replacement: None,
+        },
+        "image" => CanonicalElement::Image {
+            common,
+            media_id: asset.id.clone(),
+            hidden: Some(false),
+            effects: vec![],
+            masks: vec![],
+        },
+        _ => CanonicalElement::Video {
+            common,
+            media_id: asset.id.clone(),
+            hidden: Some(false),
+            is_source_audio_enabled: Some(true),
+            retime: CanonicalValue::Null(()),
+            effects: vec![],
+            masks: vec![],
+            matte: None,
+            audio_replacement: None,
+        },
+    });
+    element
+}

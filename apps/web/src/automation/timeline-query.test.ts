@@ -79,6 +79,8 @@ function buildSnapshot(): AutomationProjectSnapshot {
 			},
 		],
 		mediaAssets: [],
+		scenes: [],
+		bookmarks: [],
 		elements,
 	};
 }

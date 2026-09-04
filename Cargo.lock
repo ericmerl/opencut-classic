@@ -4264,7 +4264,9 @@ name = "project-state"
 version = "0.1.0"
 dependencies = [
  "bridge",
+ "canonical-json",
  "serde",
+ "serde_json",
  "tsify-next",
  "wasm-bindgen",
 ]

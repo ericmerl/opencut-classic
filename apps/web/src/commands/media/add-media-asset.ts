@@ -21,17 +21,19 @@ export class AddMediaAssetCommand extends Command {
 	constructor({
 		projectId,
 		asset,
+		assetId,
 		ratchetProjectFps = true,
 	}: {
 		projectId: string;
 		asset: Omit<MediaAsset, "id">;
+		assetId?: string;
 		ratchetProjectFps?: boolean;
 	}) {
 		super();
 		this.projectId = projectId;
 		this.asset = asset;
 		this.ratchetProjectFps = ratchetProjectFps;
-		this.assetId = generateUUID();
+		this.assetId = assetId ?? generateUUID();
 	}
 
 	private projectId: string;

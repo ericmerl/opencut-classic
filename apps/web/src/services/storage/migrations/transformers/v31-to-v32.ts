@@ -65,7 +65,6 @@ function migrateScene({
 	if (!isRecord(scene) || !Array.isArray(scene.bookmarks)) {
 		return scene;
 	}
-	const seen = new Set<string>();
 	return {
 		...scene,
 		bookmarks: scene.bookmarks.map((bookmark) => {
@@ -74,10 +73,9 @@ function migrateScene({
 				typeof bookmark.id === "string" && bookmark.id.length > 0
 					? bookmark.id
 					: null;
-			// A duplicated id inside one scene would make identity ambiguous, so
-			// only the first occurrence keeps it.
-			const id = existing && !seen.has(existing) ? existing : generateId();
-			seen.add(id);
+			// Migrations are additive: never rewrite an identity already present in
+			// persisted data, even when an older/ad-hoc record contains duplicates.
+			const id = existing ?? generateId();
 			return { ...bookmark, id };
 		}),
 	};

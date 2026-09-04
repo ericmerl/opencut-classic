@@ -570,11 +570,19 @@ function validateOperationAttribution(
 				allocation.resolvedId === consequence.elementId &&
 				allocation.role.includes("element"),
 		);
+		const removedWithTrack =
+			operation.kind === "remove_track" &&
+			(operation.resolvedCascadeElementIds?.includes(consequence.elementId) ||
+				evaluation.before.project.scenes
+					.find((scene) => scene.id === evaluation.source.sceneId)
+					?.tracks.find((track) => track.id === operation.trackId)
+					?.elements.some((element) => element.id === consequence.elementId));
 		if (
 			!systemWideAudioChange &&
 			!directlyReferenced &&
 			!rippleAttributed &&
-			!allocatedByOperation
+			!allocatedByOperation &&
+			!removedWithTrack
 		) {
 			throw new Error(
 				"timing consequence is not attributable to its resolved operation",

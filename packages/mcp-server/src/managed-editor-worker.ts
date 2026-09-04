@@ -22,6 +22,13 @@ export interface ManagedEditorWorkerStatus {
 	pinnedCompositorBackend: "webgpu";
 }
 
+/**
+ * Project id the hidden editor opens when the caller names none. The web app
+ * treats it as "no project" and waits for an open_project call, so it is not a
+ * project identity and never reaches the ledger or status reports.
+ */
+export const BOOTSTRAP_PROJECT_ID = "__opencut_automation_bootstrap__";
+
 export class ManagedEditorWorker {
 	private child: ChildProcess | null = null;
 	private launchPromise: Promise<ManagedEditorWorkerStatus> | null = null;
@@ -80,7 +87,7 @@ export class ManagedEditorWorker {
 	}
 
 	async ensureConnected(
-		projectId = "__opencut_automation_bootstrap__",
+		projectId = BOOTSTRAP_PROJECT_ID,
 	): Promise<ManagedEditorWorkerStatus> {
 		if (this.bridge.getStatus().connected) return this.getStatus();
 		if (!this.options.baseUrl) {
@@ -152,7 +159,7 @@ export class ManagedEditorWorker {
 				{ stdio: "ignore", windowsHide: true },
 			);
 			this.child = child;
-			this.projectId = projectId;
+			this.projectId = projectId === BOOTSTRAP_PROJECT_ID ? null : projectId;
 			this.lastError = null;
 			child.once("exit", () => {
 				if (this.child === child) this.child = null;

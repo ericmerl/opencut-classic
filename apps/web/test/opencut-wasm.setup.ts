@@ -12,6 +12,10 @@ interface NativeProjectState {
 	evaluateProjectSnapshotRetention: (
 		options: EvaluateSnapshotRetentionOptions,
 	) => SnapshotRetentionEvaluation;
+	evaluateMediaRelinkCompatibility: (
+		options: EvaluateMediaRelinkOptions,
+	) => MediaRelinkEvaluation;
+	evaluateLifecycleMutation: (options: unknown) => unknown;
 	scheduleFrameRange: (options: unknown) => unknown;
 }
 
@@ -23,9 +27,8 @@ interface NativeProjectState {
  */
 let nativeProjectStateModule: NativeProjectState | undefined;
 function nativeProjectState(): NativeProjectState {
-	nativeProjectStateModule ??= require(
-		"../../../rust/wasm/pkg-node/opencut_wasm.js",
-	) as NativeProjectState;
+	nativeProjectStateModule ??=
+		require("../../../rust/wasm/pkg-node/opencut_wasm.js") as NativeProjectState;
 	return nativeProjectStateModule;
 }
 
@@ -36,9 +39,9 @@ if (typeof globalThis.OffscreenCanvas === "undefined") {
 		private readonly canvas: Canvas;
 
 		constructor(width: number, height: number) {
-			const { createCanvas: create } = require(
-				"@napi-rs/canvas",
-			) as { createCanvas: typeof createCanvas };
+			const { createCanvas: create } = require("@napi-rs/canvas") as {
+				createCanvas: typeof createCanvas;
+			};
 			this.canvas = create(width, height);
 		}
 
@@ -82,6 +85,10 @@ mock.module("opencut-wasm", () => ({
 	evaluateProjectSnapshotRetention: (
 		options: EvaluateSnapshotRetentionOptions,
 	) => nativeProjectState().evaluateProjectSnapshotRetention(options),
+	evaluateMediaRelinkCompatibility: (options: EvaluateMediaRelinkOptions) =>
+		nativeProjectState().evaluateMediaRelinkCompatibility(options),
+	evaluateLifecycleMutation: (options: unknown) =>
+		nativeProjectState().evaluateLifecycleMutation(options),
 	scheduleFrameRange: (options: unknown) =>
 		nativeProjectState().scheduleFrameRange(options),
 	guessTimecodeFormat: () => "HH:MM:SS",
@@ -166,3 +173,27 @@ interface EvaluateSnapshotRetentionOptions {
 type SnapshotRetentionEvaluation =
 	| { status: "retained"; state: SnapshotRetentionState }
 	| { status: "rejected"; reason: string };
+
+interface MediaRelinkDescriptor {
+	type: string;
+	width?: number;
+	height?: number;
+	duration?: number;
+	fps?: number;
+	hasAudio?: boolean;
+	size: number;
+}
+
+interface EvaluateMediaRelinkOptions {
+	current: MediaRelinkDescriptor;
+	replacement: MediaRelinkDescriptor;
+}
+
+interface MediaRelinkEvaluation {
+	compatible: boolean;
+	differences: Array<{
+		field: string;
+		before?: string | number | boolean;
+		after?: string | number | boolean;
+	}>;
+}

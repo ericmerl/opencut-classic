@@ -327,7 +327,7 @@ describe("edit-plan preflight contract", () => {
 		expect(changedSource).not.toBe(first);
 	});
 
-	test("accepts complete project-content v1 and identity-bearing v2 projections", () => {
+	test("accepts complete project-content v1, v2, and stable-bookmark v3 projections", () => {
 		const projection = {
 			projection: "opencut-project-content" as const,
 			projectionVersion: 1 as const,
@@ -364,6 +364,29 @@ describe("edit-plan preflight contract", () => {
 		};
 		expect(editPlanProjectSnapshotSchema.parse(projectionV2)).toEqual(
 			projectionV2,
+		);
+		const projectionV3 = {
+			...projectionV2,
+			projectionVersion: 3 as const,
+			project: {
+				...projectionV2.project,
+				scenes: projectionV2.project.scenes.map((scene) => ({
+					...scene,
+					bookmarks: [
+						{
+							order: 0,
+							id: "bookmark-1",
+							time: 8_000,
+							duration: null,
+							note: null,
+							color: "#ff0000",
+						},
+					],
+				})),
+			},
+		};
+		expect(editPlanProjectSnapshotSchema.parse(projectionV3)).toEqual(
+			projectionV3,
 		);
 		expect(() =>
 			editPlanProjectSnapshotSchema.parse({

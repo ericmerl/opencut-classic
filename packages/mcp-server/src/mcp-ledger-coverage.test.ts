@@ -26,7 +26,7 @@ describe("complete mutating handler ledger coverage", () => {
 		});
 	});
 
-	test("exactly replays and rejects changed reuse for all 33 mutators", async () => {
+	test("exactly replays and rejects changed reuse for all 47 mutators", async () => {
 		const ledger = new OperationLedger(directory);
 		const boundary = new McpLedgerBoundary(ledger, verificationBridge());
 		try {
@@ -247,6 +247,20 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 	const statusByTool: Partial<Record<MutatingToolName, string>> = {
 		opencut_create_project: "created",
 		opencut_open_project: "opened",
+		opencut_rename_project: "renamed",
+		opencut_duplicate_project: "duplicated",
+		opencut_delete_project: "deleted",
+		opencut_create_scene: "applied",
+		opencut_clone_scene: "applied",
+		opencut_switch_scene: "applied",
+		opencut_rename_scene: "applied",
+		opencut_delete_scene: "applied",
+		opencut_set_main_scene: "applied",
+		opencut_reorder_scenes: "applied",
+		opencut_import_media_asset: "applied",
+		opencut_rename_media_asset: "applied",
+		opencut_relink_media_asset: "applied",
+		opencut_remove_media_asset: "applied",
 		opencut_normalize_audio: "normalized",
 		opencut_sync_audio: "applied",
 		opencut_attach_clean_audio: "applied",

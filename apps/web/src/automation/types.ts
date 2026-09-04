@@ -275,6 +275,32 @@ export interface AutomationProjectSnapshot {
 	transitions: AutomationTransitionSnapshot[];
 	mediaAssets: AutomationMediaAssetSnapshot[];
 	elements: AutomationElementSnapshot[];
+	/** Every scene in the project, in scene order. */
+	scenes: AutomationSceneSnapshot[];
+	/** Bookmarks of the snapshot scene, sorted by time. */
+	bookmarks: AutomationBookmarkSnapshot[];
+}
+
+export interface AutomationSceneSnapshot {
+	sceneId: string;
+	name: string;
+	isMain: boolean;
+	isActive: boolean;
+	order: number;
+	duration: MediaTime;
+	trackCount: number;
+	elementCount: number;
+	bookmarkCount: number;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface AutomationBookmarkSnapshot {
+	bookmarkId: string;
+	time: MediaTime;
+	duration?: MediaTime;
+	note?: string;
+	color?: string;
 }
 
 export interface AutomationReadProjectRequest {
@@ -296,6 +322,10 @@ export interface AutomationProjectSummary {
 	createdAt: string;
 	updatedAt: string;
 	isActive: boolean;
+	persistence: Extract<
+		AutomationProjectLifecyclePersistence,
+		{ status: "verified" }
+	>;
 }
 
 export interface AutomationProjectListResult {
@@ -630,6 +660,70 @@ export type AutomationEditOperation =
 			trackId: string;
 			muted?: boolean | undefined;
 			hidden?: boolean | undefined;
+	  }
+	| {
+			kind: "rename_track";
+			trackId: string;
+			name: string;
+	  }
+	| {
+			kind: "reorder_tracks";
+			overlayTrackIds?: string[] | undefined;
+			audioTrackIds?: string[] | undefined;
+	  }
+	| {
+			kind: "remove_track";
+			trackId: string;
+			occupied?: "reject" | "delete" | "move" | "cascade" | undefined;
+			targetTrackId?: string | undefined;
+			resolvedCascadeElementIds?: string[] | undefined;
+	  }
+	| {
+			kind: "duplicate_track";
+			trackId: string;
+			newTrackId?: string | undefined;
+			name?: string | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
+	  }
+	| {
+			kind: "set_main_track";
+			trackId: string;
+	  }
+	| {
+			kind: "add_bookmark";
+			bookmarkId?: string | undefined;
+			time: MediaTime;
+			duration?: MediaTime | undefined;
+			note?: string | undefined;
+			color?: string | undefined;
+	  }
+	| {
+			kind: "update_bookmark";
+			bookmarkId: string;
+			note?: string | undefined;
+			color?: string | undefined;
+			duration?: MediaTime | undefined;
+			clear?: ReadonlyArray<"note" | "color" | "duration"> | undefined;
+	  }
+	| {
+			kind: "move_bookmark";
+			bookmarkId: string;
+			time: MediaTime;
+	  }
+	| {
+			kind: "remove_bookmark";
+			bookmarkId: string;
+	  }
+	| {
+			kind: "instantiate_asset";
+			assetId: string;
+			elementId?: string | undefined;
+			name?: string | undefined;
+			startTime: MediaTime;
+			duration?: MediaTime | undefined;
+			trackId?: string | undefined;
+			autoTrackId?: string | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
 			kind: "set_project_settings";
@@ -1118,6 +1212,7 @@ export interface AutomationImportRequest {
 	operationId: string;
 	expectedRevision: number;
 	url: string;
+	preflightUrl?: string;
 	name: string;
 	mimeType: string;
 	sourceFingerprint: string;
@@ -1154,6 +1249,7 @@ export interface AutomationAttachMatteRequest {
 	trackId: string;
 	elementId: string;
 	url: string;
+	preflightUrl?: string;
 	name: string;
 	mimeType: string;
 	artifactHash: string;
@@ -1592,4 +1688,347 @@ export interface AutomationComparisonSideEvidence {
 		expiresAt: string;
 		mediaSha256: string[];
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Project, scene, and media-bin lifecycle (issue #20)
+// ---------------------------------------------------------------------------
+
+export interface AutomationLifecycleRejectedResult {
+	status: "rejected";
+	operationId: string;
+	reason: string;
+}
+
+export interface AutomationLifecycleConflictResult {
+	status: "conflict";
+	operationId: string;
+	expectedRevision: number;
+	actualRevision: number;
+}
+
+export interface AutomationAffectedObject {
+	objectType: "project" | "scene" | "track" | "element" | "media";
+	objectId: string;
+	action: "created" | "updated" | "deleted" | "imported" | "opened";
+}
+
+export interface AutomationRenameProjectRequest {
+	operationId: string;
+	projectId: string;
+	name: string;
+	expectedTargetContentHash?: string;
+	expectedTargetWriteVersion?: number;
+	preflightFingerprint?: string;
+}
+
+export interface AutomationDuplicateProjectRequest {
+	operationId: string;
+	projectId: string;
+	name?: string;
+	expectedTargetContentHash?: string;
+	expectedTargetWriteVersion?: number;
+	preflightFingerprint?: string;
+}
+
+export interface AutomationDeleteProjectRequest {
+	operationId: string;
+	projectId: string;
+	/** Project to activate when the active project is deleted. */
+	fallbackProjectId?: string;
+	expectedTargetContentHash?: string;
+	expectedTargetWriteVersion?: number;
+	preflightFingerprint?: string;
+}
+
+/**
+ * Shared shape of a durable project lifecycle result. `projectId` and
+ * `snapshot` describe the project the editor is on after the operation so
+ * the operation receipt binds to a verifiable state.
+ */
+export interface AutomationProjectLifecycleAppliedResult {
+	operationId: string;
+	projectId: string;
+	activeProjectId: string;
+	revision: number;
+	snapshot: AutomationProjectSnapshot;
+	affectedObjects: AutomationAffectedObject[];
+	persistence: AutomationProjectLifecyclePersistence;
+}
+
+export type AutomationProjectLifecyclePersistence =
+	| {
+			status: "verified";
+			projectId: string;
+			sceneId: string;
+			writeVersion: number;
+			storageSchemaVersion: number;
+			contentHash: string;
+			contentHashProjectionVersion: ProjectContentProjectionVersion;
+	  }
+	| {
+			status: "deleted-verified";
+			projectId: string;
+	  };
+
+export type AutomationRenameProjectResult =
+	| (AutomationProjectLifecycleAppliedResult & {
+			status: "renamed" | "replayed";
+			renamedProjectId: string;
+			name: string;
+	  })
+	| AutomationLifecycleRejectedResult;
+
+export type AutomationDuplicateProjectResult =
+	| (AutomationProjectLifecycleAppliedResult & {
+			status: "duplicated" | "replayed";
+			sourceProjectId: string;
+			duplicateProjectId: string;
+			name: string;
+			/** Media keeps the same stable IDs and immutable source identities. */
+			mediaIdentity: "shared";
+			/** Browser storage is project-scoped, so bytes are copied for isolation. */
+			mediaBytes: "copied";
+	  })
+	| AutomationLifecycleRejectedResult;
+
+export type AutomationDeleteProjectResult =
+	| (AutomationProjectLifecycleAppliedResult & {
+			status: "deleted" | "replayed";
+			deletedProjectId: string;
+			fallback: "unchanged" | "opened-existing" | "created-blank";
+			/** Deletion removes the project record and its project-scoped media bytes. */
+			recoverability: "irreversible";
+	  })
+	| AutomationLifecycleRejectedResult;
+
+export interface AutomationActiveProjectMutationRequest {
+	projectId: string;
+	operationId: string;
+	expectedRevision: number;
+	expectedProjectContentHash?: string;
+	preflightFingerprint?: string;
+	bridgeProtocolVersion?: 1 | 2;
+}
+
+export type AutomationLifecycleMutationMethod =
+	| "rename_project"
+	| "duplicate_project"
+	| "delete_project"
+	| "create_scene"
+	| "clone_scene"
+	| "switch_scene"
+	| "rename_scene"
+	| "delete_scene"
+	| "set_main_scene"
+	| "reorder_scenes"
+	| "import_media_asset"
+	| "rename_media_asset"
+	| "relink_media_asset"
+	| "remove_media_asset";
+
+export interface AutomationPreflightLifecycleMutationRequest {
+	method: AutomationLifecycleMutationMethod;
+	request: Record<string, unknown>;
+}
+
+export type AutomationPreflightLifecycleMutationResult =
+	| {
+			status: "validated";
+			method: AutomationLifecycleMutationMethod;
+			preflightFingerprint: string;
+			projectId: string;
+			revision: number;
+			projectContentHash: string;
+			affectedObjects: AutomationAffectedObject[];
+			consequences: Record<string, unknown>;
+			noMutationProof: {
+				before: string;
+				after: string;
+			};
+	  }
+	| {
+			status: "rejected";
+			method: AutomationLifecycleMutationMethod;
+			reason: string;
+	  };
+
+export interface AutomationCreateSceneRequest extends AutomationActiveProjectMutationRequest {
+	name: string;
+	activate?: boolean;
+}
+
+export interface AutomationCloneSceneRequest extends AutomationActiveProjectMutationRequest {
+	sceneId: string;
+	newSceneId?: string;
+	name?: string;
+	activate?: boolean;
+}
+
+export interface AutomationSwitchSceneRequest extends AutomationActiveProjectMutationRequest {
+	sceneId: string;
+}
+
+export interface AutomationRenameSceneRequest extends AutomationActiveProjectMutationRequest {
+	sceneId: string;
+	name: string;
+}
+
+export interface AutomationDeleteSceneRequest extends AutomationActiveProjectMutationRequest {
+	sceneId: string;
+	/** Scene to activate when the deleted scene is active; defaults to the main scene. */
+	replacementSceneId?: string;
+	/** Scene to promote first when deleting the main scene. */
+	newMainSceneId?: string;
+}
+
+export interface AutomationSetMainSceneRequest extends AutomationActiveProjectMutationRequest {
+	sceneId: string;
+}
+
+export interface AutomationReorderScenesRequest extends AutomationActiveProjectMutationRequest {
+	sceneIds: string[];
+}
+
+export interface AutomationSceneMutationAppliedResult {
+	status: "applied";
+	operationId: string;
+	revision: number;
+	sceneId: string;
+	activeSceneId: string;
+	snapshot: AutomationProjectSnapshot;
+	affectedObjects: AutomationAffectedObject[];
+}
+
+export type AutomationSceneMutationResult =
+	| AutomationSceneMutationAppliedResult
+	| (Omit<AutomationSceneMutationAppliedResult, "status"> & {
+			status: "replayed";
+	  })
+	| AutomationLifecycleConflictResult
+	| AutomationLifecycleRejectedResult
+	| AutomationContentIdentityBlockedResult;
+
+export interface AutomationListScenesRequest {
+	projectId?: string;
+}
+
+export interface AutomationSceneListEntry extends AutomationSceneSnapshot {
+	/** SHA-256 of the scene's canonical projection (tracks and bookmarks). */
+	contentHash: string;
+	bookmarks: AutomationBookmarkSnapshot[];
+}
+
+export interface AutomationListScenesResult {
+	projectId: string;
+	revision: number;
+	activeSceneId: string;
+	mainSceneId: string | null;
+	scenes: AutomationSceneListEntry[];
+}
+
+export interface AutomationImportMediaAssetRequest extends AutomationActiveProjectMutationRequest {
+	url: string;
+	name: string;
+	mimeType: string;
+	sourceFingerprint: string;
+	/** Display name for the bin entry; defaults to the file name. */
+	assetName?: string;
+}
+
+export interface AutomationRenameMediaAssetRequest extends AutomationActiveProjectMutationRequest {
+	assetId: string;
+	name: string;
+}
+
+export interface AutomationRelinkMediaAssetRequest extends AutomationActiveProjectMutationRequest {
+	assetId: string;
+	url: string;
+	name: string;
+	mimeType: string;
+	sourceFingerprint: string;
+	allowIncompatible?: boolean;
+}
+
+export type AutomationPreflightMediaRelinkRequest = Omit<
+	AutomationRelinkMediaAssetRequest,
+	"allowIncompatible" | "operationId"
+>;
+
+export interface AutomationPreflightMediaRelinkResult {
+	status: "validated" | "rejected" | "conflict";
+	projectId: string;
+	assetId: string;
+	revision: number;
+	compatible?: boolean;
+	differences?: AutomationMediaDifference[];
+	usageCount?: number;
+	preflightFingerprint?: string;
+	reason?: string;
+	expectedRevision?: number;
+	actualRevision?: number;
+}
+
+export interface AutomationRemoveMediaAssetRequest extends AutomationActiveProjectMutationRequest {
+	assetId: string;
+	policy: "unused-only" | "cascade";
+}
+
+export interface AutomationMediaDifference {
+	field: string;
+	before: unknown;
+	after: unknown;
+}
+
+export interface AutomationMediaMutationAppliedResult {
+	status: "applied";
+	operationId: string;
+	revision: number;
+	assetId: string;
+	snapshot: AutomationProjectSnapshot;
+	affectedObjects: AutomationAffectedObject[];
+	/** Relink only: differences between the previous and replacement asset. */
+	differences?: AutomationMediaDifference[];
+	/** Cascade removal only: elements removed with the asset. */
+	removedElementIds?: string[];
+}
+
+export type AutomationMediaMutationResult =
+	| AutomationMediaMutationAppliedResult
+	| (Omit<AutomationMediaMutationAppliedResult, "status"> & {
+			status: "replayed";
+	  })
+	| AutomationLifecycleConflictResult
+	| AutomationLifecycleRejectedResult
+	| AutomationContentIdentityBlockedResult;
+
+export interface AutomationListMediaUsagesRequest {
+	projectId?: string;
+	assetId?: string;
+}
+
+export interface AutomationMediaUsage {
+	assetId: string;
+	sceneId: string;
+	trackId: string;
+	elementId: string;
+	kind: "source" | "matte" | "audio-replacement";
+	/** Set when the element lives inside a compound element. */
+	compoundElementId?: string;
+}
+
+export interface AutomationListMediaUsagesResult {
+	projectId: string;
+	revision: number;
+	usages: AutomationMediaUsage[];
+	providerReferences: Array<{
+		assetId: string;
+		provider: string;
+		providerVersion: string;
+		sourceUrl: string;
+		contentHash: string;
+	}>;
+	/** Delivery packages are server-side artifacts; none exist in editor state. */
+	packageReferences: Array<{ assetId: string; packageId: string }>;
+	unusedAssetIds: string[];
 }

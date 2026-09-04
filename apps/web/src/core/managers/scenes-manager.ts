@@ -13,9 +13,12 @@ import {
 	isBookmarkAtTime,
 } from "@/timeline/bookmarks/index";
 import {
+	CloneSceneCommand,
 	CreateSceneCommand,
 	DeleteSceneCommand,
 	MoveBookmarkCommand,
+	ReorderScenesCommand,
+	SetMainSceneCommand,
 	RemoveBookmarkCommand,
 	RenameSceneCommand,
 	ToggleBookmarkCommand,
@@ -82,6 +85,35 @@ export class ScenesManager {
 			newName: name,
 		});
 		this.editor.command.execute({ command });
+	}
+
+	setMainScene({ sceneId }: { sceneId: string }): void {
+		if (!this.editor.project.getActive()) throw new Error("No active project");
+		this.editor.command.execute({
+			command: new SetMainSceneCommand({ sceneId }),
+		});
+	}
+
+	reorderScenes({ sceneIds }: { sceneIds: string[] }): void {
+		if (!this.editor.project.getActive()) throw new Error("No active project");
+		this.editor.command.execute({
+			command: new ReorderScenesCommand({ sceneIds }),
+		});
+	}
+
+	cloneScene({
+		sceneId,
+		newSceneId,
+		name,
+	}: {
+		sceneId: string;
+		newSceneId?: string;
+		name?: string;
+	}): string {
+		if (!this.editor.project.getActive()) throw new Error("No active project");
+		const command = new CloneSceneCommand({ sceneId, newSceneId, name });
+		this.editor.command.execute({ command });
+		return command.getSceneId();
 	}
 
 	async switchToScene({ sceneId }: { sceneId: string }): Promise<void> {
@@ -270,9 +302,13 @@ export class ScenesManager {
 
 		const activeProject = this.editor.project.getActive();
 		if (activeProject) {
+			// The active scene is part of the persisted project, so a command
+			// that switches scenes (switch, delete fallback, undo) must carry it
+			// into the project state or the next save writes the stale scene.
 			const updatedProject = {
 				...activeProject,
 				scenes,
+				currentSceneId: this.active?.id ?? activeProject.currentSceneId,
 				metadata: {
 					...activeProject.metadata,
 					updatedAt: new Date(),

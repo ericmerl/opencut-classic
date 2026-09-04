@@ -5,13 +5,24 @@ import {
 	AddTrackCommand,
 	DeleteElementsCommand,
 	DuplicateElementsCommand,
+	DuplicateTrackCommand,
 	InsertElementCommand,
 	MoveElementCommand,
+	RemoveTrackCommand,
+	RenameTrackCommand,
+	ReorderTracksCommand,
+	SetMainTrackCommand,
 	SplitElementsCommand,
 	ToggleTrackMuteCommand,
 	ToggleTrackVisibilityCommand,
 	UpdateElementsCommand,
 } from "@/commands/timeline";
+import {
+	AddBookmarkCommand,
+	MoveBookmarkByIdCommand,
+	RemoveBookmarkByIdCommand,
+	UpdateBookmarkByIdCommand,
+} from "@/commands/scene";
 import type { EditorCore } from "@/core";
 import { processMediaAssets } from "@/media/processing";
 import {
@@ -27,6 +38,7 @@ import {
 	writeElementParamValue,
 } from "@/params/registry";
 import {
+	calculateTotalDuration,
 	getTrackTransitionStates,
 	isRetimableElement,
 	type SceneTracks,
@@ -74,6 +86,10 @@ import {
 	resolveElementAutoTrackId,
 } from "./resolved-object-ids";
 import { generateUUID } from "@/utils/id";
+import {
+	LifecycleOperations,
+	readVerifiedProjectPersistence,
+} from "./lifecycle-operations";
 import { buildDurationClampBoundaryIds } from "./duration-clamp-boundary-ids";
 import { prepareCleanAudioAttachment } from "./attach-clean-audio";
 import { prepareMatteAttachment } from "./attach-matte";
@@ -163,6 +179,33 @@ import type {
 	AutomationCompareProjectStatesResult,
 	AutomationImportAppliedResult,
 	AutomationImportRequest,
+	AutomationRenameProjectRequest,
+	AutomationRenameProjectResult,
+	AutomationDuplicateProjectRequest,
+	AutomationDuplicateProjectResult,
+	AutomationDeleteProjectRequest,
+	AutomationDeleteProjectResult,
+	AutomationListScenesRequest,
+	AutomationListScenesResult,
+	AutomationCreateSceneRequest,
+	AutomationCloneSceneRequest,
+	AutomationSwitchSceneRequest,
+	AutomationRenameSceneRequest,
+	AutomationDeleteSceneRequest,
+	AutomationSetMainSceneRequest,
+	AutomationReorderScenesRequest,
+	AutomationSceneMutationResult,
+	AutomationListMediaUsagesRequest,
+	AutomationListMediaUsagesResult,
+	AutomationImportMediaAssetRequest,
+	AutomationRenameMediaAssetRequest,
+	AutomationPreflightMediaRelinkRequest,
+	AutomationPreflightMediaRelinkResult,
+	AutomationPreflightLifecycleMutationRequest,
+	AutomationPreflightLifecycleMutationResult,
+	AutomationRelinkMediaAssetRequest,
+	AutomationRemoveMediaAssetRequest,
+	AutomationMediaMutationResult,
 	AutomationImportResult,
 	AutomationImportSubtitlesAppliedResult,
 	AutomationImportSubtitlesRequest,
@@ -840,6 +883,133 @@ export class EditorAutomation {
 		return this.enqueue(() => this.undoNow(request));
 	}
 
+	renameProject(
+		request: AutomationRenameProjectRequest,
+	): Promise<AutomationRenameProjectResult> {
+		return this.enqueue(() => this.lifecycle.renameProject(request));
+	}
+
+	duplicateProject(
+		request: AutomationDuplicateProjectRequest,
+	): Promise<AutomationDuplicateProjectResult> {
+		return this.enqueue(() => this.lifecycle.duplicateProject(request));
+	}
+
+	deleteProject(
+		request: AutomationDeleteProjectRequest,
+	): Promise<AutomationDeleteProjectResult> {
+		return this.enqueue(() => this.lifecycle.deleteProject(request));
+	}
+
+	listScenes(
+		request: AutomationListScenesRequest,
+	): Promise<AutomationListScenesResult> {
+		return this.enqueue(() => this.lifecycle.listScenes(request));
+	}
+
+	createScene(
+		request: AutomationCreateSceneRequest,
+	): Promise<AutomationSceneMutationResult> {
+		return this.enqueue(() => this.lifecycle.createScene(request));
+	}
+
+	cloneScene(
+		request: AutomationCloneSceneRequest,
+	): Promise<AutomationSceneMutationResult> {
+		return this.enqueue(() => this.lifecycle.cloneScene(request));
+	}
+
+	switchScene(
+		request: AutomationSwitchSceneRequest,
+	): Promise<AutomationSceneMutationResult> {
+		return this.enqueue(() => this.lifecycle.switchScene(request));
+	}
+
+	renameScene(
+		request: AutomationRenameSceneRequest,
+	): Promise<AutomationSceneMutationResult> {
+		return this.enqueue(() => this.lifecycle.renameScene(request));
+	}
+
+	deleteScene(
+		request: AutomationDeleteSceneRequest,
+	): Promise<AutomationSceneMutationResult> {
+		return this.enqueue(() => this.lifecycle.deleteScene(request));
+	}
+
+	setMainScene(
+		request: AutomationSetMainSceneRequest,
+	): Promise<AutomationSceneMutationResult> {
+		return this.enqueue(() => this.lifecycle.setMainScene(request));
+	}
+
+	reorderScenes(
+		request: AutomationReorderScenesRequest,
+	): Promise<AutomationSceneMutationResult> {
+		return this.enqueue(() => this.lifecycle.reorderScenes(request));
+	}
+
+	listMediaUsages(
+		request: AutomationListMediaUsagesRequest,
+	): Promise<AutomationListMediaUsagesResult> {
+		return this.enqueue(() => this.lifecycle.listMediaUsages(request));
+	}
+
+	preflightLifecycleMutation(
+		request: AutomationPreflightLifecycleMutationRequest,
+	): Promise<AutomationPreflightLifecycleMutationResult> {
+		return this.enqueue(() => this.lifecycle.preflightMutation(request));
+	}
+
+	preflightMediaRelink(
+		request: AutomationPreflightMediaRelinkRequest,
+	): Promise<AutomationPreflightMediaRelinkResult> {
+		return this.enqueue(() => this.lifecycle.preflightMediaRelink(request));
+	}
+
+	importMediaAsset(
+		request: AutomationImportMediaAssetRequest,
+	): Promise<AutomationMediaMutationResult> {
+		return this.enqueue(() => this.lifecycle.importMediaAsset(request));
+	}
+
+	renameMediaAsset(
+		request: AutomationRenameMediaAssetRequest,
+	): Promise<AutomationMediaMutationResult> {
+		return this.enqueue(() => this.lifecycle.renameMediaAsset(request));
+	}
+
+	relinkMediaAsset(
+		request: AutomationRelinkMediaAssetRequest,
+	): Promise<AutomationMediaMutationResult> {
+		return this.enqueue(() => this.lifecycle.relinkMediaAsset(request));
+	}
+
+	removeMediaAsset(
+		request: AutomationRemoveMediaAssetRequest,
+	): Promise<AutomationMediaMutationResult> {
+		return this.enqueue(() => this.lifecycle.removeMediaAsset(request));
+	}
+
+	private lifecycleOperations: LifecycleOperations | null = null;
+
+	private get lifecycle(): LifecycleOperations {
+		this.lifecycleOperations ??= new LifecycleOperations({
+			editor: this.editor,
+			getProjectId: () => this.getProjectId(),
+			getRevision: () => this.revision,
+			contentIdentity: () => this.contentIdentity,
+			buildSnapshot: () => this.buildSnapshot(),
+			recordCommittedState: () => this.recordCommittedState(),
+			refreshContentIdentity: () => this.refreshContentIdentity(),
+			reconcileExternalChanges: () => this.reconcileExternalChanges(),
+			blockedProductionRequest: (request) =>
+				this.blockedProductionRequest(request),
+			resetProjectSession: () => this.resetProjectSession(),
+		});
+		return this.lifecycleOperations;
+	}
+
 	private enqueue<T>(work: () => T | Promise<T>): Promise<T> {
 		const result = this.writer.then(work);
 		this.writer = result.then(
@@ -853,21 +1023,23 @@ export class EditorAutomation {
 		await this.editor.project.loadAllProjects();
 		const activeProjectId =
 			this.editor.project.getActiveOrNull()?.metadata.id ?? null;
-		const projects = this.editor.project
-			.getSavedProjects()
-			.map((project) => ({
-				projectId: project.id,
-				name: project.name,
-				duration: project.duration,
-				createdAt: project.createdAt.toISOString(),
-				updatedAt: project.updatedAt.toISOString(),
-				isActive: project.id === activeProjectId,
-			}))
-			.sort(
-				(left, right) =>
-					right.updatedAt.localeCompare(left.updatedAt) ||
-					left.projectId.localeCompare(right.projectId),
-			);
+		const projects = (
+			await Promise.all(
+				this.editor.project.getSavedProjects().map(async (project) => ({
+					projectId: project.id,
+					name: project.name,
+					duration: project.duration,
+					createdAt: project.createdAt.toISOString(),
+					updatedAt: project.updatedAt.toISOString(),
+					isActive: project.id === activeProjectId,
+					persistence: await readVerifiedProjectPersistence(project.id),
+				})),
+			)
+		).sort(
+			(left, right) =>
+				right.updatedAt.localeCompare(left.updatedAt) ||
+				left.projectId.localeCompare(right.projectId),
+		);
 		return { activeProjectId, projects };
 	}
 
@@ -2503,6 +2675,136 @@ export class EditorAutomation {
 				placement: { mode: "auto" },
 			});
 		}
+		if (operation.kind === "rename_track") {
+			return new RenameTrackCommand({
+				trackId: operation.trackId,
+				name: operation.name,
+			});
+		}
+		if (operation.kind === "reorder_tracks") {
+			return new ReorderTracksCommand({
+				overlayTrackIds: operation.overlayTrackIds,
+				audioTrackIds: operation.audioTrackIds,
+			});
+		}
+		if (operation.kind === "remove_track") {
+			const occupied = operation.occupied ?? "reject";
+			if (occupied === "move") {
+				return new RemoveTrackCommand(operation.trackId, {
+					occupied: "move",
+					targetTrackId: operation.targetTrackId!,
+				});
+			}
+			if (occupied === "cascade") {
+				return new RemoveTrackCommand(operation.trackId, {
+					occupied: "cascade",
+					elementIds: operation.resolvedCascadeElementIds!,
+				});
+			}
+			return new RemoveTrackCommand(operation.trackId, { occupied });
+		}
+		if (operation.kind === "duplicate_track") {
+			return new DuplicateTrackCommand({
+				trackId: operation.trackId,
+				newTrackId: operation.newTrackId,
+				name: operation.name,
+				resolvedAllocations: operation.resolvedAllocations,
+			});
+		}
+		if (operation.kind === "set_main_track") {
+			return new SetMainTrackCommand({ trackId: operation.trackId });
+		}
+		if (operation.kind === "add_bookmark") {
+			return new AddBookmarkCommand({
+				bookmarkId: operation.bookmarkId,
+				time: operation.time,
+				duration: operation.duration,
+				note: operation.note,
+				color: operation.color,
+			});
+		}
+		if (operation.kind === "update_bookmark") {
+			const clear = new Set(operation.clear ?? []);
+			return new UpdateBookmarkByIdCommand({
+				bookmarkId: operation.bookmarkId,
+				updates: {
+					...(operation.note !== undefined
+						? { note: operation.note }
+						: clear.has("note")
+							? { note: null }
+							: {}),
+					...(operation.color !== undefined
+						? { color: operation.color }
+						: clear.has("color")
+							? { color: null }
+							: {}),
+					...(operation.duration !== undefined
+						? { duration: operation.duration }
+						: clear.has("duration")
+							? { duration: null }
+							: {}),
+				},
+			});
+		}
+		if (operation.kind === "move_bookmark") {
+			return new MoveBookmarkByIdCommand({
+				bookmarkId: operation.bookmarkId,
+				time: operation.time,
+			});
+		}
+		if (operation.kind === "remove_bookmark") {
+			return new RemoveBookmarkByIdCommand({
+				bookmarkId: operation.bookmarkId,
+			});
+		}
+		if (operation.kind === "instantiate_asset") {
+			assertMediaTime({
+				value: operation.startTime,
+				name: "startTime",
+				allowZero: true,
+			});
+			const asset = this.editor.media
+				.getAssets()
+				.find((candidate) => candidate.id === operation.assetId);
+			if (!asset)
+				throw new Error(`media asset not found: ${operation.assetId}`);
+			if (asset.role !== undefined && asset.role !== "timeline") {
+				throw new Error("only timeline media assets can be instantiated");
+			}
+			let duration = operation.duration;
+			if (duration === undefined) {
+				if (asset.duration != null) {
+					duration = mediaTimeFromSeconds({ seconds: asset.duration });
+				} else if (asset.type === "image") {
+					duration = DEFAULT_NEW_ELEMENT_DURATION;
+				} else {
+					throw new Error("asset has no duration; pass duration explicitly");
+				}
+			}
+			assertMediaTime({ value: duration, name: "duration", allowZero: false });
+			return new InsertElementCommand({
+				elementId: operation.elementId,
+				newTrackId: resolveElementAutoTrackId({
+					elementId: operation.elementId,
+					autoTrackId: operation.autoTrackId,
+					resolvedAllocations: operation.resolvedAllocations,
+				}),
+				element: buildElementFromMedia({
+					mediaId: asset.id,
+					mediaType: asset.type,
+					name: operation.name ?? asset.name,
+					duration,
+					startTime: operation.startTime,
+				}),
+				adoptMediaSettings: false,
+				placement: operation.trackId
+					? { mode: "explicit", trackId: operation.trackId }
+					: {
+							mode: "auto",
+							trackType: asset.type === "audio" ? "audio" : "video",
+						},
+			});
+		}
 		if (operation.kind === "add_track") {
 			return new AddTrackCommand({
 				type: operation.trackType,
@@ -3120,6 +3422,33 @@ export class EditorAutomation {
 					}),
 				),
 			),
+			scenes: project.scenes.map((candidate, order) => ({
+				sceneId: candidate.id,
+				name: candidate.name,
+				isMain: candidate.isMain,
+				isActive: candidate.id === scene.id,
+				order,
+				duration: calculateTotalDuration({ tracks: candidate.tracks }),
+				trackCount:
+					1 + candidate.tracks.overlay.length + candidate.tracks.audio.length,
+				elementCount: [
+					candidate.tracks.main,
+					...candidate.tracks.overlay,
+					...candidate.tracks.audio,
+				].reduce((total, track) => total + track.elements.length, 0),
+				bookmarkCount: candidate.bookmarks.length,
+				createdAt: new Date(candidate.createdAt).toISOString(),
+				updatedAt: new Date(candidate.updatedAt).toISOString(),
+			})),
+			bookmarks: scene.bookmarks.map((bookmark) => ({
+				bookmarkId: bookmark.id,
+				time: bookmark.time,
+				...(bookmark.duration === undefined
+					? {}
+					: { duration: bookmark.duration }),
+				...(bookmark.note === undefined ? {} : { note: bookmark.note }),
+				...(bookmark.color === undefined ? {} : { color: bookmark.color }),
+			})),
 		};
 	}
 
@@ -3287,6 +3616,7 @@ export class EditorAutomation {
 
 	private resetProjectSession(): void {
 		this.revision = 0;
+		this.lifecycleOperations?.clearSession();
 		this.appliedOperations.clear();
 		this.importedOperations.clear();
 		this.importedSubtitleOperations.clear();
@@ -3469,11 +3799,13 @@ function operationReceiptAfterState(value: unknown): {
 				? snapshot.projectId
 				: null;
 	const sceneId =
-		typeof value.sceneId === "string"
-			? value.sceneId
+		typeof value.activeSceneId === "string"
+			? value.activeSceneId
+			: typeof value.sceneId === "string"
+				? value.sceneId
 			: snapshot && typeof snapshot.sceneId === "string"
-				? snapshot.sceneId
-				: null;
+					? snapshot.sceneId
+					: null;
 	const revisionAfter =
 		typeof value.revision === "number" ? value.revision : null;
 	const contentHashAfter =

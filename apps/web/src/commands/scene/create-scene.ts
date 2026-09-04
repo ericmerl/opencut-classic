@@ -10,17 +10,25 @@ export class CreateSceneCommand extends Command {
 	constructor({
 		name,
 		isMain = false,
+		sceneId,
+		mainTrackId,
 	}: {
 		name: string;
 		isMain?: boolean;
+		sceneId?: string;
+		mainTrackId?: string;
 	}) {
 		super();
 		this.name = name;
 		this.isMain = isMain;
+		this.sceneId = sceneId;
+		this.mainTrackId = mainTrackId;
 	}
 
 	private name: string;
 	private isMain: boolean;
+	private sceneId?: string;
+	private mainTrackId?: string;
 
 	execute(): CommandResult | undefined {
 		const editor = EditorCore.getInstance();
@@ -29,6 +37,8 @@ export class CreateSceneCommand extends Command {
 		this.createdScene = buildDefaultScene({
 			name: this.name,
 			isMain: this.isMain,
+			sceneId: this.sceneId,
+			mainTrackId: this.mainTrackId,
 		});
 
 		const updatedScenes = [...this.savedScenes, this.createdScene];

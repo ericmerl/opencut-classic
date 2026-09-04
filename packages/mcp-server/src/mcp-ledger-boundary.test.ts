@@ -361,6 +361,240 @@ describe("MCP ledger handler recovery", () => {
 		expect(projectReads).toBe(1);
 	});
 
+	test("verifies a non-activating scene mutation against the active scene", async () => {
+		const input = {
+			bridgeProtocolVersion: 2,
+			projectId: "project-1",
+			operationId: "create-scene-without-activation",
+			expectedRevision: 7,
+			expectedProjectContentHash: "a".repeat(64),
+		};
+		let projectReads = 0;
+		const bridge = {
+			request: async (method: string, params: Record<string, unknown>) => {
+				if (method === "read_project") {
+					projectReads += 1;
+					return projectSnapshot("b");
+				}
+				if (method === "save_project") {
+					expect(params.sceneId).toBe("scene-1");
+					return saveReceipt(input.operationId, "b");
+				}
+				throw new Error(`unexpected bridge request: ${method}`);
+			},
+		} as unknown as EditorBridge;
+		const ledger = new OperationLedger(directory);
+		const result = await new McpLedgerBoundary(ledger, bridge).execute(
+			"opencut_create_scene",
+			input,
+			async () => ({
+				status: "applied",
+				operationId: input.operationId,
+				projectId: "project-1",
+				sceneId: "scene-created",
+				activeSceneId: "scene-1",
+				revision: 8,
+				snapshot: projectSnapshot("b"),
+				affectedObjects: [
+					{ objectType: "scene", objectId: "scene-created", action: "created" },
+				],
+			}),
+		);
+		ledger.close();
+
+		expect(result).toMatchObject({
+			status: "applied",
+			durableOperationStatus: "completed",
+			operationRecord: {
+				sceneId: "scene-1",
+				contentHashAfter: "b".repeat(64),
+			},
+		});
+		expect(projectReads).toBe(1);
+	});
+
+	test("ledgers an activating clone against the clone as the active scene", async () => {
+		const input = {
+			bridgeProtocolVersion: 2,
+			projectId: "project-1",
+			operationId: "clone-scene-with-activation",
+			expectedRevision: 7,
+			expectedProjectContentHash: "a".repeat(64),
+			sceneId: "scene-1",
+			activate: true,
+		};
+		const bridge = {
+			request: async (method: string, params: Record<string, unknown>) => {
+				if (method === "read_project") {
+					return { ...projectSnapshot("b"), sceneId: "scene-clone" };
+				}
+				if (method === "save_project") {
+					expect(params.sceneId).toBe("scene-clone");
+					return { ...saveReceipt(input.operationId, "b"), sceneId: "scene-clone" };
+				}
+				throw new Error(`unexpected bridge request: ${method}`);
+			},
+		} as unknown as EditorBridge;
+		const ledger = new OperationLedger(directory);
+		const result = await new McpLedgerBoundary(ledger, bridge).execute(
+			"opencut_clone_scene",
+			input,
+			async () => ({
+				status: "applied",
+				operationId: input.operationId,
+				projectId: "project-1",
+				sceneId: "scene-clone",
+				activeSceneId: "scene-clone",
+				revision: 8,
+				snapshot: { ...projectSnapshot("b"), sceneId: "scene-clone" },
+				affectedObjects: [
+					{ objectType: "scene", objectId: "scene-clone", action: "created" },
+				],
+			}),
+		);
+		ledger.close();
+
+		expect(result).toMatchObject({
+			status: "applied",
+			durableOperationStatus: "completed",
+			operationRecord: {
+				sceneId: "scene-clone",
+				contentHashAfter: "b".repeat(64),
+			},
+		});
+	});
+
+	test("ledgers a mutation of an inactive scene against the active scene", async () => {
+		const input = {
+			bridgeProtocolVersion: 2,
+			projectId: "project-1",
+			operationId: "rename-inactive-scene",
+			expectedRevision: 7,
+			expectedProjectContentHash: "a".repeat(64),
+			sceneId: "scene-2",
+			name: "Renamed",
+		};
+		const bridge = {
+			request: async (method: string, params: Record<string, unknown>) => {
+				if (method === "read_project") return projectSnapshot("b");
+				if (method === "save_project") {
+					expect(params.sceneId).toBe("scene-1");
+					return saveReceipt(input.operationId, "b");
+				}
+				throw new Error(`unexpected bridge request: ${method}`);
+			},
+		} as unknown as EditorBridge;
+		const ledger = new OperationLedger(directory);
+		const result = await new McpLedgerBoundary(ledger, bridge).execute(
+			"opencut_rename_scene",
+			input,
+			async () => ({
+				status: "applied",
+				operationId: input.operationId,
+				projectId: "project-1",
+				sceneId: "scene-2",
+				activeSceneId: "scene-1",
+				revision: 8,
+				snapshot: projectSnapshot("b"),
+				affectedObjects: [
+					{ objectType: "scene", objectId: "scene-2", action: "updated" },
+				],
+			}),
+		);
+		ledger.close();
+
+		expect(result).toMatchObject({
+			status: "applied",
+			durableOperationStatus: "completed",
+			operationRecord: {
+				sceneId: "scene-1",
+				contentHashAfter: "b".repeat(64),
+			},
+		});
+	});
+
+	test("ledgers a bootstrap worker start without a project identity", async () => {
+		const bridge = buildBridge();
+		const ledger = new OperationLedger(directory);
+		const result = await new McpLedgerBoundary(ledger, bridge).execute(
+			"opencut_start_editor_worker",
+			{ operationId: "start-worker-bootstrap" },
+			async () => ({
+				enabled: true,
+				running: true,
+				connected: true,
+				baseUrl: "http://127.0.0.1:3000",
+				profileDirectory: directory,
+				browserPath: null,
+				projectId: null,
+				lastError: null,
+				rendererClass: "software",
+				pinnedCompositorBackend: "webgpu",
+			}),
+		);
+		ledger.close();
+
+		expect(result).toMatchObject({
+			connected: true,
+			durableOperationStatus: "completed",
+			operationDisposition: "applied-verified",
+			operationRecord: { projectId: null, affectedObjects: [] },
+		});
+	});
+
+	test("binds project lifecycle records to the project they act on", async () => {
+		const bridge = buildBridge();
+		const ledger = new OperationLedger(directory);
+		const boundary = new McpLedgerBoundary(ledger, bridge);
+		const renamed = await boundary.execute(
+			"opencut_rename_project",
+			{
+				bridgeProtocolVersion: 2,
+				operationId: "rename-project-1",
+				projectId: "project-1",
+				name: "Renamed",
+			},
+			async () => ({
+				status: "renamed",
+				operationId: "rename-project-1",
+				projectId: "project-1",
+				renamedProjectId: "project-1",
+				name: "Renamed",
+			}),
+		);
+		const deleted = await boundary.execute(
+			"opencut_delete_project",
+			{
+				bridgeProtocolVersion: 2,
+				operationId: "delete-project-1",
+				projectId: "project-1",
+				fallbackProjectId: "project-2",
+			},
+			async () => ({
+				status: "deleted",
+				operationId: "delete-project-1",
+				projectId: "project-2",
+				activeProjectId: "project-2",
+				deletedProjectId: "project-1",
+			}),
+		);
+		const history = await ledger.list({ limit: 10, projectId: "project-1" });
+		ledger.close();
+
+		expect(renamed).toMatchObject({
+			durableOperationStatus: "completed",
+			operationRecord: { projectId: "project-1" },
+		});
+		expect(deleted).toMatchObject({
+			durableOperationStatus: "completed",
+			operationRecord: { projectId: "project-1" },
+		});
+		expect(history.map((entry) => entry.record.operationId).sort()).toEqual([
+			"delete-project-1",
+			"rename-project-1",
+		]);
+	});
+
 	test("terminalizes a durable export receipt without rerendering", async () => {
 		const bridge = buildBridge();
 		const input = {
