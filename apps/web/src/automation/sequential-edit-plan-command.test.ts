@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { Command } from "@/commands/base-command";
+import type { EditorCore } from "@/core";
 import {
 	EditPlanCommandError,
+	SceneScopedCommand,
 	SequentialEditPlanCommand,
 } from "./sequential-edit-plan-command";
 
@@ -12,6 +14,51 @@ type TestOperation =
 	| { kind: "noop" };
 
 describe("SequentialEditPlanCommand", () => {
+	test("preserves the active scene and UI selection for a non-active scene command", () => {
+		let activeSceneId = "scene-active";
+		const scenes = [{ id: "scene-active" }, { id: "scene-target" }];
+		const selection = {
+			selectedElements: [{ trackId: "main", elementId: "active" }],
+		};
+		const restoreSnapshot = mock(() => undefined);
+		const editor = Object.assign(Object.create(null), {
+			scenes: {
+				getActiveScene: () =>
+					scenes.find((scene) => scene.id === activeSceneId)!,
+				getScenes: () => scenes,
+				setScenes: ({ activeSceneId: next }: { activeSceneId: string }) => {
+					activeSceneId = next;
+				},
+			},
+			selection: {
+				getSnapshot: () => selection,
+				restoreSnapshot,
+			},
+		}) as EditorCore;
+		class SelectingCommand extends Command {
+			execute() {
+				return {
+					selection: {
+						selectedElements: [
+							{ trackId: "target-main", elementId: "created" },
+						],
+					},
+				};
+			}
+			undo(): void {}
+		}
+
+		const result = new SceneScopedCommand({
+			editor,
+			sceneId: "scene-target",
+			command: new SelectingCommand(),
+		}).execute();
+
+		expect(result).toBeUndefined();
+		expect(activeSceneId).toBe("scene-active");
+		expect(restoreSnapshot).toHaveBeenCalledWith({ snapshot: selection });
+	});
+
 	test("builds later operations against state produced by earlier operations", () => {
 		const state = new Map<string, string>();
 		const builtAgainst: string[][] = [];

@@ -198,6 +198,40 @@ export class McpLedgerBoundary {
 				const value = await effect(
 					this.withBrowserContext(context, operationId, toolName),
 				);
+				if (
+					toolName === "opencut_apply_edit_plan" &&
+					stringField(input, "sceneId")
+				) {
+					const contract = readBrowserReceiptContract(
+						context.record().checkpoints,
+						operationId,
+					);
+					if (contract) {
+						const receipt = await this.bridge.request("get_operation_receipt", {
+							...protocolContext(input),
+							operationId,
+							binding: contract,
+						});
+						if (
+							isMatchingBrowserReceipt(receipt, contract) &&
+							isRecord(receipt)
+						) {
+							const outcome = await this.classifyRecoveredBrowserReceipt(
+								toolName,
+								definition.requiresSaveVerification,
+								input,
+								receipt,
+								context.record(),
+							);
+							await this.options.afterEffect?.({
+								toolName,
+								operationId,
+								value,
+							});
+							return outcome;
+						}
+					}
+				}
 				const outcome = await this.classify(
 					toolName,
 					definition.requiresSaveVerification,
@@ -561,12 +595,16 @@ export class McpLedgerBoundary {
 			projectContentProjectionVersion: contentHashProjectionVersion,
 		});
 		if (
-			!matchesLiveProjectState(readback, {
-				projectId,
-				sceneId,
-				contentHash,
-				contentHashProjectionVersion,
-			})
+			!matchesLiveProjectState(
+				readback,
+				{
+					projectId,
+					sceneId,
+					contentHash,
+					contentHashProjectionVersion,
+				},
+				toolName === "opencut_apply_edit_plan",
+			)
 		) {
 			return {
 				disposition: "unknown",
@@ -1526,11 +1564,20 @@ function matchesLiveProjectState(
 		contentHash: string;
 		contentHashProjectionVersion: 1 | 2 | 3;
 	},
+	allowExistingScene = false,
 ): boolean {
 	if (!isRecord(value)) return false;
+	const scenes = Array.isArray(value.scenes) ? value.scenes : [];
+	const sceneMatches =
+		stringField(value, "sceneId") === expected.sceneId ||
+		(allowExistingScene &&
+			scenes.some(
+				(scene) =>
+					isRecord(scene) && stringField(scene, "sceneId") === expected.sceneId,
+			));
 	return (
 		stringField(value, "projectId") === expected.projectId &&
-		stringField(value, "sceneId") === expected.sceneId &&
+		sceneMatches &&
 		contentHashOf(value) === expected.contentHash &&
 		contentHashProjectionVersionOf(value) ===
 			expected.contentHashProjectionVersion

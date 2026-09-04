@@ -1079,6 +1079,22 @@ describe("OpenCut timeline-query MCP contract", () => {
 });
 
 describe("OpenCut edit-plan MCP contract", () => {
+	test("preserves an explicit target scene for non-active apply", () => {
+		const result = editPlanInputSchema.safeParse({
+			projectId: "project-1",
+			sceneId: "scene-non-active",
+			operationId: "non-active-apply-1",
+			expectedRevision: 2,
+			description: "Adjust the non-active scene mix",
+			operations: [{ kind: "adjust_mix_gain", gainDb: 1 }],
+		});
+
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.sceneId).toBe("scene-non-active");
+		}
+	});
+
 	test("accepts typed chroma, luma, and track-matte compositing controls", () => {
 		const result = editPlanInputSchema.safeParse({
 			projectId: "project-1",

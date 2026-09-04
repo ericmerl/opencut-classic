@@ -1075,7 +1075,7 @@ function createServer(): McpServer {
 		"opencut_preflight_edit_plan",
 		{
 			description:
-				"Validate and deterministically expand a complete edit plan against a verified saved project without changing editor, playback, history, or persistence state.",
+				"Validate and deterministically expand a complete edit plan against an explicit active or non-active saved scene without changing editor, playback, selection, history, or persistence state.",
 			inputSchema: preflightEditPlanInputSchema,
 		},
 		async (input) => toolResult(await editPlanPreflights.preflight(input)),
@@ -1489,7 +1489,7 @@ function createServer(): McpServer {
 		"opencut_apply_edit_plan",
 		{
 			description:
-				"Apply a previously validated edit plan atomically. Bridge protocol v2 requires the immutable receipt returned by opencut_preflight_edit_plan; receipt-less v2 requests are rejected without mutation.",
+				"Apply a previously validated edit plan atomically to its explicit scene, including a non-active scene without changing the active UI scene or selection. Bridge protocol v2 requires the immutable receipt returned by opencut_preflight_edit_plan; receipt-less v2 requests are rejected without mutation.",
 			inputSchema: withProjectMutationSafety(editPlanInputSchema),
 		},
 		async (plan) => {
@@ -1522,6 +1522,7 @@ function createServer(): McpServer {
 							}
 							const verified = await editPlanPreflights.verifiedApplication({
 								projectId: plan.projectId,
+								sceneId: plan.sceneId,
 								expectedRevision: plan.expectedRevision,
 								expectedProjectContentHash: plan.expectedProjectContentHash,
 								expectedConnectionIdentity: plan.expectedConnectionIdentity,

@@ -568,12 +568,15 @@ integrationTest(
 		if (!browserPath) {
 			throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
 		}
+		const bridgePort = await availablePort();
+		const profileDirectory = join(directory, "lifecycle-profile");
+		const receiptDirectory = join(directory, "lifecycle-receipts");
 		const harness = await startMcp({
 			baseUrl,
 			browserPath,
-			bridgePort: await availablePort(),
-			profileDirectory: join(directory, "lifecycle-profile"),
-			receiptDirectory: join(directory, "lifecycle-receipts"),
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
 		});
 		await harness.callTool("opencut_start_editor_worker", {});
 		const status = await harness.callTool("opencut_connection_status", {});
@@ -696,6 +699,220 @@ integrationTest(
 			activeSceneId: clonedSceneId,
 		});
 
+		// Edit-plan preflight and apply must use the explicit target scene while
+		// preserving the clone as the active UI scene. Exercise every bookmark
+		// mutation in one atomic plan, then observe the target through the public
+		// scene-list query rather than through a browser-only shortcut.
+		const bookmarkRevision = requireNumber(renamed.revision, "revision");
+		const bookmarkHash = requireProjectContentHash(
+			requireRecord(renamed.snapshot, "snapshot"),
+		);
+		const bookmarkSave = await harness.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId: clonedSceneId,
+			operationId: "mcp-non-active-bookmark-save",
+			expectedRevision: bookmarkRevision,
+			expectedContentHash: bookmarkHash,
+		});
+		const bookmarkOperations = [
+			{
+				kind: "add_bookmark",
+				bookmarkId: "mcp-non-active-bookmark",
+				time: 0,
+				note: "draft",
+			},
+			{
+				kind: "update_bookmark",
+				bookmarkId: "mcp-non-active-bookmark",
+				color: "#22c55e",
+				note: "approved",
+			},
+			{
+				kind: "move_bookmark",
+				bookmarkId: "mcp-non-active-bookmark",
+				time: 8_000,
+			},
+			{
+				kind: "remove_bookmark",
+				bookmarkId: "mcp-non-active-bookmark",
+			},
+			{
+				kind: "add_bookmark",
+				bookmarkId: "mcp-non-active-bookmark-final",
+				time: 12_000,
+				color: "#22c55e",
+				note: "kept",
+			},
+		];
+		const bookmarkPreflightRequest = {
+			contractVersion: 2,
+			...affinity(identity),
+			preflightId: "mcp-non-active-bookmark-preflight",
+			projectId,
+			sceneId: requireString(created.sceneId, "created sceneId"),
+			expectedRevision: bookmarkRevision,
+			expectedProjectContentHash: bookmarkHash,
+			expectedWriteVersion: requireNumber(
+				bookmarkSave.writeVersion,
+				"bookmark writeVersion",
+			),
+			saveReceiptOperationId: "mcp-non-active-bookmark-save",
+			expectedSaveReceiptId: requireString(
+				bookmarkSave.receiptId,
+				"bookmark save receiptId",
+			),
+			description: "Exercise bookmark CRUD on a non-active scene",
+			operations: bookmarkOperations,
+			policy: {
+				warningPolicy: "allow",
+				providerExecution: "forbidden",
+				costPolicy: "require-exact",
+			},
+		};
+		const bookmarkPreflight = await harness.callTool(
+			"opencut_preflight_edit_plan",
+			bookmarkPreflightRequest,
+		);
+		expect(bookmarkPreflight).toMatchObject({
+			disposition: "evaluated",
+			result: {
+				status: "validated",
+				sourceObservation: { activeSceneId: clonedSceneId },
+				noMutationProof: {
+					unchanged: true,
+					before: { activeSceneId: clonedSceneId },
+					after: { activeSceneId: clonedSceneId },
+				},
+			},
+		});
+		expect(
+			await harness.callTool(
+				"opencut_preflight_edit_plan",
+				bookmarkPreflightRequest,
+			),
+		).toMatchObject({
+			disposition: "replayed",
+			receiptId: bookmarkPreflight.receiptId,
+			result: { status: "validated" },
+		});
+		const bookmarkEvaluation = requireRecord(
+			requireRecord(bookmarkPreflight.result, "bookmark preflight result")
+				.evaluation,
+			"bookmark evaluation",
+		);
+		const targetSceneId = requireString(created.sceneId, "created sceneId");
+		const bookmarkApplyRequest = {
+			...affinity(identity),
+			projectId,
+			sceneId: targetSceneId,
+			operationId: "mcp-non-active-bookmark-apply",
+			expectedRevision: bookmarkRevision,
+			expectedProjectContentHash: bookmarkHash,
+			description: "Exercise bookmark CRUD on a non-active scene",
+			operations: bookmarkOperations,
+			preflight: {
+				receiptId: requireString(
+					bookmarkPreflight.receiptId,
+					"bookmark preflight receiptId",
+				),
+				planFingerprint: requireString(
+					bookmarkEvaluation.planFingerprint,
+					"bookmark planFingerprint",
+				),
+				preflightFingerprint: requireString(
+					bookmarkEvaluation.preflightFingerprint,
+					"bookmark preflightFingerprint",
+				),
+				planDiffHash: requireString(
+					bookmarkEvaluation.planDiffHash,
+					"bookmark planDiffHash",
+				),
+			},
+		};
+		const bookmarkApplied = await harness.callTool(
+			"opencut_apply_edit_plan",
+			bookmarkApplyRequest,
+		);
+		expect(bookmarkApplied).toMatchObject({
+			status: "applied",
+			operationId: "mcp-non-active-bookmark-apply",
+			snapshot: {
+				sceneId: targetSceneId,
+				bookmarks: [
+					{
+						bookmarkId: "mcp-non-active-bookmark-final",
+						time: 12_000,
+						color: "#22c55e",
+						note: "kept",
+					},
+				],
+			},
+		});
+		const bookmarkAppliedSnapshot = requireRecord(
+			bookmarkApplied.snapshot,
+			"bookmark applied snapshot",
+		);
+		expect(
+			requireRecords(
+				bookmarkAppliedSnapshot.scenes,
+				"bookmark applied scenes",
+			).find((scene) => scene.sceneId === targetSceneId),
+		).toMatchObject({ isActive: false });
+		expect(
+			requireRecords(
+				bookmarkAppliedSnapshot.scenes,
+				"bookmark applied scenes",
+			).find((scene) => scene.sceneId === clonedSceneId),
+		).toMatchObject({ isActive: true });
+		const bookmarkScenes = await harness.callTool("opencut_list_scenes", {
+			...affinity(identity),
+			projectId,
+		});
+		expect(bookmarkScenes.activeSceneId).toBe(clonedSceneId);
+		expect(
+			requireRecords(bookmarkScenes.scenes, "bookmark scenes").find(
+				(scene) => scene.sceneId === targetSceneId,
+			),
+		).toMatchObject({
+			isActive: false,
+			bookmarks: [
+				{
+					bookmarkId: "mcp-non-active-bookmark-final",
+					time: 12_000,
+					color: "#22c55e",
+					note: "kept",
+				},
+			],
+		});
+		expect(
+			requireRecords(bookmarkScenes.scenes, "bookmark scenes").find(
+				(scene) => scene.sceneId === clonedSceneId,
+			),
+		).toMatchObject({ isActive: true, bookmarks: [] });
+		const bookmarkOperation = requireRecord(
+			requireRecord(
+				(
+					await harness.callTool("opencut_get_operation", {
+						operationId: "mcp-non-active-bookmark-apply",
+					})
+				).operation,
+				"bookmark operation",
+			).record,
+			"bookmark operation record",
+		);
+		expect(bookmarkOperation).toMatchObject({
+			status: "completed",
+			sceneId: targetSceneId,
+		});
+		expect(
+			await harness.callTool("opencut_apply_edit_plan", bookmarkApplyRequest),
+		).toMatchObject({
+			status: "applied",
+			durableOperationStatus: "replayed",
+			operationRecord: { sceneId: targetSceneId },
+		});
+
 		// The main scene cannot be deleted without naming its successor; the
 		// refusal surfaces at preflight rather than as an input schema error.
 		const deleteMainPreflight = await harness.callTool(
@@ -705,9 +922,9 @@ integrationTest(
 				method: "delete_scene",
 				request: {
 					projectId,
-					expectedRevision: requireNumber(renamed.revision, "revision"),
+					expectedRevision: requireNumber(bookmarkApplied.revision, "revision"),
 					expectedProjectContentHash: requireProjectContentHash(
-						requireRecord(renamed.snapshot, "snapshot"),
+						requireRecord(bookmarkApplied.snapshot, "snapshot"),
 					),
 					sceneId: requireString(initial.sceneId, "sceneId"),
 				},
@@ -720,9 +937,9 @@ integrationTest(
 
 		// Media-bin mutations persist asset metadata outside the project write;
 		// each receipt must still verify against the fresh persisted state.
-		let revision = requireNumber(renamed.revision, "revision");
+		let revision = requireNumber(bookmarkApplied.revision, "revision");
 		let contentHash = requireProjectContentHash(
-			requireRecord(renamed.snapshot, "snapshot"),
+			requireRecord(bookmarkApplied.snapshot, "snapshot"),
 		);
 		const mediaMutation = async (
 			tool: string,
@@ -799,8 +1016,58 @@ integrationTest(
 				"mediaAssets",
 			).some((asset) => asset.assetId === assetId),
 		).toBe(false);
+
+		await harness.callTool("opencut_stop_editor_worker", {});
+		await harness.close();
+		const restarted = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await restarted.callTool("opencut_start_editor_worker", { projectId });
+		const restartedStatus = await restarted.callTool(
+			"opencut_connection_status",
+			{},
+		);
+		const restartedIdentity = requireRecord(
+			restartedStatus.connectionIdentity,
+			"restarted connectionIdentity",
+		);
+		const restartedScenes = await restarted.callTool("opencut_list_scenes", {
+			...affinity(restartedIdentity),
+			projectId,
+		});
+		expect(restartedScenes.activeSceneId).toBe(clonedSceneId);
+		expect(
+			requireRecords(restartedScenes.scenes, "restarted scenes").find(
+				(scene) => scene.sceneId === targetSceneId,
+			),
+		).toMatchObject({
+			isActive: false,
+			bookmarks: [
+				expect.objectContaining({
+					bookmarkId: "mcp-non-active-bookmark-final",
+				}),
+			],
+		});
+		expect(
+			await restarted.callTool(
+				"opencut_preflight_edit_plan",
+				bookmarkPreflightRequest,
+			),
+		).toMatchObject({ disposition: "replayed" });
+		expect(
+			await restarted.callTool("opencut_apply_edit_plan", bookmarkApplyRequest),
+		).toMatchObject({
+			status: "applied",
+			durableOperationStatus: "replayed",
+			operationRecord: { sceneId: targetSceneId },
+		});
+		await restarted.callTool("opencut_stop_editor_worker", {});
 	},
-	90_000,
+	180_000,
 );
 
 integrationTest(
@@ -2996,6 +3263,142 @@ integrationTest(
 		expect(
 			requireRecords(clonedSnapshot.bookmarks, "bookmarks")[0]?.bookmarkId,
 		).not.toBe("lifecycle-bookmark-final");
+
+		// Issue #54: target the empty, non-active scene through the public
+		// edit-plan boundary while the real-video clone remains selected.
+		const nonActiveSaved = await lifecycleSave(
+			"public-lifecycle-non-active-save",
+		);
+		const nonActiveBookmarkOperations = [
+			{
+				kind: "add_bookmark",
+				bookmarkId: "lifecycle-non-active-bookmark",
+				time: 16_000,
+				note: "alternate cut",
+			},
+		];
+		const nonActivePreflightRequest = {
+			contractVersion: 2,
+			...affinity(thirdIdentity),
+			preflightId: "public-lifecycle-non-active-preflight",
+			projectId,
+			sceneId: createdSceneId,
+			expectedRevision: lifecycleRevision,
+			expectedProjectContentHash: lifecycleHash,
+			expectedWriteVersion: requireNumber(
+				nonActiveSaved.writeVersion,
+				"non-active writeVersion",
+			),
+			saveReceiptOperationId: "public-lifecycle-non-active-save",
+			expectedSaveReceiptId: requireString(
+				nonActiveSaved.receiptId,
+				"non-active save receiptId",
+			),
+			description: "Add a bookmark to the non-active lifecycle scene",
+			operations: nonActiveBookmarkOperations,
+			policy: {
+				warningPolicy: "allow",
+				providerExecution: "forbidden",
+				costPolicy: "require-exact",
+			},
+		};
+		const nonActivePreflight = await third.callTool(
+			"opencut_preflight_edit_plan",
+			nonActivePreflightRequest,
+			5 * 60_000,
+		);
+		expect(nonActivePreflight).toMatchObject({
+			disposition: "evaluated",
+			result: {
+				status: "validated",
+				sourceObservation: { activeSceneId: clonedSceneId },
+				noMutationProof: {
+					unchanged: true,
+					before: { activeSceneId: clonedSceneId },
+					after: { activeSceneId: clonedSceneId },
+				},
+			},
+		});
+		const nonActiveEvaluation = requireRecord(
+			requireRecord(nonActivePreflight.result, "non-active preflight result")
+				.evaluation,
+			"non-active evaluation",
+		);
+		const nonActiveApplyRequest = {
+			...affinity(thirdIdentity),
+			projectId,
+			sceneId: createdSceneId,
+			operationId: "public-lifecycle-non-active-bookmark",
+			expectedRevision: lifecycleRevision,
+			expectedProjectContentHash: lifecycleHash,
+			description: "Add a bookmark to the non-active lifecycle scene",
+			operations: nonActiveBookmarkOperations,
+			preflight: {
+				receiptId: requireString(
+					nonActivePreflight.receiptId,
+					"non-active preflight receiptId",
+				),
+				planFingerprint: requireString(
+					nonActiveEvaluation.planFingerprint,
+					"non-active planFingerprint",
+				),
+				preflightFingerprint: requireString(
+					nonActiveEvaluation.preflightFingerprint,
+					"non-active preflightFingerprint",
+				),
+				planDiffHash: requireString(
+					nonActiveEvaluation.planDiffHash,
+					"non-active planDiffHash",
+				),
+			},
+		};
+		const nonActiveApplied = await third.callTool(
+			"opencut_apply_edit_plan",
+			nonActiveApplyRequest,
+		);
+		expect(nonActiveApplied).toMatchObject({
+			status: "applied",
+			operationId: "public-lifecycle-non-active-bookmark",
+			snapshot: {
+				sceneId: createdSceneId,
+				bookmarks: [
+					{
+						bookmarkId: "lifecycle-non-active-bookmark",
+						time: 16_000,
+						note: "alternate cut",
+					},
+				],
+			},
+			operationRecord: { sceneId: createdSceneId },
+		});
+		lifecycleRevision = requireNumber(nonActiveApplied.revision, "revision");
+		lifecycleHash = requireProjectContentHash(
+			requireRecord(nonActiveApplied.snapshot, "non-active snapshot"),
+		);
+		const nonActiveScenes = await third.callTool("opencut_list_scenes", {
+			...affinity(thirdIdentity),
+			projectId,
+		});
+		expect(nonActiveScenes.activeSceneId).toBe(clonedSceneId);
+		expect(
+			requireRecords(nonActiveScenes.scenes, "non-active scenes").find(
+				(scene) => scene.sceneId === createdSceneId,
+			),
+		).toMatchObject({
+			isActive: false,
+			bookmarks: [
+				expect.objectContaining({
+					bookmarkId: "lifecycle-non-active-bookmark",
+				}),
+			],
+		});
+		expect(
+			await third.callTool("opencut_apply_edit_plan", nonActiveApplyRequest),
+		).toMatchObject({
+			status: "applied",
+			durableOperationStatus: "replayed",
+			operationRecord: { sceneId: createdSceneId },
+		});
 		await lifecycleMutation(
 			"opencut_rename_scene",
 			"public-lifecycle-rename-scene",
@@ -3397,6 +3800,7 @@ integrationTest(
 		for (const operationId of [
 			"public-lifecycle-edit",
 			"public-lifecycle-create-scene",
+			"public-lifecycle-non-active-bookmark",
 			"public-lifecycle-delete-clone",
 			"public-lifecycle-bin-import",
 			"public-lifecycle-bin-remove",

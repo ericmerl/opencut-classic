@@ -1695,6 +1695,14 @@ export const listEditPlanPreflightsInputSchema = z
 export const editPlanInputSchema = z
 	.object({
 		projectId: z.string().min(1),
+		sceneId: z
+			.string()
+			.min(1)
+			.max(256)
+			.optional()
+			.describe(
+				"Explicit scene targeted by the preflight receipt; omitted legacy calls target the active scene.",
+			),
 		operationId: legacyCompatibleOperationIdSchema,
 		expectedRevision: z.number().int().nonnegative(),
 		description: z.string().min(1),

@@ -259,6 +259,38 @@ describe("edit-plan preflight service", () => {
 		store.close();
 	});
 
+	test("rejects an explicit apply scene that differs from the preflight source", async () => {
+		const directory = await mkdtemp(
+			join(tmpdir(), "opencut-preflight-service-"),
+		);
+		directories.push(directory);
+		const store = new EditPlanPreflightStore(directory);
+		const request = input();
+		const response = validatedResponse(request);
+		const browser = new DurableTestBrowser(() => response);
+		const service = new EditPlanPreflightService(browser, store);
+		const preflight = await service.preflight(request);
+
+		await expect(
+			service.verifiedApplication({
+				projectId: request.projectId,
+				sceneId: "scene-active",
+				expectedRevision: request.expectedRevision,
+				expectedProjectContentHash: request.expectedProjectContentHash,
+				expectedConnectionIdentity: request.expectedConnectionIdentity,
+				description: request.description,
+				operations: request.operations,
+				preflight: {
+					receiptId: preflight.receiptId,
+					planFingerprint: response.evaluation.planFingerprint,
+					preflightFingerprint: response.evaluation.preflightFingerprint,
+					planDiffHash: response.evaluation.planDiffHash,
+				},
+			}),
+		).rejects.toThrow("apply request does not match");
+		store.close();
+	});
+
 	test("rejects out-of-range and semantically false operation attribution", async () => {
 		for (const mutation of [
 			(response: ReturnType<typeof validatedResponse>) => {

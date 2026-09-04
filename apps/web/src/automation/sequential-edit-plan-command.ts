@@ -61,25 +61,35 @@ export class SceneScopedCommand extends Command {
 		return this.inScene(() => this.command.redo());
 	}
 
-	private inScene<TResult>(run: () => TResult): TResult {
+	private inScene<TResult>(run: () => TResult): TResult | undefined {
 		const priorSceneId = this.editor.scenes.getActiveScene().id;
-		if (!this.editor.scenes.getScenes().some((scene) => scene.id === this.sceneId)) {
+		if (
+			!this.editor.scenes.getScenes().some((scene) => scene.id === this.sceneId)
+		) {
 			throw new Error(`scene not found: ${this.sceneId}`);
 		}
-		if (priorSceneId !== this.sceneId) {
+		const changesActiveScene = priorSceneId !== this.sceneId;
+		const priorSelection = changesActiveScene
+			? this.editor.selection.getSnapshot()
+			: null;
+		if (changesActiveScene) {
 			this.editor.scenes.setScenes({
 				scenes: this.editor.scenes.getScenes(),
 				activeSceneId: this.sceneId,
 			});
 		}
 		try {
-			return run();
+			const result = run();
+			return changesActiveScene ? undefined : result;
 		} finally {
-			if (priorSceneId !== this.sceneId) {
+			if (changesActiveScene) {
 				this.editor.scenes.setScenes({
 					scenes: this.editor.scenes.getScenes(),
 					activeSceneId: priorSceneId,
 				});
+				if (priorSelection) {
+					this.editor.selection.restoreSnapshot({ snapshot: priorSelection });
+				}
 			}
 		}
 	}
@@ -199,7 +209,9 @@ export class SequentialEditPlanCommand<TOperation> extends Command {
 			throw new EditPlanCommandError({
 				operationIndex,
 				message:
-					error instanceof Error ? error.message : "native command build failed",
+					error instanceof Error
+						? error.message
+						: "native command build failed",
 				options: { cause: error },
 			});
 		}

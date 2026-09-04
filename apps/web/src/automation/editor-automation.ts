@@ -573,9 +573,14 @@ export class EditorAutomation {
 			const readback = await storageService.loadProjectFresh({
 				id: state.projectId,
 			});
+			const receiptSceneExists = readback?.project.scenes.some(
+				(scene) => scene.id === state.sceneId,
+			);
 			if (
 				!readback ||
-				readback.project.currentSceneId !== state.sceneId ||
+				(receipt.binding.browserMethod === "apply_edit_plan"
+					? !receiptSceneExists
+					: readback.project.currentSceneId !== state.sceneId) ||
 				readback.persistence.writeVersion !== state.durableWriteVersion
 			) {
 				return verificationFailure({
@@ -690,7 +695,8 @@ export class EditorAutomation {
 			!readback ||
 			(method === "render_preview_frame" ||
 			method === "render_preview_range" ||
-			method === "compare_project_states"
+			method === "compare_project_states" ||
+			method === "apply_edit_plan"
 				? !receiptSceneExists
 				: readback.project.currentSceneId !== resultState.sceneId)
 		) {
@@ -3731,7 +3737,7 @@ export class EditorAutomation {
 				sceneId: candidate.id,
 				name: candidate.name,
 				isMain: candidate.isMain,
-				isActive: candidate.id === scene.id,
+				isActive: candidate.id === project.currentSceneId,
 				order,
 				duration: calculateTotalDuration({ tracks: candidate.tracks }),
 				trackCount:

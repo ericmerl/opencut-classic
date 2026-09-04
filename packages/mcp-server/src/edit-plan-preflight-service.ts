@@ -138,6 +138,7 @@ export class EditPlanPreflightService {
 
 	async verifiedApplication(input: {
 		projectId: string;
+		sceneId?: string;
 		expectedRevision: number;
 		expectedProjectContentHash: string;
 		expectedConnectionIdentity: PreflightEditPlanInput["expectedConnectionIdentity"];
@@ -160,6 +161,7 @@ export class EditPlanPreflightService {
 		if (!receipt) throw new Error("preflight receipt was not found");
 		if (
 			receipt.projectId !== input.projectId ||
+			(input.sceneId !== undefined && receipt.sceneId !== input.sceneId) ||
 			receipt.contentHash !== input.expectedProjectContentHash ||
 			receipt.planFingerprint !== input.preflight.planFingerprint ||
 			receipt.preflightFingerprint !== input.preflight.preflightFingerprint ||
