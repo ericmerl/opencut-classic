@@ -214,6 +214,12 @@ function reportUnmappable(
 		if (background.offsetX || background.offsetY) {
 			countLoss("background.offset", "ASS opaque boxes cannot be offset");
 		}
+		if (background.perLine) {
+			countLoss(
+				"background.perLine",
+				"ASS opaque boxes span the whole cue, not one line at a time",
+			);
+		}
 	}
 }
 

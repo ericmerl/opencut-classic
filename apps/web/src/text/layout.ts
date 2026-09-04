@@ -141,6 +141,50 @@ export function getTextBackgroundRect({
 	};
 }
 
+/**
+ * One bubble per wrapped line: each line's own width plus padding, on the
+ * band the line occupies within the block. Their union spans exactly the
+ * block bubble, so the visual rect is unchanged.
+ */
+export function getTextLineBackgroundRects({
+	textAlign,
+	lineMetrics,
+	lineHeightPx,
+	block,
+	background,
+	fontSizeRatio = 1,
+}: {
+	textAlign: TextAlign;
+	lineMetrics: readonly TextMetrics[];
+	lineHeightPx: number;
+	block: TextBlockMeasurement;
+	background: TextBackground;
+	fontSizeRatio?: number;
+}): TextRect[] {
+	if (!isTextBackgroundVisible({ background })) return [];
+	const paddingX =
+		(background.paddingX ?? DEFAULTS.text.background.paddingX) * fontSizeRatio;
+	const paddingY =
+		(background.paddingY ?? DEFAULTS.text.background.paddingY) * fontSizeRatio;
+	const offsetX = background.offsetX ?? DEFAULTS.text.background.offsetX;
+	const offsetY = background.offsetY ?? DEFAULTS.text.background.offsetY;
+	return lineMetrics.map((metrics, index) => {
+		const anchorY = index * lineHeightPx - block.visualCenterOffset;
+		const left =
+			textAlign === "left"
+				? 0
+				: textAlign === "right"
+					? -metrics.width
+					: -metrics.width / 2;
+		return {
+			left: left - paddingX + offsetX,
+			top: anchorY - lineHeightPx / 2 - paddingY + offsetY,
+			width: metrics.width + paddingX * 2,
+			height: lineHeightPx + paddingY * 2,
+		};
+	});
+}
+
 export function getTextVisualRect({
 	textAlign,
 	block,

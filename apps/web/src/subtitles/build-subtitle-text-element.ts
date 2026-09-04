@@ -244,6 +244,8 @@ function buildElement({
 			lineHeight: style.lineHeight,
 			"background.enabled": style.background.enabled,
 			"background.color": style.background.color,
+			"background.perLine":
+				style.background.perLine ?? DEFAULTS.text.background.perLine,
 			"background.cornerRadius":
 				style.background.cornerRadius ?? DEFAULTS.text.background.cornerRadius,
 			"background.paddingX":

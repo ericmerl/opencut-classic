@@ -33,6 +33,7 @@ const PROPERTY_LABELS: Partial<Record<string, string>> = {
 	volume: "Volume",
 	color: "Color",
 	"background.color": "BG Color",
+	"background.perLine": "BG Per Line",
 	"background.paddingX": "BG Pad X",
 	"background.paddingY": "BG Pad Y",
 	"background.offsetX": "BG Offset X",

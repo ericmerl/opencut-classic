@@ -2771,6 +2771,9 @@ fn caption_style_presets_name_bundled_faces_and_gate_insertion() {
         assert!(matches!(family, "TikTok Sans" | "Montserrat"));
         assert_eq!(preset.style.font_weight, Some(TextFontWeight::Bold));
         assert!(preset.style.preset.is_none());
+        if let Some(background) = &preset.style.background {
+            assert_eq!(background.per_line, Some(true));
+        }
     }
 
     let insert = |preset: &str| EditOperation::InsertCaptions {

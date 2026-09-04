@@ -5917,6 +5917,7 @@ fn default_text_params(content: &str) -> Params {
         ("lineHeight", Scalar::Number(1.2)),
         ("background.enabled", Scalar::Boolean(false)),
         ("background.color", Scalar::String("#000000".into())),
+        ("background.perLine", Scalar::Boolean(false)),
         ("background.cornerRadius", Scalar::Number(0.0)),
         ("background.paddingX", Scalar::Number(30.0)),
         ("background.paddingY", Scalar::Number(42.0)),
@@ -6222,7 +6223,9 @@ fn coerce_element_param(
             coerce_number(value, -100.0, None, 0.1, index, key)
         }
         "lineHeight" if element_type == "text" => coerce_number(value, 0.1, None, 0.1, index, key),
-        "background.enabled" if element_type == "text" => coerce_boolean(value, index, key),
+        "background.enabled" | "background.perLine" if element_type == "text" => {
+            coerce_boolean(value, index, key)
+        }
         "background.cornerRadius" if element_type == "text" => {
             coerce_number(value, 0.0, Some(100.0), 1.0, index, key)
         }

@@ -612,6 +612,9 @@ pub enum VerticalAlign {
 pub struct SubtitleBackground {
     pub enabled: bool,
     pub color: String,
+    /// One bubble per wrapped line instead of one block behind all lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_line: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corner_radius: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -696,6 +699,7 @@ fn bundled_caption_background(color: &str) -> SubtitleBackground {
     SubtitleBackground {
         enabled: true,
         color: color.to_owned(),
+        per_line: Some(true),
         corner_radius: Some(8.0),
         padding_x: Some(16.0),
         padding_y: Some(8.0),
@@ -803,6 +807,7 @@ pub fn resolve_caption_style(
         (Some(base), Some(override_)) => Some(SubtitleBackground {
             enabled: override_.enabled,
             color: override_.color.clone(),
+            per_line: override_.per_line.or(base.per_line),
             corner_radius: override_.corner_radius.or(base.corner_radius),
             padding_x: override_.padding_x.or(base.padding_x),
             padding_y: override_.padding_y.or(base.padding_y),
@@ -903,6 +908,9 @@ pub fn caption_style_params(style: &SubtitleStyleOverrides) -> Result<Params, St
             "background.color".to_owned(),
             Scalar::String(background.color.clone()),
         );
+        if let Some(per_line) = background.per_line {
+            params.insert("background.perLine".to_owned(), Scalar::Boolean(per_line));
+        }
         put_number(
             &mut params,
             "background.cornerRadius",

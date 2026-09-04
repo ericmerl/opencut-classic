@@ -304,6 +304,14 @@ const textElementParams: ElementParamDefinition[] = [
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 	{
+		key: "background.perLine",
+		label: "Background Per Line",
+		type: "boolean",
+		default: DEFAULTS.text.background.perLine,
+		keyframable: false,
+		dependencies: [{ param: "background.enabled", equals: true }],
+	},
+	{
 		key: "background.cornerRadius",
 		label: "Background Radius",
 		type: "number",

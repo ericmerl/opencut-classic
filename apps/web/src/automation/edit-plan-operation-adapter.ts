@@ -326,6 +326,7 @@ function resolvedSubtitleStyle(
 			? {
 					enabled: style.background.enabled,
 					color: style.background.color,
+					perLine: optional(style.background.perLine),
 					cornerRadius: optional(style.background.cornerRadius),
 					paddingX: optional(style.background.paddingX),
 					paddingY: optional(style.background.paddingY),

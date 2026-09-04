@@ -4,6 +4,7 @@ import {
 	getMetricAscent,
 	getMetricDescent,
 	getTextBackgroundRect,
+	getTextLineBackgroundRects,
 	getTextRect,
 	getTextVisualRect,
 	type TextCanvasContext,
@@ -55,7 +56,10 @@ export interface CaptionLocalLayout {
 	layout: MeasuredTextLayout;
 	lines: CaptionLineGeometry[];
 	block: Rect;
+	/** The block bubble, or null when no background is drawn. */
 	bubble: CaptionBubbleRect | null;
+	/** One bubble per line when the background is per-line; null otherwise. */
+	lineBubbles: CaptionBubbleRect[] | null;
 	visual: Rect;
 }
 
@@ -76,6 +80,7 @@ export interface CaptionGeometry {
 	lines: CaptionLineGeometry[];
 	block: Rect;
 	bubble: CaptionBubbleRect | null;
+	lineBubbles: CaptionBubbleRect[] | null;
 	visual: Rect;
 	/** Pixels of the visual rect that fall outside the canvas on each edge. */
 	overflow: EdgeOverflow;
@@ -152,19 +157,28 @@ export function measureCaptionLocalLayout({
 		background,
 		fontSizeRatio: layout.fontSizeRatio,
 	});
-	const bubble = bubbleRect
-		? {
-				...bubbleRect,
-				cornerRadius:
-					(Math.min(bubbleRect.width, bubbleRect.height) / 2) *
-					(clamp({
-						value: background.cornerRadius ?? CORNER_RADIUS_MIN,
-						min: CORNER_RADIUS_MIN,
-						max: CORNER_RADIUS_MAX,
-					}) /
-						100),
-			}
-		: null;
+	const radiusRatio =
+		clamp({
+			value: background.cornerRadius ?? CORNER_RADIUS_MIN,
+			min: CORNER_RADIUS_MIN,
+			max: CORNER_RADIUS_MAX,
+		}) / 100;
+	const withRadius = (rect: Rect): CaptionBubbleRect => ({
+		...rect,
+		cornerRadius: (Math.min(rect.width, rect.height) / 2) * radiusRatio,
+	});
+	const bubble = bubbleRect ? withRadius(bubbleRect) : null;
+	const lineBubbles =
+		bubbleRect && background.perLine
+			? getTextLineBackgroundRects({
+					textAlign: layout.textAlign,
+					lineMetrics: layout.lineMetrics,
+					lineHeightPx: layout.lineHeightPx,
+					block: layout.block,
+					background,
+					fontSizeRatio: layout.fontSizeRatio,
+				}).map(withRadius)
+			: null;
 	const visual = getTextVisualRect({
 		textAlign: layout.textAlign,
 		block: layout.block,
@@ -203,7 +217,7 @@ export function measureCaptionLocalLayout({
 			},
 		};
 	});
-	return { layout, lines, block, bubble, visual };
+	return { layout, lines, block, bubble, lineBubbles, visual };
 }
 
 /** Places a local layout at a canvas-centred position, as the renderer does. */
@@ -249,6 +263,12 @@ export function placeCaptionGeometry({
 		block: place(local.block),
 		bubble: local.bubble
 			? { ...place(local.bubble), cornerRadius: local.bubble.cornerRadius }
+			: null,
+		lineBubbles: local.lineBubbles
+			? local.lineBubbles.map((rect) => ({
+					...place(rect),
+					cornerRadius: rect.cornerRadius,
+				}))
 			: null,
 		visual,
 		overflow,

@@ -540,6 +540,10 @@ const captionStyleSchema = z
 			.object({
 				enabled: z.boolean(),
 				color: z.string().min(1),
+				perLine: z
+					.boolean()
+					.optional()
+					.describe("Draw one bubble per wrapped line instead of one block."),
 				cornerRadius: z.number().optional(),
 				paddingX: z.number().optional(),
 				paddingY: z.number().optional(),

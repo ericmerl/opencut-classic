@@ -17,6 +17,7 @@ import {
 } from "./primitives";
 
 export interface ResolvedTextBackground extends TextBackground {
+	perLine: boolean;
 	paddingX: number;
 	paddingY: number;
 	offsetX: number;
@@ -83,6 +84,7 @@ export function measureTextElement({
 	const bg = buildTextBackgroundFromElement({ element });
 	const resolvedBackground: ResolvedTextBackground = {
 		...bg,
+		perLine: bg.perLine ?? false,
 		paddingX: resolveNumberAtTime({
 			baseValue: bg.paddingX ?? DEFAULTS.text.background.paddingX,
 			animations: element.animations,
@@ -194,6 +196,11 @@ export function buildTextBackgroundFromElement({
 			params: element.params,
 			key: "background.color",
 			fallback: DEFAULTS.text.background.color,
+		}),
+		perLine: readBooleanParam({
+			params: element.params,
+			key: "background.perLine",
+			fallback: DEFAULTS.text.background.perLine,
 		}),
 		cornerRadius: readNumberParam({
 			params: element.params,

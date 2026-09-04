@@ -605,6 +605,14 @@ const captionGeometrySchema = z
 			.extend({ cornerRadius: z.number().nonnegative() })
 			.strict()
 			.nullable(),
+		lineBubbles: z
+			.array(
+				captionRectSchema
+					.extend({ cornerRadius: z.number().nonnegative() })
+					.strict(),
+			)
+			.min(1)
+			.nullable(),
 		visual: captionRectSchema,
 		overflow: captionEdgeOverflowSchema,
 		clipped: z.boolean(),

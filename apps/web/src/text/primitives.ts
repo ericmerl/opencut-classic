@@ -5,6 +5,7 @@ import { CORNER_RADIUS_MAX, CORNER_RADIUS_MIN } from "./background";
 import {
 	drawTextDecoration,
 	getTextBackgroundRect,
+	getTextLineBackgroundRects,
 	measureTextBlock,
 	setCanvasLetterSpacing,
 } from "./layout";
@@ -46,6 +47,7 @@ export interface MeasuredTextLayout extends ResolvedTextLayout {
 export interface ResolvedTextBackgroundLike {
 	enabled: boolean;
 	color: string;
+	perLine?: boolean;
 	paddingX: number;
 	paddingY: number;
 	offsetX: number;
@@ -165,36 +167,39 @@ export function drawMeasuredTextLayout({
 		backgroundColor !== "transparent" &&
 		layout.lines.length > 0
 	) {
-		const backgroundRect = getTextBackgroundRect({
-			textAlign: layout.textAlign,
-			block: layout.block,
-			background: {
-				...background,
-				color: backgroundColor,
-			},
-			fontSizeRatio: layout.fontSizeRatio,
-		});
-		if (backgroundRect) {
-			const p =
-				clamp({
-					value: background.cornerRadius,
-					min: CORNER_RADIUS_MIN,
-					max: CORNER_RADIUS_MAX,
-				}) / 100;
-			const radius =
-				(Math.min(backgroundRect.width, backgroundRect.height) / 2) * p;
-			ctx.fillStyle = backgroundColor;
+		const coloured = { ...background, color: backgroundColor };
+		const rects = background.perLine
+			? getTextLineBackgroundRects({
+					textAlign: layout.textAlign,
+					lineMetrics: layout.lineMetrics,
+					lineHeightPx: layout.lineHeightPx,
+					block: layout.block,
+					background: coloured,
+					fontSizeRatio: layout.fontSizeRatio,
+				})
+			: [
+					getTextBackgroundRect({
+						textAlign: layout.textAlign,
+						block: layout.block,
+						background: coloured,
+						fontSizeRatio: layout.fontSizeRatio,
+					}),
+				];
+		const p =
+			clamp({
+				value: background.cornerRadius,
+				min: CORNER_RADIUS_MIN,
+				max: CORNER_RADIUS_MAX,
+			}) / 100;
+		ctx.fillStyle = backgroundColor;
+		for (const rect of rects) {
+			if (!rect) continue;
+			const radius = (Math.min(rect.width, rect.height) / 2) * p;
 			ctx.beginPath();
-			ctx.roundRect(
-				backgroundRect.left,
-				backgroundRect.top,
-				backgroundRect.width,
-				backgroundRect.height,
-				radius,
-			);
+			ctx.roundRect(rect.left, rect.top, rect.width, rect.height, radius);
 			ctx.fill();
-			ctx.fillStyle = textColor;
 		}
+		ctx.fillStyle = textColor;
 	}
 
 	for (let index = 0; index < layout.lines.length; index++) {

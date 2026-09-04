@@ -37,6 +37,7 @@ const geometryFixture = {
 	lines: [],
 	block: { left: -100, top: -40, width: 200, height: 80 },
 	bubble: null,
+	lineBubbles: null,
 	visual: { left: 440, top: 1620, width: 200, height: 80 },
 	overflow: { left: 0, top: 0, right: 0, bottom: 0 },
 	clipped: false,

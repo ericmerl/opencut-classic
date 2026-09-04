@@ -21,6 +21,7 @@ const defaultTextLineHeight = 1.2;
 const defaultTextBackground = {
 	enabled: false,
 	color: "#000000",
+	perLine: false,
 	cornerRadius: 0,
 	paddingX: 30,
 	paddingY: 42,
@@ -48,6 +49,7 @@ const defaultTextElement: Omit<TextElement, "id"> = {
 		lineHeight: defaultTextLineHeight,
 		"background.enabled": defaultTextBackground.enabled,
 		"background.color": defaultTextBackground.color,
+		"background.perLine": defaultTextBackground.perLine,
 		"background.cornerRadius": defaultTextBackground.cornerRadius,
 		"background.paddingX": defaultTextBackground.paddingX,
 		"background.paddingY": defaultTextBackground.paddingY,

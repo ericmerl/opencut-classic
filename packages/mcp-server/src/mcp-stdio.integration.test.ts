@@ -466,6 +466,10 @@ integrationTest(
 			requireNumber(geometry.lineCount, "lineCount"),
 		);
 		expect(requireRecord(geometry.bubble, "bubble").cornerRadius).toBeNumber();
+		// The TikTok preset draws one bubble per wrapped line.
+		expect(requireRecords(geometry.lineBubbles, "lineBubbles")).toHaveLength(
+			requireNumber(geometry.lineCount, "lineCount"),
+		);
 		expect(requireString(captionLayout.geometrySha256, "geometrySha256")).toMatch(
 			/^[a-f0-9]{64}$/,
 		);
@@ -531,6 +535,7 @@ integrationTest(
 				dropped: [
 					{ feature: "background.cornerRadius", cueCount: 1 },
 					{ feature: "background.padding", cueCount: 1 },
+					{ feature: "background.perLine", cueCount: 1 },
 					{ feature: "lineHeight", cueCount: 1 },
 				],
 			},

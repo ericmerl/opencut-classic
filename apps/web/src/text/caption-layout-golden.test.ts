@@ -279,6 +279,54 @@ describe("caption geometry golden", () => {
 		);
 	});
 
+	test("per-line bubbles cover each wrapped line and tile the block bubble", () => {
+		const fixture = FIXTURES[1]!;
+		const measured = measureSubtitleCaption({
+			index: 0,
+			caption: {
+				...fixture.caption,
+				style: {
+					...fixture.caption.style,
+					background: {
+						enabled: true,
+						color: "#000000",
+						perLine: true,
+						paddingX: 16,
+						paddingY: 8,
+						cornerRadius: 50,
+					},
+				},
+			},
+			canvasSize: fixture.canvasSize,
+			ctx: measurementContext(),
+		});
+		const { lineBubbles, bubble, lines, layout } = measured.local;
+		if (!lineBubbles || !bubble) throw new Error("expected per-line bubbles");
+		expect(lineBubbles).toHaveLength(lines.length);
+		expect(lines.length).toBeGreaterThan(1);
+		const ratio = layout.fontSizeRatio;
+		lineBubbles.forEach((lineBubble, index) => {
+			expect(lineBubble.width).toBeCloseTo(lines[index]!.width + 2 * 16 * ratio, 6);
+			expect(lineBubble.height).toBeCloseTo(layout.lineHeightPx + 2 * 8 * ratio, 6);
+			expect(lineBubble.cornerRadius).toBeCloseTo(
+				(Math.min(lineBubble.width, lineBubble.height) / 2) * 0.5,
+				6,
+			);
+		});
+		// The line bubbles tile the block bubble's vertical extent exactly and
+		// the widest one matches the block bubble's width.
+		const top = Math.min(...lineBubbles.map((rect) => rect.top));
+		const bottom = Math.max(...lineBubbles.map((rect) => rect.top + rect.height));
+		expect(top).toBeCloseTo(bubble.top, 6);
+		expect(bottom).toBeCloseTo(bubble.top + bubble.height, 6);
+		expect(Math.max(...lineBubbles.map((rect) => rect.width))).toBeCloseTo(
+			bubble.width,
+			6,
+		);
+		expect(measured.geometry.lineBubbles).toHaveLength(lines.length);
+		expect(measured.element.params["background.perLine"]).toBe(true);
+	});
+
 	test("measurement is deterministic across contexts", () => {
 		const first = measureSubtitleCaption({
 			index: 0,
