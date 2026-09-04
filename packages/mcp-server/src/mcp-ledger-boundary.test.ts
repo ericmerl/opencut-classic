@@ -199,6 +199,100 @@ describe("MCP ledger handler recovery", () => {
 		await rm(directory, { recursive: true, force: true });
 	});
 
+	test("verifies a receipt-targeted non-active apply when the caller omits sceneId", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "opencut-browser-receipt-"));
+		const input = {
+			bridgeProtocolVersion: 2,
+			projectId: "project-1",
+			operationId: "receipt-targeted-edit",
+			expectedRevision: 7,
+			expectedProjectContentHash: "a".repeat(64),
+		};
+		const mutation = {
+			status: "applied",
+			operationId: input.operationId,
+			projectId: "project-1",
+			sceneId: "scene-target",
+			revision: 8,
+			snapshot: { ...projectSnapshot("b"), sceneId: "scene-target" },
+		};
+		const bridge = {
+			request: async (method: string, params: Record<string, unknown>) => {
+				if (method === "get_operation_receipt") {
+					return {
+						status: "found",
+						operationId: input.operationId,
+						binding: params.binding,
+						afterState: {
+							projectId: "project-1",
+							sceneId: "scene-target",
+							revisionAfter: 8,
+							sessionRevisionAfter: 8,
+							durableWriteVersion: 1,
+							contentHashAfter: "b".repeat(64),
+							contentHashProjectionVersion: 2,
+						},
+						result: mutation,
+					};
+				}
+				if (method === "read_project") {
+					return {
+						...projectSnapshot("b"),
+						scenes: [{ sceneId: "scene-1" }, { sceneId: "scene-target" }],
+					};
+				}
+				if (method === "get_save_receipt") {
+					return { status: "not-found", operationId: params.operationId };
+				}
+				if (method === "verify_operation_receipt") {
+					return {
+						...saveReceipt(input.operationId, "b"),
+						sceneId: "scene-target",
+					};
+				}
+				if (method === "save_project") {
+					throw new Error("active-scene save barrier must not run");
+				}
+				throw new Error(`unexpected method ${method}`);
+			},
+		} as unknown as EditorBridge;
+		const ledger = new OperationLedger(directory);
+		try {
+			let effects = 0;
+			const result = await new McpLedgerBoundary(ledger, bridge).execute(
+				"opencut_apply_edit_plan",
+				input,
+				async (context) => {
+					effects += 1;
+					await context.prepareBrowserMutation("apply_edit_plan", input);
+					return mutation;
+				},
+			);
+			expect(result).toMatchObject({
+				status: "applied",
+				durableOperationStatus: "completed",
+				operationRecord: { sceneId: "scene-target" },
+			});
+			const replayed = await new McpLedgerBoundary(ledger, bridge).execute(
+				"opencut_apply_edit_plan",
+				input,
+				async () => {
+					effects += 1;
+					return mutation;
+				},
+			);
+			expect(replayed).toMatchObject({
+				status: "applied",
+				durableOperationStatus: "replayed",
+				operationRecord: { sceneId: "scene-target" },
+			});
+			expect(effects).toBe(1);
+		} finally {
+			ledger.close();
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	test("reconstructs an exact composite subtitle result without treating its inner receipt as terminal", async () => {
 		const directory = await mkdtemp(
 			join(tmpdir(), "opencut-composite-receipt-"),

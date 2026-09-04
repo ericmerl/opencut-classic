@@ -18,7 +18,7 @@ import {
 	createProjectInputSchema,
 	createReviewAnnotationInputSchema,
 	createHistoryCheckpointInputSchema,
-	editPlanInputSchema,
+	applyEditPlanInputSchema,
 	exportProjectInputSchema,
 	exportSubtitlesInputSchema,
 	evaluateExportQcInputSchema,
@@ -340,7 +340,7 @@ const cases: SchemaCase[] = [
 	},
 	{
 		name: "opencut_apply_edit_plan",
-		schema: withProjectMutationSafety(editPlanInputSchema),
+		schema: applyEditPlanInputSchema,
 		input: project({
 			description: "Mute",
 			operations: [{ kind: "set_track_state", trackId: "a", muted: true }],

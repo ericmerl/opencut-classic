@@ -9,6 +9,7 @@ import {
 	generateMatteInputSchema,
 	getComparisonInputSchema,
 	createProjectInputSchema,
+	applyEditPlanInputSchema,
 	editPlanInputSchema,
 	exportProjectInputSchema,
 	exportSubtitlesInputSchema,
@@ -1079,12 +1080,20 @@ describe("OpenCut timeline-query MCP contract", () => {
 });
 
 describe("OpenCut edit-plan MCP contract", () => {
-	test("preserves an explicit target scene for non-active apply", () => {
-		const result = editPlanInputSchema.safeParse({
+	test("preserves an explicit target scene for v2 non-active apply", () => {
+		const result = applyEditPlanInputSchema.safeParse({
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: {
+				serverInstanceId: "server-1",
+				editorInstanceId: "editor-1",
+				editorSessionId: "session-1",
+				connectionGeneration: 1,
+			},
 			projectId: "project-1",
 			sceneId: "scene-non-active",
 			operationId: "non-active-apply-1",
 			expectedRevision: 2,
+			expectedProjectContentHash: "a".repeat(64),
 			description: "Adjust the non-active scene mix",
 			operations: [{ kind: "adjust_mix_gain", gainDb: 1 }],
 		});
@@ -1093,6 +1102,18 @@ describe("OpenCut edit-plan MCP contract", () => {
 		if (result.success) {
 			expect(result.data.sceneId).toBe("scene-non-active");
 		}
+	});
+
+	test("rejects an explicit scene on legacy apply instead of ignoring it", () => {
+		expect(
+			applyEditPlanInputSchema.safeParse({
+				projectId: "project-1",
+				sceneId: "scene-non-active",
+				expectedRevision: 2,
+				description: "Unsafe legacy scene target",
+				operations: [{ kind: "adjust_mix_gain", gainDb: 1 }],
+			}).success,
+		).toBe(false);
 	});
 
 	test("accepts typed chroma, luma, and track-matte compositing controls", () => {

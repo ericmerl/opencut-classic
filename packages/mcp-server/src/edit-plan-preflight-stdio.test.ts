@@ -116,6 +116,22 @@ test("publishes strict preflight receipt tools over MCP stdio", async () => {
 			operationId: "receiptless-v2-plan",
 		}),
 	).toMatchObject({ operation: null, versions: [] });
+	const ignoredLegacyScene = asRecord(
+		await client.request("tools/call", {
+			name: "opencut_apply_edit_plan",
+			arguments: {
+				projectId: "project-1",
+				sceneId: "scene-non-active",
+				expectedRevision: 0,
+				description: "must not silently retarget the active scene",
+				operations: [{ kind: "adjust_mix_gain", gainDb: 1 }],
+			},
+		}),
+	);
+	expect(ignoredLegacyScene.isError).toBe(true);
+	expect(JSON.stringify(ignoredLegacyScene)).toContain(
+		"an explicit edit-plan sceneId requires bridge protocol v2",
+	);
 
 	const missing = await callTool(client, "opencut_get_edit_plan_preflight", {
 		receiptId: "preflight-receipt:missing",

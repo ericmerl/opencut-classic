@@ -1741,6 +1741,18 @@ export const editPlanInputSchema = z
 		}
 	});
 
+export const applyEditPlanInputSchema = withProjectMutationSafety(
+	editPlanInputSchema,
+).superRefine((plan, context) => {
+	if (plan.sceneId !== undefined && plan.bridgeProtocolVersion !== 2) {
+		context.addIssue({
+			code: "custom",
+			path: ["sceneId"],
+			message: "an explicit edit-plan sceneId requires bridge protocol v2",
+		});
+	}
+});
+
 const transcriptIdentifierSchema = z.string().trim().min(1).max(512);
 const transcriptDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 

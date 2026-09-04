@@ -106,7 +106,7 @@ import {
 	cancelExportBatchInputSchema,
 	cancelExportJobInputSchema,
 	createProjectInputSchema,
-	editPlanInputSchema,
+	applyEditPlanInputSchema,
 	exportProjectInputSchema,
 	generateMatteInputSchema,
 	getExportBatchInputSchema,
@@ -1490,7 +1490,7 @@ function createServer(): McpServer {
 		{
 			description:
 				"Apply a previously validated edit plan atomically to its explicit scene, including a non-active scene without changing the active UI scene or selection. Bridge protocol v2 requires the immutable receipt returned by opencut_preflight_edit_plan; receipt-less v2 requests are rejected without mutation.",
-			inputSchema: withProjectMutationSafety(editPlanInputSchema),
+			inputSchema: applyEditPlanInputSchema,
 		},
 		async (plan) => {
 			const { preflight, ...browserPlan } = plan;

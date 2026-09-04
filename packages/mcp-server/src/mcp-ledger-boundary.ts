@@ -88,6 +88,10 @@ export class McpLedgerBoundary {
 		const requiresVerifiedBrowserHash =
 			toolName === "opencut_apply_edit_plan" &&
 			input.bridgeProtocolVersion === 2;
+		const receiptDeterminesScene = browserReceiptDeterminesScene(
+			toolName,
+			input,
+		);
 		const comparisonBefore =
 			toolName === "opencut_compare_project_states"
 				? comparisonSourceState(input)
@@ -106,12 +110,14 @@ export class McpLedgerBoundary {
 							sceneId:
 								definition.operationKind === "create-project"
 									? null
-									: (activeSceneInput(toolName, input) ??
-										(requiresVerifiedBrowserHash
-											? existing.record.sceneId
-											: suppliedContentHash
-												? null
-												: existing.record.sceneId)),
+									: (ledgerSceneInput(toolName, input) ??
+										(receiptDeterminesScene
+											? null
+											: requiresVerifiedBrowserHash
+												? existing.record.sceneId
+												: suppliedContentHash
+													? null
+													: existing.record.sceneId)),
 							revision: existing.record.revisionBefore,
 							contentHash: existing.record.contentHashBefore,
 							contentHashProjectionVersion:
@@ -198,10 +204,7 @@ export class McpLedgerBoundary {
 				const value = await effect(
 					this.withBrowserContext(context, operationId, toolName),
 				);
-				if (
-					toolName === "opencut_apply_edit_plan" &&
-					stringField(input, "sceneId")
-				) {
+				if (toolName === "opencut_apply_edit_plan") {
 					const contract = readBrowserReceiptContract(
 						context.record().checkpoints,
 						operationId,
@@ -312,11 +315,15 @@ export class McpLedgerBoundary {
 	) {
 		const projectId = stringField(input, "projectId");
 		if (!projectId) return {};
+		const receiptDeterminesScene = browserReceiptDeterminesScene(
+			toolName,
+			input,
+		);
 		let contentHash = requiresVerifiedBrowserHash
 			? null
 			: (stringField(input, "expectedProjectContentHash") ??
 				stringField(input, "expectedContentHash"));
-		let sceneId = activeSceneInput(toolName, input);
+		let sceneId = ledgerSceneInput(toolName, input);
 		let contentHashProjectionVersion: 1 | 2 | 3 | null = contentHash
 			? CURRENT_PROJECT_CONTENT_PROJECTION_VERSION
 			: null;
@@ -329,7 +336,9 @@ export class McpLedgerBoundary {
 				contentHash ??= contentHashOf(snapshot);
 				contentHashProjectionVersion ??=
 					contentHashProjectionVersionOf(snapshot);
-				sceneId ??= stringField(snapshot, "sceneId");
+				if (!receiptDeterminesScene) {
+					sceneId ??= stringField(snapshot, "sceneId");
+				}
 			}
 		}
 		return {
@@ -744,19 +753,29 @@ function operationUsesProjectPreconditions(
 }
 
 /**
- * The ledger's sceneId is the active scene the operation is verified against,
- * so only an input sceneId that names the active scene may seed it. The scene
- * lifecycle tools take a sceneId that names the scene they act on, which may
- * be inactive or, for a clone or a delete, differ from the scene that is
- * active once they finish.
+ * Most ledger records bind the scene named by the input. Edit-plan sceneId is
+ * the explicit mutation target and may be inactive; when it is omitted, the
+ * terminal browser receipt supplies the verified target. Scene-lifecycle tools
+ * use sceneId for the scene object they act on, which may differ from the scene
+ * active after the mutation, so their input scene cannot seed ledger state.
  */
-function activeSceneInput(
+function ledgerSceneInput(
 	toolName: MutatingToolName,
 	input: ToolInput,
 ): string | null {
 	return SCENE_TARGET_TOOLS.has(toolName)
 		? null
 		: stringField(input, "sceneId");
+}
+
+function browserReceiptDeterminesScene(
+	toolName: MutatingToolName,
+	input: ToolInput,
+): boolean {
+	return (
+		toolName === "opencut_apply_edit_plan" &&
+		stringField(input, "sceneId") === null
+	);
 }
 
 const SCENE_TARGET_TOOLS = new Set<MutatingToolName>([
