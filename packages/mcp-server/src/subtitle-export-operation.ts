@@ -9,7 +9,7 @@ import type { SubtitleFiles } from "./subtitle-files";
 export interface SubtitleExportOperationInput extends Record<string, unknown> {
 	operationId: string;
 	outputPath: string;
-	format: "srt" | "vtt";
+	format: "srt" | "vtt" | "ass";
 }
 
 export async function executeSubtitleExport(
@@ -36,6 +36,7 @@ export async function executeSubtitleExport(
 		format: serialized.format,
 		trackIds: serialized.trackIds,
 		cueCount: serialized.cueCount,
+		lossReport: serialized.lossReport ?? null,
 		bridgeProtocolVersion: serialized.bridgeProtocolVersion,
 		connectionIdentity: serialized.connectionIdentity,
 		requestConnectionIdentity: serialized.requestConnectionIdentity,
@@ -121,7 +122,11 @@ function subtitleArtifact(
 		bytes: receipt.bytesWritten,
 		path: receipt.outputPath,
 		mimeType:
-			input.format === "srt" ? "application/x-subrip" : "text/vtt",
+			input.format === "srt"
+				? "application/x-subrip"
+				: input.format === "ass"
+					? "text/x-ssa"
+					: "text/vtt",
 	};
 }
 
@@ -163,10 +168,11 @@ function isSerializedSubtitles(value: unknown): value is {
 	projectId: string;
 	sceneId: string;
 	revision: number;
-	format: "srt" | "vtt";
+	format: "srt" | "vtt" | "ass";
 	trackIds: string[];
 	cueCount: number;
 	content: string;
+	lossReport?: unknown;
 	bridgeProtocolVersion?: 1 | 2;
 	connectionIdentity?: unknown;
 	requestConnectionIdentity?: unknown;
@@ -178,7 +184,9 @@ function isSerializedSubtitles(value: unknown): value is {
 		typeof value.projectId === "string" &&
 		typeof value.sceneId === "string" &&
 		typeof value.revision === "number" &&
-		(value.format === "srt" || value.format === "vtt") &&
+		(value.format === "srt" ||
+			value.format === "vtt" ||
+			value.format === "ass") &&
 		Array.isArray(value.trackIds) &&
 		typeof value.cueCount === "number" &&
 		typeof value.content === "string"

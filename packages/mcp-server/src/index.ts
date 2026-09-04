@@ -2509,7 +2509,7 @@ function isSerializedSubtitles(value: unknown): value is {
 	projectId: string;
 	sceneId: string;
 	revision: number;
-	format: "srt" | "vtt";
+	format: "srt" | "vtt" | "ass";
 	trackIds: string[];
 	cueCount: number;
 	content: string;
@@ -2525,7 +2525,9 @@ function isSerializedSubtitles(value: unknown): value is {
 		typeof record.projectId === "string" &&
 		typeof record.sceneId === "string" &&
 		typeof record.revision === "number" &&
-		(record.format === "srt" || record.format === "vtt") &&
+		(record.format === "srt" ||
+			record.format === "vtt" ||
+			record.format === "ass") &&
 		Array.isArray(record.trackIds) &&
 		typeof record.cueCount === "number" &&
 		typeof record.content === "string"

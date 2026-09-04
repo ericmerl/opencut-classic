@@ -1511,7 +1511,11 @@ export const exportSubtitlesInputSchema = z.object({
 	operationId: legacyCompatibleOperationIdSchema,
 	expectedRevision: z.number().int().nonnegative(),
 	outputPath: z.string().min(1),
-	format: z.enum(["srt", "vtt"]),
+	format: z
+		.enum(["srt", "vtt", "ass"])
+		.describe(
+			"srt and vtt carry text and timing; ass also carries the supported style subset and returns a structured lossReport for what it could not carry.",
+		),
 	trackIds: z.array(z.string().min(1)).min(1).optional(),
 });
 

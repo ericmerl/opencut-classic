@@ -466,6 +466,76 @@ integrationTest(
 		expect(requireString(captionLayout.geometrySha256, "geometrySha256")).toMatch(
 			/^[a-f0-9]{64}$/,
 		);
+
+		// Apply the preflighted plan, then export the captions as ASS so the
+		// styled subset round-trips and the loss report is durable.
+		const evaluation = requireRecord(
+			requireRecord(preflight.result, "result").evaluation,
+			"evaluation",
+		);
+		const applied = await harness.callTool("opencut_apply_edit_plan", {
+			...affinity(identity),
+			projectId,
+			operationId: "caption-evidence-apply",
+			expectedRevision: requireNumber(project.revision, "revision"),
+			expectedProjectContentHash: contentHash,
+			description: "Add a wrapped TikTok Sans caption",
+			operations: [
+				{
+					kind: "insert_captions",
+					captions: [
+						{
+							text: "This is the part of the video where the hook has to land in the first three seconds",
+							startTime: 0,
+							duration: 240_000,
+						},
+					],
+					style: { preset: "tiktok-classic", fontSize: 6 },
+				},
+			],
+			preflight: {
+				receiptId: requireString(preflight.receiptId, "receiptId"),
+				planFingerprint: requireString(
+					evaluation.planFingerprint,
+					"planFingerprint",
+				),
+				preflightFingerprint: requireString(
+					evaluation.preflightFingerprint,
+					"preflightFingerprint",
+				),
+				planDiffHash: requireString(evaluation.planDiffHash, "planDiffHash"),
+			},
+		});
+		expect(applied.status).toBe("applied");
+		const assPath = join(directory, "captions.ass");
+		const exported = await harness.callTool("opencut_export_subtitles", {
+			...affinity(identity),
+			projectId,
+			operationId: "caption-evidence-export-ass",
+			expectedRevision: requireNumber(applied.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(
+				requireRecord(applied.snapshot, "snapshot"),
+			),
+			outputPath: assPath,
+			format: "ass",
+		});
+		expect(exported).toMatchObject({
+			status: "exported",
+			format: "ass",
+			cueCount: 1,
+			lossReport: {
+				format: "ass",
+				dropped: [
+					{ feature: "background.cornerRadius", cueCount: 1 },
+					{ feature: "background.padding", cueCount: 1 },
+					{ feature: "lineHeight", cueCount: 1 },
+				],
+			},
+		});
+		const assDocument = await readFile(assPath, "utf8");
+		expect(assDocument).toContain("[V4+ Styles]");
+		expect(assDocument).toContain("Style: Default,TikTok Sans,");
+		expect(assDocument).toContain("Dialogue: 0,0:00:00.00,0:00:02.00,Default,");
 	},
 	120_000,
 );

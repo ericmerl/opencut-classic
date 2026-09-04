@@ -58,6 +58,64 @@ describe("subtitle export durable publication", () => {
 	});
 });
 
+test("publishes an ASS document with its structured loss report", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "opencut-subtitle-ass-"));
+	try {
+		const lossReport = {
+			format: "ass",
+			supported: ["fontFamily", "color"],
+			dropped: [
+				{ feature: "lineHeight", cueCount: 1, reason: "no line-height field" },
+			],
+		};
+		const bridge = {
+			request: async () => ({
+				...serialized(),
+				format: "ass",
+				content: ["[Script Info]", "ScriptType: v4.00+", ""].join("\n"),
+				lossReport,
+			}),
+		};
+		const artifacts: unknown[] = [];
+		const checkpoints: OperationCheckpoint[] = [];
+		const context = {
+			record: () => ({ checkpoints }) as unknown as OperationLedgerRecord,
+			checkpoint: async ({
+				checkpoint,
+				artifacts: recorded,
+			}: {
+				checkpoint: OperationCheckpoint;
+				artifacts?: unknown[];
+			}) => {
+				checkpoints.push(checkpoint);
+				artifacts.push(...(recorded ?? []));
+			},
+		} as unknown as OperationExecutionContext;
+		const result = await executeSubtitleExport(
+			bridge,
+			new SubtitleFiles(),
+			{
+				operationId: "subtitle-ass-1",
+				outputPath: join(directory, "captions.ass"),
+				format: "ass",
+			},
+			context,
+		);
+
+		expect(result).toMatchObject({
+			status: "exported",
+			format: "ass",
+			lossReport,
+			outputPath: join(directory, "captions.ass"),
+		});
+		expect(artifacts).toEqual([
+			expect.objectContaining({ kind: "subtitle", mimeType: "text/x-ssa" }),
+		]);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
 function serialized() {
 	return {
 		status: "serialized",

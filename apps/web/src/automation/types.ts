@@ -526,7 +526,7 @@ export type AutomationImportSubtitlesResult =
 export interface AutomationExportSubtitlesRequest {
 	projectId: string;
 	expectedRevision: number;
-	format: "srt" | "vtt";
+	format: "srt" | "vtt" | "ass";
 	trackIds?: string[];
 }
 
@@ -537,10 +537,12 @@ export type AutomationExportSubtitlesResult =
 			sceneId: string;
 			revision: number;
 			contentIdentity: ProjectContentHashResult;
-			format: "srt" | "vtt";
+			format: "srt" | "vtt" | "ass";
 			trackIds: string[];
 			cueCount: number;
 			content: string;
+			/** Structured loss report for ASS; null for text-only formats. */
+			lossReport: import("@/subtitles/ass-export").SubtitleLossReport | null;
 	  }
 	| {
 			status: "conflict";

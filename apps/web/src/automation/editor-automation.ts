@@ -61,7 +61,11 @@ import type { TProject, TProjectSettings } from "@/project/types";
 import type { MediaAsset } from "@/media/types";
 import { buildCaptionTrackInsertion } from "@/subtitles/insert";
 import { parseSubtitleFile } from "@/subtitles/parse";
-import { serializeSubtitles } from "@/subtitles/serialize";
+import { serializeSubtitleDocument } from "@/subtitles/serialize";
+import {
+	buildTextBackgroundFromElement,
+	buildTextLayoutParamsFromElement,
+} from "@/text/measure-element";
 import type { SubtitleCue, SubtitleStyleOverrides } from "@/subtitles/types";
 import { DEFAULT_TRANSCRIPTION_SAMPLE_RATE } from "@/transcription/audio";
 import { buildCaptionChunks } from "@/transcription/caption";
@@ -1909,6 +1913,7 @@ export class EditorAutomation {
 						text: String(element.params.content ?? "").trim(),
 						startTime: mediaTimeToSeconds({ time: element.startTime }),
 						duration: mediaTimeToSeconds({ time: element.duration }),
+						style: captionStyleFromElement(element),
 					})),
 			)
 			.filter((caption) => caption.text && caption.duration > 0)
@@ -1921,6 +1926,11 @@ export class EditorAutomation {
 			return { status: "rejected", reason: "No caption cues were found" };
 		}
 
+		const document = serializeSubtitleDocument({
+			captions,
+			format: request.format,
+			playRes: this.editor.project.getActive().settings.canvasSize,
+		});
 		return {
 			status: "serialized",
 			projectId: request.projectId,
@@ -1930,7 +1940,8 @@ export class EditorAutomation {
 			format: request.format,
 			trackIds: tracks.map((track) => track.id),
 			cueCount: captions.length,
-			content: serializeSubtitles({ captions, format: request.format }),
+			content: document.content,
+			lossReport: document.lossReport,
 		};
 	}
 
@@ -3781,6 +3792,31 @@ function parseOperationReceiptBinding(value: unknown) {
 		browserMethod: String(value.browserMethod),
 		browserRequestFingerprint: String(value.browserRequestFingerprint),
 	} satisfies import("@/services/storage/types").OperationReceiptBinding;
+}
+
+/**
+ * The caption style a text element renders with, so a styled export carries
+ * the same face, weight, colour, and block the renderer draws. Placement is
+ * not derived: the element's absolute position has no margin equivalent.
+ */
+function captionStyleFromElement(
+	element: Extract<TimelineElement, { type: "text" }>,
+): SubtitleStyleOverrides {
+	const text = buildTextLayoutParamsFromElement({ element });
+	const background = buildTextBackgroundFromElement({ element });
+	const color = element.params.color;
+	return {
+		fontFamily: text.fontFamily,
+		fontSize: text.fontSize,
+		...(typeof color === "string" ? { color } : {}),
+		textAlign: text.textAlign,
+		fontWeight: text.fontWeight,
+		fontStyle: text.fontStyle,
+		textDecoration: text.textDecoration,
+		letterSpacing: text.letterSpacing,
+		lineHeight: text.lineHeight,
+		...(background.enabled ? { background } : {}),
+	};
 }
 
 function operationReceiptAfterState(value: unknown): {

@@ -1,13 +1,32 @@
+import { serializeAss, type SubtitleLossReport } from "./ass-export";
 import type { SubtitleCue } from "./types";
 
-export type SubtitleExportFormat = "srt" | "vtt";
+export type SubtitleExportFormat = "srt" | "vtt" | "ass";
+
+/**
+ * Serializes captions to the requested format. SRT and WebVTT carry text and
+ * timing only; ASS also carries the supported style subset and reports what
+ * it could not carry.
+ */
+export function serializeSubtitleDocument({
+	captions,
+	format,
+	playRes,
+}: {
+	captions: SubtitleCue[];
+	format: SubtitleExportFormat;
+	playRes: { width: number; height: number };
+}): { content: string; lossReport: SubtitleLossReport | null } {
+	if (format === "ass") return serializeAss({ captions, playRes });
+	return { content: serializeSubtitles({ captions, format }), lossReport: null };
+}
 
 export function serializeSubtitles({
 	captions,
 	format,
 }: {
 	captions: SubtitleCue[];
-	format: SubtitleExportFormat;
+	format: "srt" | "vtt";
 }): string {
 	const body = captions
 		.map((caption, index) => {
@@ -28,7 +47,7 @@ function formatTimestamp({
 	format,
 }: {
 	seconds: number;
-	format: SubtitleExportFormat;
+	format: "srt" | "vtt";
 }): string {
 	const totalMilliseconds = Math.max(0, Math.round(seconds * 1000));
 	const hours = Math.floor(totalMilliseconds / 3_600_000);

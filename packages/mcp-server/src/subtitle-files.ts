@@ -52,7 +52,7 @@ export class SubtitleFiles {
 		content,
 	}: {
 		path: string;
-		format: "srt" | "vtt";
+		format: "srt" | "vtt" | "ass";
 		content: string;
 	}): Promise<{ outputPath: string; bytesWritten: number; sha256: string }> {
 		if (!isAbsolute(path))
