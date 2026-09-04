@@ -135,6 +135,27 @@ export function toAutomationResolvedOperation(
 				duration: optionalMediaTime(operation.duration),
 				resolvedAllocations: optional(operation.resolvedAllocations),
 			};
+		case "shift_captions":
+			return {
+				...operation,
+				delta: mediaTime({ ticks: operation.delta }),
+				elementIds: optional(operation.elementIds),
+			};
+		case "merge_captions":
+			return { ...operation, separator: optional(operation.separator) };
+		case "split_caption":
+			return {
+				...operation,
+				rightElementId: optional(operation.rightElementId),
+				resolvedAllocations: optional(operation.resolvedAllocations),
+			};
+		case "restyle_captions":
+			return {
+				...operation,
+				elementIds: optional(operation.elementIds),
+				style: resolvedSubtitleStyle(operation.style) ?? {},
+				resolvedParams: optional(operation.resolvedParams),
+			};
 		case "delete":
 			return operation;
 		case "duplicate_elements":
@@ -471,6 +492,37 @@ function toNativeEditOperation(
 				startTime: operation.startTime,
 				duration: operation.duration,
 				resolvedAllocations: operation.resolvedAllocations,
+			};
+		case "shift_captions":
+			return {
+				kind: operation.kind,
+				trackId: operation.trackId,
+				delta: operation.delta,
+				elementIds: operation.elementIds,
+			};
+		case "merge_captions":
+			return {
+				kind: operation.kind,
+				trackId: operation.trackId,
+				elementIds: operation.elementIds,
+				separator: operation.separator,
+			};
+		case "split_caption":
+			return {
+				kind: operation.kind,
+				trackId: operation.trackId,
+				elementId: operation.elementId,
+				splitIndex: operation.splitIndex,
+				rightElementId: operation.rightElementId,
+				resolvedAllocations: operation.resolvedAllocations,
+			};
+		case "restyle_captions":
+			return {
+				kind: operation.kind,
+				trackId: operation.trackId,
+				elementIds: operation.elementIds,
+				style: operation.style,
+				resolvedParams: operation.resolvedParams,
 			};
 		case "delete":
 			return {

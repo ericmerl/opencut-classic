@@ -23,46 +23,33 @@ export function listCaptionStylePresets(): CaptionStylePreset[] {
 }
 
 /**
- * Expands `style.preset` into the concrete style Rust defines for it, with
- * every explicit override in `style` applied on top. Nested background and
- * placement objects merge field by field so an override can change one colour
- * without restating the preset's padding. Throws for an unknown preset so the
- * browser never silently substitutes a style the plan did not name.
+ * Expands `style.preset` exactly as the Rust evaluator does: the preset's
+ * style with every explicit field of `style` applied on top, nested
+ * background and placement merged field by field. Throws for an unknown
+ * preset so the browser never substitutes a style the plan did not name.
  */
 export function applyCaptionStylePreset(
 	style: SubtitleStyleOverrides | undefined,
 ): SubtitleStyleOverrides | undefined {
 	if (!style?.preset) return style;
-	const preset = listCaptionStylePresets().find(
-		(candidate) => candidate.id === style.preset,
-	);
-	if (!preset) throw new Error(`unknown caption style preset: ${style.preset}`);
-	const { preset: _id, ...overrides } = style;
-	const base = preset.style as SubtitleStyleOverrides;
-	return {
-		...stripUndefined(base),
-		...stripUndefined(overrides),
-		...(base.background || overrides.background
-			? {
-					background: {
-						...(base.background ?? { enabled: false, color: "transparent" }),
-						...stripUndefined(overrides.background ?? {}),
-					},
-				}
-			: {}),
-		...(base.placement || overrides.placement
-			? {
-					placement: {
-						...stripUndefined(base.placement ?? {}),
-						...stripUndefined(overrides.placement ?? {}),
-					},
-				}
-			: {}),
-	};
+	const resolve = (
+		opencutWasm as {
+			resolveCaptionStyle?: (options: {
+				style: SubtitleStyleOverrides;
+			}) =>
+				| { status: "resolved"; style: SubtitleStyleOverrides }
+				| { status: "rejected"; reason: string };
+		}
+	).resolveCaptionStyle;
+	if (typeof resolve !== "function") {
+		throw new Error("the native runtime does not resolve caption styles");
+	}
+	const response = resolve({ style: stripUndefinedDeep(style) });
+	if (response.status === "rejected") throw new Error(response.reason);
+	return stripUndefinedDeep(response.style);
 }
 
-function stripUndefined<T extends object>(value: T): T {
-	return Object.fromEntries(
-		Object.entries(value).filter(([, entry]) => entry !== undefined),
-	) as T;
+/** Removes undefined fields so the value crosses the WASM boundary cleanly. */
+function stripUndefinedDeep<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
 }

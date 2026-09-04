@@ -233,7 +233,13 @@ pub enum WarningCode {
     TimelineGapPossible,
     TransitionRemoved,
     RelationshipPruned,
+    CaptionOverlap,
+    CaptionReadingSpeed,
 }
+
+/// Captions faster than this are hard to read at full speed; the evaluator
+/// warns rather than rejects so a reviewer decides.
+pub const CAPTION_MAX_CHARS_PER_SECOND: f64 = 20.0;
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(missing_as_null))]
@@ -272,6 +278,15 @@ pub enum ErrorCode {
 #[export]
 pub fn caption_style_presets() -> CaptionStylePresetList {
     model::caption_style_presets()
+}
+
+/// Expands a caption style's preset the way the evaluator does.
+#[export]
+pub fn resolve_caption_style(options: ResolveCaptionStyleOptions) -> ResolveCaptionStyleResponse {
+    match model::resolve_caption_style(&options.style) {
+        Ok(style) => ResolveCaptionStyleResponse::Resolved { style },
+        Err(reason) => ResolveCaptionStyleResponse::Rejected { reason },
+    }
 }
 
 #[export]
@@ -406,6 +421,10 @@ fn clear_internal_resolved_fields(operations: &mut [EditOperation]) {
                 resolved_allocations,
                 ..
             }
+            | EditOperation::SplitCaption {
+                resolved_allocations,
+                ..
+            }
             | EditOperation::SetRetime {
                 resolved_allocations,
                 ..
@@ -414,6 +433,9 @@ fn clear_internal_resolved_fields(operations: &mut [EditOperation]) {
                 resolved_allocations,
                 ..
             } => *resolved_allocations = None,
+            EditOperation::RestyleCaptions {
+                resolved_params, ..
+            } => *resolved_params = None,
             EditOperation::RemoveTrack {
                 resolved_cascade_element_ids,
                 ..
@@ -1128,6 +1150,35 @@ impl State {
                 } else {
                     Some(vec![])
                 };
+            }
+            EditOperation::SplitCaption {
+                element_id,
+                right_element_id,
+                resolved_allocations,
+                ..
+            } => {
+                self.resolve_created_id(
+                    right_element_id,
+                    "caption-element",
+                    Some(element_id),
+                    index,
+                    fingerprint,
+                    0,
+                )?;
+                *resolved_allocations = Some(vec![ObjectIdAllocation {
+                    role: AllocationRole::CaptionElement,
+                    source_id: element_id.clone(),
+                    resolved_id: required(right_element_id).to_owned(),
+                }]);
+            }
+            EditOperation::RestyleCaptions {
+                style,
+                resolved_params,
+                ..
+            } => {
+                *resolved_params = Some(caption_style_params(style).map_err(|message| {
+                    error(ErrorCode::InvalidValue, message, Some(index), Some("style"))
+                })?);
             }
             EditOperation::SetRetime {
                 track_id,
@@ -2070,6 +2121,7 @@ impl State {
                     element.params = scalar_params;
                     self.insert_element(element, Some(id), index)?;
                 }
+                self.caption_track_warnings(id, index, warnings);
                 Ok(())
             }
             EditOperation::UpdateCaption {
@@ -2110,6 +2162,197 @@ impl State {
                     .is_some_and(|allocations| !allocations.is_empty())
                 {
                     return invalid(index, "caption has unused duration-clamp allocations");
+                }
+                self.caption_track_warnings(track_id, index, warnings);
+                Ok(())
+            }
+            EditOperation::ShiftCaptions {
+                track_id,
+                delta,
+                element_ids,
+            } => {
+                if delta.as_ticks() == 0 {
+                    return invalid(index, "delta cannot be zero");
+                }
+                let targets = self.caption_targets(track_id, element_ids.as_deref(), index)?;
+                for id in &targets {
+                    let element = self.element_mut(track_id, id, index)?;
+                    let moved = add(element.start_time, *delta, index)?;
+                    if moved.as_ticks() < 0 {
+                        return bounds(index, "delta");
+                    }
+                    element.start_time = moved;
+                }
+                self.caption_track_warnings(track_id, index, warnings);
+                Ok(())
+            }
+            EditOperation::MergeCaptions {
+                track_id,
+                element_ids,
+                separator,
+            } => {
+                if element_ids.len() < 2 {
+                    return invalid(index, "merge needs at least two captions");
+                }
+                let mut ordered = self.caption_targets(track_id, Some(element_ids), index)?;
+                if ordered.len() != element_ids.len() {
+                    return invalid(index, "merge captions must be distinct");
+                }
+                let starts: Vec<(MediaTime, String)> = ordered
+                    .iter()
+                    .map(|id| {
+                        let element = self
+                            .snapshot
+                            .elements
+                            .iter()
+                            .find(|e| e.track_id == *track_id && e.element_id == *id)
+                            .expect("targets were validated");
+                        (element.start_time, id.clone())
+                    })
+                    .collect();
+                ordered.sort_by(|left, right| {
+                    let left_start = starts.iter().find(|(_, id)| id == left).map(|(s, _)| *s);
+                    let right_start = starts.iter().find(|(_, id)| id == right).map(|(s, _)| *s);
+                    left_start.cmp(&right_start).then_with(|| left.cmp(right))
+                });
+                let mut texts = Vec::new();
+                let mut start = MediaTime::from_ticks(i64::MAX);
+                let mut end = MediaTime::ZERO;
+                for id in &ordered {
+                    let element = self.element_mut(track_id, id, index)?;
+                    texts.push(caption_text(element).trim().to_owned());
+                    start = start.min(element.start_time);
+                    end = end.max(add(element.start_time, element.duration, index)?);
+                }
+                let joined = texts.join(separator.as_deref().unwrap_or(" "));
+                if joined.trim().is_empty() {
+                    return invalid(index, "merged caption text is empty");
+                }
+                let kept_id = ordered[0].clone();
+                let kept = self.element_mut(track_id, &kept_id, index)?;
+                kept.text = Some(joined.clone());
+                kept.params
+                    .0
+                    .insert("content".to_owned(), Scalar::String(joined));
+                kept.start_time = start;
+                kept.duration = sub(end, start, index)?;
+                // The kept caption spans the absorbed ones, so this is not a
+                // gap-leaving delete; drop them and any transition they held.
+                let absorbed: BTreeSet<&String> = ordered.iter().skip(1).collect();
+                self.snapshot.elements.retain(|element| {
+                    !(element.track_id == *track_id && absorbed.contains(&element.element_id))
+                });
+                self.snapshot.transitions.retain(|transition| {
+                    !absorbed.contains(&transition.from_element_id)
+                        && !absorbed.contains(&transition.to_element_id)
+                });
+                self.caption_track_warnings(track_id, index, warnings);
+                Ok(())
+            }
+            EditOperation::SplitCaption {
+                track_id,
+                element_id,
+                split_index,
+                right_element_id,
+                resolved_allocations,
+            } => {
+                let source = self
+                    .snapshot
+                    .elements
+                    .iter()
+                    .find(|e| e.track_id == *track_id && e.element_id == *element_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        error(
+                            ErrorCode::UnknownReference,
+                            "unknown caption",
+                            Some(index),
+                            Some("elementId"),
+                        )
+                    })?;
+                if source.element_type != "text" {
+                    return incompatible(index, "caption must reference text");
+                }
+                if !source.keyframes.is_empty() {
+                    return invalid(index, "split_caption does not support animated captions");
+                }
+                let chars: Vec<char> = caption_text(&source).chars().collect();
+                if *split_index == 0 || *split_index >= chars.len() {
+                    return bounds(index, "splitIndex");
+                }
+                let left: String = chars[..*split_index]
+                    .iter()
+                    .collect::<String>()
+                    .trim()
+                    .to_owned();
+                let right: String = chars[*split_index..]
+                    .iter()
+                    .collect::<String>()
+                    .trim()
+                    .to_owned();
+                if left.is_empty() || right.is_empty() {
+                    return invalid(index, "split leaves an empty caption");
+                }
+                let left_len = left.chars().count() as i64;
+                let total_len = left_len + right.chars().count() as i64;
+                let left_ticks = source
+                    .duration
+                    .as_ticks()
+                    .checked_mul(left_len)
+                    .map(|value| value / total_len)
+                    .ok_or_else(|| {
+                        error(ErrorCode::ArithmeticOverflow, "overflow", Some(index), None)
+                    })?;
+                let right_ticks = source.duration.as_ticks() - left_ticks;
+                if left_ticks <= 0 || right_ticks <= 0 {
+                    return invalid(index, "caption is too short to split");
+                }
+                if resolved_allocations
+                    .as_ref()
+                    .is_none_or(|allocations| allocations.len() != 1)
+                {
+                    return invalid(index, "split caption allocations were not resolved");
+                }
+                let left_element = self.element_mut(track_id, element_id, index)?;
+                left_element.text = Some(left.clone());
+                left_element
+                    .params
+                    .0
+                    .insert("content".to_owned(), Scalar::String(left));
+                left_element.duration = MediaTime::from_ticks(left_ticks);
+                let mut right_element = new_element(
+                    required(right_element_id),
+                    "text",
+                    &source.name,
+                    add(source.start_time, MediaTime::from_ticks(left_ticks), index)?,
+                    MediaTime::from_ticks(right_ticks),
+                );
+                right_element.text = Some(right.clone());
+                right_element.params = source.params.clone();
+                right_element
+                    .params
+                    .0
+                    .insert("content".to_owned(), Scalar::String(right));
+                right_element.canonical_params = source.canonical_params.clone();
+                self.insert_element(right_element, Some(track_id), index)?;
+                self.caption_track_warnings(track_id, index, warnings);
+                Ok(())
+            }
+            EditOperation::RestyleCaptions {
+                track_id,
+                element_ids,
+                resolved_params,
+                ..
+            } => {
+                let Some(params) = resolved_params else {
+                    return invalid(index, "restyle params were not resolved");
+                };
+                let targets = self.caption_targets(track_id, element_ids.as_deref(), index)?;
+                for id in &targets {
+                    let element = self.element_mut(track_id, id, index)?;
+                    for (key, value) in &params.0 {
+                        element.params.0.insert(key.clone(), value.clone());
+                    }
                 }
                 Ok(())
             }
@@ -2795,6 +3038,132 @@ impl State {
                 )
             })
     }
+    /// The text elements a caption operation addresses on `track`: the listed
+    /// ids, each of which must be a caption on that track, or every caption
+    /// on the track in timeline order.
+    fn caption_targets(
+        &self,
+        track: &str,
+        element_ids: Option<&[String]>,
+        index: usize,
+    ) -> Result<Vec<String>, EditPlanError> {
+        if !self.snapshot.tracks.iter().any(|t| t.track_id == track) {
+            return Err(error(
+                ErrorCode::UnknownReference,
+                "unknown track",
+                Some(index),
+                Some("trackId"),
+            ));
+        }
+        let mut targets: Vec<String> = match element_ids {
+            Some(ids) => {
+                let mut seen = BTreeSet::new();
+                for id in ids {
+                    let element = self
+                        .snapshot
+                        .elements
+                        .iter()
+                        .find(|e| e.track_id == track && e.element_id == *id)
+                        .ok_or_else(|| {
+                            error(
+                                ErrorCode::UnknownReference,
+                                "unknown caption",
+                                Some(index),
+                                Some("elementIds"),
+                            )
+                        })?;
+                    if element.element_type != "text" {
+                        return Err(error(
+                            ErrorCode::IncompatibleTrack,
+                            "caption must reference text",
+                            Some(index),
+                            Some("elementIds"),
+                        ));
+                    }
+                    seen.insert(id.clone());
+                }
+                seen.into_iter().collect()
+            }
+            None => {
+                let mut captions: Vec<&Element> = self
+                    .snapshot
+                    .elements
+                    .iter()
+                    .filter(|e| e.track_id == track && e.element_type == "text")
+                    .collect();
+                captions.sort_by(|a, b| {
+                    a.start_time
+                        .cmp(&b.start_time)
+                        .then_with(|| a.element_id.cmp(&b.element_id))
+                });
+                captions.iter().map(|e| e.element_id.clone()).collect()
+            }
+        };
+        if targets.is_empty() {
+            return Err(error(
+                ErrorCode::InvalidValue,
+                "no captions to operate on",
+                Some(index),
+                Some("trackId"),
+            ));
+        }
+        targets.dedup();
+        Ok(targets)
+    }
+
+    /// Warns about captions that overlap or read faster than
+    /// `CAPTION_MAX_CHARS_PER_SECOND` on `track` after an operation.
+    fn caption_track_warnings(&self, track: &str, index: usize, warnings: &mut BTreeSet<Warning>) {
+        let mut captions: Vec<&Element> = self
+            .snapshot
+            .elements
+            .iter()
+            .filter(|e| e.track_id == track && e.element_type == "text")
+            .collect();
+        captions.sort_by(|a, b| {
+            a.start_time
+                .cmp(&b.start_time)
+                .then_with(|| a.element_id.cmp(&b.element_id))
+        });
+        for pair in captions.windows(2) {
+            let (earlier, later) = (pair[0], pair[1]);
+            let earlier_end = earlier
+                .start_time
+                .as_ticks()
+                .saturating_add(earlier.duration.as_ticks());
+            if later.start_time.as_ticks() < earlier_end {
+                warnings.insert(Warning {
+                    code: WarningCode::CaptionOverlap,
+                    message: format!(
+                        "caption {} overlaps caption {}",
+                        later.element_id, earlier.element_id
+                    ),
+                    operation_index: index,
+                    object_id: Some(later.element_id.clone()),
+                });
+            }
+        }
+        for caption in captions {
+            let characters = caption_text(caption)
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .count() as f64;
+            let seconds = caption.duration.to_seconds_f64();
+            if seconds > 0.0 && characters / seconds > CAPTION_MAX_CHARS_PER_SECOND {
+                warnings.insert(Warning {
+                    code: WarningCode::CaptionReadingSpeed,
+                    message: format!(
+                        "caption {} reads at {:.1} characters per second",
+                        caption.element_id,
+                        characters / seconds
+                    ),
+                    operation_index: index,
+                    object_id: Some(caption.element_id.clone()),
+                });
+            }
+        }
+    }
+
     fn element_mut(
         &mut self,
         track: &str,
@@ -5465,6 +5834,17 @@ fn replace_generated_keyframes(
         });
     }
     Ok(())
+}
+
+/// A caption's text: the evaluator's text field, else its content param.
+fn caption_text(element: &Element) -> String {
+    element
+        .text
+        .clone()
+        .unwrap_or_else(|| match element.params.0.get("content") {
+            Some(Scalar::String(value)) => value.clone(),
+            _ => String::new(),
+        })
 }
 
 fn new_element(id: &str, kind: &str, name: &str, start: MediaTime, duration: MediaTime) -> Element {

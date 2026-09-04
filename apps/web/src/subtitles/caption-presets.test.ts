@@ -27,6 +27,29 @@ const presets = [
 ];
 mock.module("opencut-wasm", () => ({
 	captionStylePresets: () => ({ presets }),
+	resolveCaptionStyle: ({
+		style,
+	}: {
+		style: { preset?: string } & Record<string, unknown>;
+	}) => {
+		const preset = presets.find((candidate) => candidate.id === style.preset);
+		if (!preset) {
+			return {
+				status: "rejected",
+				reason: `unknown caption style preset: ${style.preset}`,
+			};
+		}
+		const { preset: _id, background, placement, ...rest } = style;
+		return {
+			status: "resolved",
+			style: {
+				...preset.style,
+				...rest,
+				background: { ...preset.style.background, ...(background ?? {}) },
+				placement: { ...preset.style.placement, ...(placement ?? {}) },
+			},
+		};
+	},
 }));
 
 const { applyCaptionStylePreset, listCaptionStylePresets } =

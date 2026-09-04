@@ -216,6 +216,46 @@ const parityCases: NativeParityCase[] = [
 		operation: { kind: "adjust_mix_gain", gainDb: -2 },
 	},
 	{
+		name: "shift_captions moves the selected caption",
+		operation: {
+			kind: "shift_captions",
+			trackId: "text-track",
+			delta: mediaTime({ ticks: 12_000 }),
+			elementIds: ["caption-second"],
+		},
+		state: withPlainCaptions,
+	},
+	{
+		name: "merge_captions joins captions in timeline order",
+		operation: {
+			kind: "merge_captions",
+			trackId: "text-track",
+			elementIds: ["caption-third", "caption-second"],
+			separator: " / ",
+		},
+		state: withPlainCaptions,
+	},
+	{
+		name: "split_caption shares duration by text length",
+		operation: {
+			kind: "split_caption",
+			trackId: "text-track",
+			elementId: "caption-second",
+			splitIndex: 6,
+		},
+		state: withPlainCaptions,
+	},
+	{
+		name: "restyle_captions applies Rust-resolved preset params",
+		operation: {
+			kind: "restyle_captions",
+			trackId: "text-track",
+			elementIds: ["caption-second"],
+			style: { preset: "tiktok-classic", color: "#ffff00" },
+		},
+		state: withPlainCaptions,
+	},
+	{
 		name: "update_caption preserves text defaults",
 		state: richState,
 		operation: {
@@ -1286,6 +1326,14 @@ function invalidOperation(
 			return { ...operation, gainDb: 1_000 };
 		case "duplicate_elements":
 			return { ...operation, elements: [] };
+		case "shift_captions":
+			return { ...operation, delta: mediaTime({ ticks: 0 }) };
+		case "merge_captions":
+			return { ...operation, elementIds: [] };
+		case "split_caption":
+			return { ...operation, splitIndex: 0 };
+		case "restyle_captions":
+			return { ...operation, style: { fontSizeRatioOfPlayHeight: 0.1 } };
 		case "create_compound":
 			return { ...operation, elements: operation.elements.slice(0, 1) };
 		case "set_group":
@@ -1755,6 +1803,45 @@ function audioElement({
 		throw new Error("audio fixture changed type");
 	}
 	return { ...element, id };
+}
+
+/** The parity state with two plain captions that carry no animations. */
+function withPlainCaptions(): NativeState {
+	const state = richState();
+	const target = state.project.scenes.find(
+		(scene) => scene.id === "scene-target",
+	);
+	const track = target?.tracks.overlay.find(
+		(candidate) => candidate.id === "text-track",
+	);
+	if (!track) throw new Error("text track fixture missing");
+	track.elements = [
+		...(track.elements as TextElement[]),
+		plainCaption({
+			id: "caption-second",
+			content: "Second caption text",
+			startTicks: 150_000,
+		}),
+		plainCaption({ id: "caption-third", content: "Third caption", startTicks: 300_000 }),
+	] as TextElement[];
+	return state;
+}
+
+function plainCaption({
+	id,
+	content,
+	startTicks,
+}: {
+	id: string;
+	content: string;
+	startTicks: number;
+}): TextElement {
+	const element = buildTextElement({
+		raw: { params: { content } },
+		startTime: mediaTime({ ticks: startTicks }),
+	});
+	if (element.type !== "text") throw new Error("text fixture changed type");
+	return { ...element, id, duration: mediaTime({ ticks: 120_000 }) };
 }
 
 function textElement(): TextElement {

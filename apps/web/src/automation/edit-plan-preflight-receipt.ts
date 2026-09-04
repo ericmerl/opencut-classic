@@ -165,6 +165,7 @@ function normalizeRustOperationOptions(
 	// fingerprint, including when the TypeScript adapter materializes it as
 	// `undefined` for operations such as set_audio.
 	delete value.resolvedAllocations;
+	delete value.resolvedParams;
 	delete value.resolvedCascadeElementIds;
 	if (value.autoTrackId === undefined) delete value.autoTrackId;
 	const optional: Partial<Record<typeof operation.kind, string[]>> = {
@@ -176,6 +177,10 @@ function normalizeRustOperationOptions(
 		set_project_settings: ["fps", "canvasSize", "background"],
 		insert_captions: ["trackId", "style"],
 		update_caption: ["text", "startTime", "duration"],
+		shift_captions: ["elementIds"],
+		merge_captions: ["separator"],
+		split_caption: ["rightElementId"],
+		restyle_captions: ["elementIds"],
 		duplicate_elements: ["duplicateIds"],
 		create_compound: ["name", "targetTrackId"],
 		break_apart_compound: ["restoredElementIds"],

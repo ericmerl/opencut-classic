@@ -782,6 +782,182 @@ pub fn is_caption_style_preset(id: &str) -> bool {
         .any(|preset| preset.id == id)
 }
 
+/// Expands `style.preset` into the preset's style with every explicit field
+/// of `style` applied on top; nested background and placement merge field by
+/// field. The result never carries a preset id.
+pub fn resolve_caption_style(
+    style: &SubtitleStyleOverrides,
+) -> Result<SubtitleStyleOverrides, String> {
+    let Some(preset_id) = style.preset.as_deref() else {
+        return Ok(style.clone());
+    };
+    let preset = caption_style_presets()
+        .presets
+        .into_iter()
+        .find(|preset| preset.id == preset_id)
+        .ok_or_else(|| format!("unknown caption style preset: {preset_id}"))?;
+    let base = preset.style;
+    let background = match (&base.background, &style.background) {
+        (_, None) => base.background.clone(),
+        (None, Some(override_)) => Some(override_.clone()),
+        (Some(base), Some(override_)) => Some(SubtitleBackground {
+            enabled: override_.enabled,
+            color: override_.color.clone(),
+            corner_radius: override_.corner_radius.or(base.corner_radius),
+            padding_x: override_.padding_x.or(base.padding_x),
+            padding_y: override_.padding_y.or(base.padding_y),
+            offset_x: override_.offset_x.or(base.offset_x),
+            offset_y: override_.offset_y.or(base.offset_y),
+        }),
+    };
+    let placement = match (&base.placement, &style.placement) {
+        (_, None) => base.placement.clone(),
+        (None, Some(override_)) => Some(override_.clone()),
+        (Some(base), Some(override_)) => Some(SubtitlePlacementStyle {
+            vertical_align: override_.vertical_align.or(base.vertical_align),
+            margin_left_ratio: override_.margin_left_ratio.or(base.margin_left_ratio),
+            margin_right_ratio: override_.margin_right_ratio.or(base.margin_right_ratio),
+            margin_vertical_ratio: override_
+                .margin_vertical_ratio
+                .or(base.margin_vertical_ratio),
+        }),
+    };
+    Ok(SubtitleStyleOverrides {
+        preset: None,
+        font_size: style.font_size.or(base.font_size),
+        font_size_ratio_of_play_height: style
+            .font_size_ratio_of_play_height
+            .or(base.font_size_ratio_of_play_height),
+        font_family: style.font_family.clone().or(base.font_family),
+        color: style.color.clone().or(base.color),
+        background,
+        text_align: style.text_align.or(base.text_align),
+        font_weight: style.font_weight.or(base.font_weight),
+        font_style: style.font_style.or(base.font_style),
+        text_decoration: style.text_decoration.or(base.text_decoration),
+        letter_spacing: style.letter_spacing.or(base.letter_spacing),
+        line_height: style.line_height.or(base.line_height),
+        placement,
+    })
+}
+
+/// The text element params a caption style sets. Placement and play-height
+/// sizes need a canvas and are refused; the browser materializes those only
+/// when it inserts a caption.
+pub fn caption_style_params(style: &SubtitleStyleOverrides) -> Result<Params, String> {
+    if style.placement.is_some() {
+        return Err("restyle cannot change caption placement".into());
+    }
+    if style.font_size_ratio_of_play_height.is_some() {
+        return Err("restyle cannot size captions by play height".into());
+    }
+    // A preset's placement only applies when a caption is inserted; restyle
+    // leaves existing positions alone.
+    let style = resolve_caption_style(style)?;
+    let mut params = std::collections::BTreeMap::new();
+    put_string(&mut params, "fontFamily", style.font_family.clone());
+    put_string(&mut params, "color", style.color.clone());
+    put_string(
+        &mut params,
+        "textAlign",
+        style.text_align.map(|value| match value {
+            TextAlign::Left => "left".to_owned(),
+            TextAlign::Center => "center".to_owned(),
+            TextAlign::Right => "right".to_owned(),
+        }),
+    );
+    put_string(
+        &mut params,
+        "fontWeight",
+        style.font_weight.map(|value| match value {
+            TextFontWeight::Normal => "normal".to_owned(),
+            TextFontWeight::Bold => "bold".to_owned(),
+        }),
+    );
+    put_string(
+        &mut params,
+        "fontStyle",
+        style.font_style.map(|value| match value {
+            TextFontStyle::Normal => "normal".to_owned(),
+            TextFontStyle::Italic => "italic".to_owned(),
+        }),
+    );
+    put_string(
+        &mut params,
+        "textDecoration",
+        style.text_decoration.map(|value| match value {
+            TextDecoration::None => "none".to_owned(),
+            TextDecoration::Underline => "underline".to_owned(),
+            TextDecoration::LineThrough => "line-through".to_owned(),
+        }),
+    );
+    put_number(&mut params, "fontSize", style.font_size);
+    put_number(&mut params, "letterSpacing", style.letter_spacing);
+    put_number(&mut params, "lineHeight", style.line_height);
+    if let Some(background) = &style.background {
+        params.insert(
+            "background.enabled".to_owned(),
+            Scalar::Boolean(background.enabled),
+        );
+        params.insert(
+            "background.color".to_owned(),
+            Scalar::String(background.color.clone()),
+        );
+        put_number(
+            &mut params,
+            "background.cornerRadius",
+            background.corner_radius,
+        );
+        put_number(&mut params, "background.paddingX", background.padding_x);
+        put_number(&mut params, "background.paddingY", background.padding_y);
+        put_number(&mut params, "background.offsetX", background.offset_x);
+        put_number(&mut params, "background.offsetY", background.offset_y);
+    }
+    if params.is_empty() {
+        return Err("restyle sets no caption params".into());
+    }
+    Ok(Params(params))
+}
+
+fn put_string(
+    params: &mut std::collections::BTreeMap<String, Scalar>,
+    key: &str,
+    value: Option<String>,
+) {
+    if let Some(value) = value {
+        params.insert(key.to_owned(), Scalar::String(value));
+    }
+}
+
+fn put_number(
+    params: &mut std::collections::BTreeMap<String, Scalar>,
+    key: &str,
+    value: Option<f64>,
+) {
+    if let Some(value) = value {
+        params.insert(key.to_owned(), Scalar::Number(value));
+    }
+}
+
+/// Input of the exported `resolve_caption_style`.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolveCaptionStyleOptions {
+    pub style: SubtitleStyleOverrides,
+}
+
+/// Result of `resolve_caption_style` in transport form.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ResolveCaptionStyleResponse {
+    Resolved { style: SubtitleStyleOverrides },
+    Rejected { reason: String },
+}
+
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -936,6 +1112,40 @@ pub enum EditOperation {
         duration: Option<MediaTime>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolved_allocations: Option<Vec<ObjectIdAllocation>>,
+    },
+    /// Moves every caption on the track (or the listed ones) by `delta`.
+    ShiftCaptions {
+        track_id: String,
+        delta: MediaTime,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        element_ids: Option<Vec<String>>,
+    },
+    /// Joins two or more captions on one track into the earliest of them.
+    MergeCaptions {
+        track_id: String,
+        element_ids: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        separator: Option<String>,
+    },
+    /// Splits a caption's text at a character index into two captions whose
+    /// durations share the original in proportion to their text.
+    SplitCaption {
+        track_id: String,
+        element_id: String,
+        split_index: usize,
+        right_element_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_allocations: Option<Vec<ObjectIdAllocation>>,
+    },
+    /// Applies a caption style (optionally from a preset) to every caption on
+    /// the track or to the listed ones; the evaluator resolves the params.
+    RestyleCaptions {
+        track_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        element_ids: Option<Vec<String>>,
+        style: SubtitleStyleOverrides,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_params: Option<Params>,
     },
     Delete {
         track_id: String,

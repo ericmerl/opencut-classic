@@ -18,6 +18,7 @@ interface NativeProjectState {
 	evaluateLifecycleMutation: (options: unknown) => unknown;
 	scheduleFrameRange: (options: unknown) => unknown;
 	captionStylePresets: () => unknown;
+	resolveCaptionStyle: (options: unknown) => unknown;
 }
 
 /**
@@ -91,6 +92,8 @@ mock.module("opencut-wasm", () => ({
 	evaluateLifecycleMutation: (options: unknown) =>
 		nativeProjectState().evaluateLifecycleMutation(options),
 	captionStylePresets: () => nativeProjectState().captionStylePresets(),
+	resolveCaptionStyle: (options: unknown) =>
+		nativeProjectState().resolveCaptionStyle(options),
 	scheduleFrameRange: (options: unknown) =>
 		nativeProjectState().scheduleFrameRange(options),
 	guessTimecodeFormat: () => "HH:MM:SS",

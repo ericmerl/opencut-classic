@@ -318,6 +318,9 @@ integrationTest(
 			receiptDirectory: join(directory, "caption-receipts"),
 		});
 		await harness.callTool("opencut_start_editor_worker", {});
+		// Preflight and operation ids are durable across runs, so each run
+		// names its own.
+		const runId = randomBytes(4).toString("hex");
 		const status = await harness.callTool("opencut_connection_status", {});
 		const identity = requireRecord(
 			status.connectionIdentity,
@@ -376,7 +379,7 @@ integrationTest(
 			...affinity(identity),
 			projectId,
 			sceneId,
-			operationId: "caption-evidence-save",
+			operationId: `caption-evidence-save-${runId}`,
 			expectedRevision: requireNumber(project.revision, "revision"),
 			expectedContentHash: contentHash,
 		});
@@ -387,13 +390,13 @@ integrationTest(
 				contractVersion: 2,
 				bridgeProtocolVersion: 2,
 				expectedConnectionIdentity: identity,
-				preflightId: "caption-evidence-preflight",
+				preflightId: `caption-evidence-preflight-${runId}`,
 				projectId,
 				sceneId,
 				expectedRevision: requireNumber(project.revision, "revision"),
 				expectedProjectContentHash: contentHash,
 				expectedWriteVersion: requireNumber(saved.writeVersion, "writeVersion"),
-				saveReceiptOperationId: "caption-evidence-save",
+				saveReceiptOperationId: `caption-evidence-save-${runId}`,
 				expectedSaveReceiptId: requireString(saved.receiptId, "receiptId"),
 				description: "Add a wrapped TikTok Sans caption",
 				operations: [
@@ -476,7 +479,7 @@ integrationTest(
 		const applied = await harness.callTool("opencut_apply_edit_plan", {
 			...affinity(identity),
 			projectId,
-			operationId: "caption-evidence-apply",
+			operationId: `caption-evidence-apply-${runId}`,
 			expectedRevision: requireNumber(project.revision, "revision"),
 			expectedProjectContentHash: contentHash,
 			description: "Add a wrapped TikTok Sans caption",
@@ -511,7 +514,7 @@ integrationTest(
 		const exported = await harness.callTool("opencut_export_subtitles", {
 			...affinity(identity),
 			projectId,
-			operationId: "caption-evidence-export-ass",
+			operationId: `caption-evidence-export-ass-${runId}`,
 			expectedRevision: requireNumber(applied.revision, "revision"),
 			expectedProjectContentHash: requireProjectContentHash(
 				requireRecord(applied.snapshot, "snapshot"),
@@ -536,6 +539,123 @@ integrationTest(
 		expect(assDocument).toContain("[V4+ Styles]");
 		expect(assDocument).toContain("Style: Default,TikTok Sans,");
 		expect(assDocument).toContain("Dialogue: 0,0:00:00.00,0:00:02.00,Default,");
+
+		// Restructure the inserted caption: split it at a word boundary and
+		// restyle the left half from a preset, all resolved by Rust.
+		const appliedSnapshot = requireRecord(applied.snapshot, "snapshot");
+		const captionElement = requireRecords(appliedSnapshot.elements, "elements").find(
+			(element) => element.type === "text",
+		);
+		if (!captionElement) throw new Error("expected the inserted caption");
+		const captionTrackId = requireString(captionElement.trackId, "trackId");
+		const captionElementId = requireString(captionElement.elementId, "elementId");
+		const restructureOperations = [
+			{
+				kind: "split_caption",
+				trackId: captionTrackId,
+				elementId: captionElementId,
+				splitIndex: 29,
+			},
+			{
+				kind: "restyle_captions",
+				trackId: captionTrackId,
+				elementIds: [captionElementId],
+				style: { preset: "tiktok-classic-red" },
+			},
+		];
+		const appliedHash = requireProjectContentHash(appliedSnapshot);
+		const savedAfterApply = await harness.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: `caption-restructure-save-${runId}`,
+			expectedRevision: requireNumber(applied.revision, "revision"),
+			expectedContentHash: appliedHash,
+		});
+		expect(savedAfterApply).toMatchObject({
+			status: "saved",
+			contentHash: appliedHash,
+		});
+		const restructureRequest = {
+			contractVersion: 2,
+			bridgeProtocolVersion: 2,
+			expectedConnectionIdentity: identity,
+			preflightId: `caption-restructure-preflight-${runId}`,
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(applied.revision, "revision"),
+			expectedProjectContentHash: appliedHash,
+			expectedWriteVersion: requireNumber(
+				savedAfterApply.writeVersion,
+				"writeVersion",
+			),
+			saveReceiptOperationId: `caption-restructure-save-${runId}`,
+			expectedSaveReceiptId: requireString(
+				savedAfterApply.receiptId,
+				"receiptId",
+			),
+			description: "Split and restyle the caption",
+			operations: restructureOperations,
+			policy: {
+				warningPolicy: "allow",
+				providerExecution: "forbidden",
+				costPolicy: "require-exact",
+			},
+		};
+		const restructurePreflight = await harness.callTool(
+			"opencut_preflight_edit_plan",
+			restructureRequest,
+			5 * 60_000,
+		);
+		expect(restructurePreflight).toMatchObject({
+			disposition: "evaluated",
+			result: { status: "validated" },
+		});
+		const restructureEvaluation = requireRecord(
+			requireRecord(restructurePreflight.result, "result").evaluation,
+			"evaluation",
+		);
+		const resolvedRestyle = requireRecords(
+			restructureEvaluation.resolvedOperations,
+			"resolvedOperations",
+		)[1];
+		expect(resolvedRestyle).toMatchObject({
+			kind: "restyle_captions",
+			resolvedParams: { fontFamily: "TikTok Sans", "background.color": "#ff0000" },
+		});
+		const restructured = await harness.callTool("opencut_apply_edit_plan", {
+			...affinity(identity),
+			projectId,
+			operationId: `caption-restructure-apply-${runId}`,
+			expectedRevision: restructureRequest.expectedRevision,
+			expectedProjectContentHash: restructureRequest.expectedProjectContentHash,
+			description: restructureRequest.description,
+			operations: restructureOperations,
+			preflight: {
+				receiptId: requireString(restructurePreflight.receiptId, "receiptId"),
+				planFingerprint: requireString(
+					restructureEvaluation.planFingerprint,
+					"planFingerprint",
+				),
+				preflightFingerprint: requireString(
+					restructureEvaluation.preflightFingerprint,
+					"preflightFingerprint",
+				),
+				planDiffHash: requireString(
+					restructureEvaluation.planDiffHash,
+					"planDiffHash",
+				),
+			},
+		});
+		expect(restructured.status).toBe("applied");
+		const captionsAfter = requireRecords(
+			requireRecord(restructured.snapshot, "snapshot").elements,
+			"elements",
+		).filter((element) => element.type === "text");
+		expect(captionsAfter).toHaveLength(2);
+		expect(
+			requireProjectContentHash(requireRecord(restructured.snapshot, "snapshot")),
+		).toBe(requireString(restructureEvaluation.predictedProjectHash, "predicted"));
 	},
 	120_000,
 );

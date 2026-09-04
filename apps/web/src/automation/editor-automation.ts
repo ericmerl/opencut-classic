@@ -85,6 +85,7 @@ import { captureEditPlanPreflightSource } from "./edit-plan-preflight-source";
 import { editPlanPreflightReceiptStore } from "./edit-plan-preflight-receipt";
 import { toAutomationResolvedOperation } from "./edit-plan-operation-adapter";
 import { buildCaptionElementForNativeApply } from "./edit-plan-caption-materialization";
+import { buildCaptionRestructureCommand } from "./caption-restructure";
 import {
 	ResolvedObjectIds,
 	resolveElementAutoTrackId,
@@ -2616,6 +2617,17 @@ export class EditorAutomation {
 	}
 
 	buildNativeEditOperationCommand(operation: AutomationEditOperation): Command {
+		if (
+			operation.kind === "shift_captions" ||
+			operation.kind === "merge_captions" ||
+			operation.kind === "split_caption" ||
+			operation.kind === "restyle_captions"
+		) {
+			return buildCaptionRestructureCommand({
+				operation,
+				tracks: this.getTracks(),
+			});
+		}
 		if (
 			operation.kind === "insert_graphic" ||
 			operation.kind === "insert_sticker" ||

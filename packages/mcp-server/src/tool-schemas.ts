@@ -923,6 +923,62 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 	}),
 	z
 		.object({
+			kind: z.literal("shift_captions"),
+			trackId: z.string().min(1),
+			delta: z
+				.number()
+				.int()
+				.describe("Signed offset in canonical media ticks; cannot be zero."),
+			elementIds: z
+				.array(z.string().min(1))
+				.min(1)
+				.optional()
+				.describe("Captions to move; omitted moves every caption on the track."),
+		})
+		.strict()
+		.refine((value) => value.delta !== 0, { message: "delta cannot be zero" }),
+	z
+		.object({
+			kind: z.literal("merge_captions"),
+			trackId: z.string().min(1),
+			elementIds: z
+				.array(z.string().min(1))
+				.min(2)
+				.describe(
+					"Captions to join in timeline order into the earliest one; the others are removed.",
+				),
+			separator: z.string().optional(),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("split_caption"),
+			trackId: z.string().min(1),
+			elementId: z.string().min(1),
+			splitIndex: z
+				.number()
+				.int()
+				.positive()
+				.describe(
+					"Character index inside the caption text; durations split in proportion to the two texts.",
+				),
+			rightElementId: z.string().trim().min(1).optional(),
+			resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("restyle_captions"),
+			trackId: z.string().min(1),
+			elementIds: z.array(z.string().min(1)).min(1).optional(),
+			style: captionStyleSchema.describe(
+				"Style to apply; placement and play-height sizing are refused because restyle does not move captions.",
+			),
+			resolvedParams: elementParamRecordSchema.optional(),
+		})
+		.strict(),
+	z
+		.object({
 			kind: z.literal("update_caption"),
 			trackId: z.string().min(1),
 			elementId: z.string().min(1),
@@ -1312,11 +1368,16 @@ const resolvedAllocationKinds = new Set([
 	"separate_source_audio",
 	"duck_audio",
 	"update_caption",
+	"split_caption",
 	"set_retime",
 	"trim",
 	"split",
 	"duplicate_track",
 	"instantiate_asset",
+]);
+/** Fields only the Rust evaluator may fill, per kind, beyond allocations. */
+const resolvedInternalFields = new Map<string, string[]>([
+	["restyle_captions", ["resolvedParams"]],
 ]);
 const resolvedSkipFields = new Map<string, Set<string>>(
 	[...resolvedAllocationKinds].map((kind) => [
@@ -1361,7 +1422,10 @@ export const resolvedEditOperationSchema = z.discriminatedUnion(
 	baseEditOperationSchema.options.map((schema) => {
 		const strict: z.ZodObject = schema.strict();
 		const kind = (strict.shape.kind as z.ZodLiteral<string>).value;
-		const skipFields = resolvedSkipFields.get(kind) ?? new Set<string>();
+		const skipFields = new Set([
+			...(resolvedSkipFields.get(kind) ?? []),
+			...(resolvedInternalFields.get(kind) ?? []),
+		]);
 		const resolvedShape: Record<string, z.ZodType> = {};
 		for (const [fieldName, fieldSchema] of Object.entries(strict.shape)) {
 			if (skipFields.has(fieldName)) continue;
@@ -1384,8 +1448,15 @@ export const editOperationSchema = z.discriminatedUnion(
 	baseEditOperationSchema.options.map((schema) => {
 		const strict: z.ZodObject = schema.strict();
 		const kind = (strict.shape.kind as z.ZodLiteral<string>).value;
-		return resolvedAllocationKinds.has(kind)
-			? strict.safeExtend({ resolvedAllocations: z.never().optional() })
+		const internal: Record<string, z.ZodType> = {};
+		if (resolvedAllocationKinds.has(kind)) {
+			internal.resolvedAllocations = z.never().optional();
+		}
+		for (const field of resolvedInternalFields.get(kind) ?? []) {
+			internal[field] = z.never().optional();
+		}
+		return Object.keys(internal).length > 0
+			? strict.safeExtend(internal)
 			: strict;
 	}) as typeof baseEditOperationSchema.options,
 );

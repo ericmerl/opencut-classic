@@ -778,7 +778,7 @@ fn adjust_mix_gain_rejects_projects_without_audible_timeline_elements() {
 }
 
 #[test]
-fn all_41_operation_variants_have_a_strict_typed_transport_shape() {
+fn all_45_operation_variants_have_a_strict_typed_transport_shape() {
     let reference = serde_json::json!({ "trackId": "main", "elementId": "element" });
     let operations = vec![
         serde_json::json!({ "kind": "insert_text", "content": "x", "startTime": 0, "duration": 1 }),
@@ -790,6 +790,10 @@ fn all_41_operation_variants_have_a_strict_typed_transport_shape() {
         serde_json::json!({ "kind": "set_project_settings", "fps": { "numerator": 30, "denominator": 1 } }),
         serde_json::json!({ "kind": "insert_captions", "captions": [{ "text": "x", "startTime": 0, "duration": 1 }] }),
         serde_json::json!({ "kind": "update_caption", "trackId": "t", "elementId": "e", "text": "x" }),
+        serde_json::json!({ "kind": "shift_captions", "trackId": "t", "delta": 1 }),
+        serde_json::json!({ "kind": "merge_captions", "trackId": "t", "elementIds": ["a", "b"] }),
+        serde_json::json!({ "kind": "split_caption", "trackId": "t", "elementId": "e", "splitIndex": 1 }),
+        serde_json::json!({ "kind": "restyle_captions", "trackId": "t", "style": { "preset": "tiktok-classic" } }),
         serde_json::json!({ "kind": "delete", "trackId": "t", "elementId": "e", "ripple": false, "relationshipScope": "all" }),
         serde_json::json!({ "kind": "duplicate_elements", "elements": [reference.clone()], "relationshipScope": "all" }),
         serde_json::json!({ "kind": "create_compound", "compoundId": "c", "elements": [reference.clone(), reference.clone()], "relationshipScope": "all" }),
@@ -823,7 +827,7 @@ fn all_41_operation_variants_have_a_strict_typed_transport_shape() {
         serde_json::json!({ "kind": "set_audio_replacement_state", "trackId": "t", "elementId": "e", "enabled": true }),
         serde_json::json!({ "kind": "remove_audio_replacement", "trackId": "t", "elementId": "e" }),
     ];
-    assert_eq!(operations.len(), 41);
+    assert_eq!(operations.len(), 45);
     for operation in operations {
         let expected_kind = operation["kind"].clone();
         let typed: EditOperation = serde_json::from_value(operation.clone()).unwrap();
@@ -832,7 +836,7 @@ fn all_41_operation_variants_have_a_strict_typed_transport_shape() {
 }
 
 #[test]
-fn all_51_operation_variants_have_valid_and_invalid_evaluator_coverage() {
+fn all_55_operation_variants_have_valid_and_invalid_evaluator_coverage() {
     let t = MediaTime::from_ticks;
     let reference = || ElementRef {
         track_id: "track-text".into(),
@@ -981,6 +985,65 @@ fn all_51_operation_variants_have_valid_and_invalid_evaluator_coverage() {
                 start_time: None,
                 duration: None,
                 resolved_allocations: None,
+            }],
+        ),
+        (
+            "shift_captions",
+            full_snapshot(),
+            vec![EditOperation::ShiftCaptions {
+                track_id: "track-text".into(),
+                delta: t(10_000),
+                element_ids: None,
+            }],
+        ),
+        (
+            "merge_captions",
+            full_snapshot(),
+            vec![
+                EditOperation::InsertCaptions {
+                    track_id: Some("captions-2".into()),
+                    captions: vec![
+                        Caption {
+                            element_id: Some("cap-a".into()),
+                            ..resolved_caption("first half", MediaTime::ZERO, t(30_000))
+                        },
+                        Caption {
+                            element_id: Some("cap-b".into()),
+                            resolved_name: Some("Caption 2".into()),
+                            ..resolved_caption("second half", t(40_000), t(30_000))
+                        },
+                    ],
+                    style: None,
+                },
+                EditOperation::MergeCaptions {
+                    track_id: "captions-2".into(),
+                    element_ids: vec!["cap-a".into(), "cap-b".into()],
+                    separator: None,
+                },
+            ],
+        ),
+        (
+            "split_caption",
+            full_snapshot(),
+            vec![EditOperation::SplitCaption {
+                track_id: "track-text".into(),
+                element_id: "text-1".into(),
+                split_index: 2,
+                right_element_id: None,
+                resolved_allocations: None,
+            }],
+        ),
+        (
+            "restyle_captions",
+            full_snapshot(),
+            vec![EditOperation::RestyleCaptions {
+                track_id: "track-text".into(),
+                element_ids: None,
+                style: SubtitleStyleOverrides {
+                    preset: Some("tiktok-classic".into()),
+                    ..Default::default()
+                },
+                resolved_params: None,
             }],
         ),
         (
@@ -1428,7 +1491,7 @@ fn all_51_operation_variants_have_valid_and_invalid_evaluator_coverage() {
             }],
         ),
     ];
-    assert_eq!(cases.len(), 51);
+    assert_eq!(cases.len(), 55);
     for (name, before, operations) in cases {
         let valid = evaluate(options_with_before(before.clone(), operations.clone()));
         if let Err(error) = valid {
@@ -1813,6 +1876,21 @@ fn invalid_operations_for(operations: &[EditOperation]) -> Vec<EditOperation> {
         }
         "insert_captions" => {
             object.insert("captions".into(), serde_json::json!([]));
+        }
+        "shift_captions" => {
+            object.insert("delta".into(), serde_json::json!(0));
+        }
+        "merge_captions" => {
+            object.insert("elementIds".into(), serde_json::json!([]));
+        }
+        "split_caption" => {
+            object.insert("splitIndex".into(), serde_json::json!(0));
+        }
+        "restyle_captions" => {
+            object.insert(
+                "style".into(),
+                serde_json::json!({ "fontSizeRatioOfPlayHeight": 0.1 }),
+            );
         }
         "duplicate_elements" | "create_compound" | "set_group" | "set_link" => {
             object.insert("elements".into(), serde_json::json!([]));
@@ -2710,4 +2788,213 @@ fn caption_style_presets_name_bundled_faces_and_gate_insertion() {
     assert!(evaluate(options(vec![insert("tiktok-classic")])).is_ok());
     let error = evaluate(options(vec![insert("not-a-preset")])).unwrap_err();
     assert_eq!(error.message, "unknown caption style preset");
+}
+
+fn caption_plan(operations: Vec<EditOperation>) -> Vec<EditOperation> {
+    let mut plan = vec![EditOperation::InsertCaptions {
+        track_id: Some("captions".into()),
+        captions: vec![
+            Caption {
+                element_id: Some("cap-a".into()),
+                ..resolved_caption(
+                    "hello there",
+                    MediaTime::ZERO,
+                    MediaTime::from_ticks(120_000),
+                )
+            },
+            Caption {
+                element_id: Some("cap-b".into()),
+                resolved_name: Some("Caption 2".into()),
+                ..resolved_caption(
+                    "general kenobi",
+                    MediaTime::from_ticks(150_000),
+                    MediaTime::from_ticks(120_000),
+                )
+            },
+        ],
+        style: None,
+    }];
+    plan.extend(operations);
+    plan
+}
+
+fn caption_after<'a>(result: &'a EditPlanEvaluation, id: &str) -> &'a CanonicalElement {
+    result.predicted_after.project.scenes[0]
+        .tracks
+        .iter()
+        .find(|track| track.id == "captions")
+        .expect("caption track")
+        .elements
+        .iter()
+        .find(|element| element.common().id == id)
+        .unwrap_or_else(|| panic!("caption {id} missing"))
+}
+
+#[test]
+fn merge_captions_joins_text_in_timeline_order_and_spans_both() {
+    let result = evaluate(options(caption_plan(vec![EditOperation::MergeCaptions {
+        track_id: "captions".into(),
+        element_ids: vec!["cap-b".into(), "cap-a".into()],
+        separator: Some(" / ".into()),
+    }])))
+    .unwrap();
+    let merged = caption_after(&result, "cap-a").common();
+    assert_eq!(merged.start_time, MediaTime::ZERO);
+    assert_eq!(merged.duration, MediaTime::from_ticks(270_000));
+    assert_eq!(
+        scalar_string_of(&merged.params, "content"),
+        Some("hello there / general kenobi")
+    );
+    assert!(
+        result.predicted_after.project.scenes[0]
+            .tracks
+            .iter()
+            .flat_map(|track| track.elements.iter())
+            .all(|element| element.common().id != "cap-b")
+    );
+    assert!(result.warnings.is_empty());
+}
+
+#[test]
+fn split_caption_shares_duration_by_text_length_and_allocates_the_right_id() {
+    let result = evaluate(options(caption_plan(vec![EditOperation::SplitCaption {
+        track_id: "captions".into(),
+        element_id: "cap-a".into(),
+        split_index: 5,
+        right_element_id: None,
+        resolved_allocations: None,
+    }])))
+    .unwrap();
+    let EditOperation::SplitCaption {
+        right_element_id: Some(right_id),
+        resolved_allocations: Some(allocations),
+        ..
+    } = &result.resolved_operations[1]
+    else {
+        panic!("split was not resolved");
+    };
+    assert_eq!(allocations.len(), 1);
+    assert_eq!(allocations[0].resolved_id, *right_id);
+    let left = caption_after(&result, "cap-a").common();
+    let right = caption_after(&result, right_id).common();
+    assert_eq!(scalar_string_of(&left.params, "content"), Some("hello"));
+    assert_eq!(scalar_string_of(&right.params, "content"), Some("there"));
+    // "hello" is five of ten characters, so it keeps half of 120 000 ticks.
+    assert_eq!(left.duration, MediaTime::from_ticks(60_000));
+    assert_eq!(right.start_time, MediaTime::from_ticks(60_000));
+    assert_eq!(right.duration, MediaTime::from_ticks(60_000));
+}
+
+#[test]
+fn shift_captions_rejects_negative_starts_and_reports_overlaps() {
+    let negative = evaluate(options(caption_plan(vec![EditOperation::ShiftCaptions {
+        track_id: "captions".into(),
+        delta: MediaTime::from_ticks(-1),
+        element_ids: Some(vec!["cap-a".into()]),
+        // cap-a starts at zero, so any negative delta leaves the timeline.
+    }])));
+    assert!(negative.is_err());
+    let overlapping = evaluate(options(caption_plan(vec![EditOperation::ShiftCaptions {
+        track_id: "captions".into(),
+        delta: MediaTime::from_ticks(-60_000),
+        element_ids: Some(vec!["cap-b".into()]),
+    }])))
+    .unwrap();
+    assert_eq!(
+        caption_after(&overlapping, "cap-b").common().start_time,
+        MediaTime::from_ticks(90_000)
+    );
+    assert!(overlapping.warnings.iter().any(|warning| {
+        warning.code == WarningCode::CaptionOverlap && warning.object_id.as_deref() == Some("cap-b")
+    }));
+}
+
+#[test]
+fn fast_captions_warn_about_reading_speed() {
+    let result = evaluate(options(caption_plan(vec![EditOperation::UpdateCaption {
+        track_id: "captions".into(),
+        element_id: "cap-a".into(),
+        text: Some("this caption carries far too many characters for one second".into()),
+        start_time: None,
+        duration: None,
+        resolved_allocations: None,
+    }])))
+    .unwrap();
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == WarningCode::CaptionReadingSpeed
+            && warning.object_id.as_deref() == Some("cap-a")
+    }));
+}
+
+#[test]
+fn restyle_captions_resolves_preset_params_in_rust_and_refuses_placement() {
+    let result = evaluate(options(caption_plan(vec![
+        EditOperation::RestyleCaptions {
+            track_id: "captions".into(),
+            element_ids: None,
+            style: SubtitleStyleOverrides {
+                preset: Some("tiktok-classic".into()),
+                color: Some("#ffff00".into()),
+                ..Default::default()
+            },
+            resolved_params: None,
+        },
+    ])))
+    .unwrap();
+    let EditOperation::RestyleCaptions {
+        resolved_params: Some(params),
+        ..
+    } = &result.resolved_operations[1]
+    else {
+        panic!("restyle params were not resolved");
+    };
+    assert_eq!(
+        params.0.get("fontFamily"),
+        Some(&Scalar::String("TikTok Sans".into()))
+    );
+    assert_eq!(
+        params.0.get("color"),
+        Some(&Scalar::String("#ffff00".into()))
+    );
+    assert_eq!(
+        params.0.get("background.enabled"),
+        Some(&Scalar::Boolean(true))
+    );
+    for id in ["cap-a", "cap-b"] {
+        let caption = caption_after(&result, id).common();
+        assert_eq!(
+            scalar_string_of(&caption.params, "fontFamily"),
+            Some("TikTok Sans")
+        );
+    }
+    let placed = evaluate(options(caption_plan(vec![
+        EditOperation::RestyleCaptions {
+            track_id: "captions".into(),
+            element_ids: None,
+            style: SubtitleStyleOverrides {
+                placement: Some(SubtitlePlacementStyle {
+                    vertical_align: Some(VerticalAlign::Top),
+                    margin_left_ratio: None,
+                    margin_right_ratio: None,
+                    margin_vertical_ratio: None,
+                }),
+                ..Default::default()
+            },
+            resolved_params: None,
+        },
+    ])));
+    assert_eq!(
+        placed.unwrap_err().message,
+        "restyle cannot change caption placement"
+    );
+}
+
+fn scalar_string_of<'a>(params: &'a CanonicalValue, key: &str) -> Option<&'a str> {
+    match params {
+        CanonicalValue::Object(fields) => match fields.get(key) {
+            Some(CanonicalValue::String(value)) => Some(value.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
 }

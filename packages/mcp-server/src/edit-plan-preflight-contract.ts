@@ -472,6 +472,8 @@ export const editPlanEvaluationSchema = z
 						"TIMELINE_GAP_POSSIBLE",
 						"TRANSITION_REMOVED",
 						"RELATIONSHIP_PRUNED",
+						"CAPTION_OVERLAP",
+						"CAPTION_READING_SPEED",
 					]),
 					operationIndex: z.number().int().nonnegative(),
 					objectId: z.string().nullable(),
@@ -1058,6 +1060,7 @@ function normalizeRustOperationOptions(
 ): CanonicalEditPlanValue {
 	const value = { ...operation } as { [key: string]: unknown };
 	delete value.resolvedCascadeElementIds;
+	delete value.resolvedParams;
 	const optional: Partial<Record<PreflightEditOperation["kind"], string[]>> = {
 		insert_text: ["elementId"],
 		insert_graphic: ["elementId", "name", "trackId", "params"],
@@ -1067,6 +1070,10 @@ function normalizeRustOperationOptions(
 		set_project_settings: ["fps", "canvasSize", "background"],
 		insert_captions: ["trackId", "style"],
 		update_caption: ["text", "startTime", "duration"],
+		shift_captions: ["elementIds"],
+		merge_captions: ["separator"],
+		split_caption: ["rightElementId"],
+		restyle_captions: ["elementIds"],
 		duplicate_elements: ["duplicateIds"],
 		create_compound: ["name", "targetTrackId"],
 		break_apart_compound: ["restoredElementIds"],

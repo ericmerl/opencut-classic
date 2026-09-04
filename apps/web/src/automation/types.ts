@@ -760,6 +760,34 @@ export type AutomationEditOperation =
 			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
+			kind: "shift_captions";
+			trackId: string;
+			delta: MediaTime;
+			elementIds?: string[] | undefined;
+	  }
+	| {
+			kind: "merge_captions";
+			trackId: string;
+			elementIds: string[];
+			separator?: string | undefined;
+	  }
+	| {
+			kind: "split_caption";
+			trackId: string;
+			elementId: string;
+			splitIndex: number;
+			rightElementId?: string | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
+	  }
+	| {
+			kind: "restyle_captions";
+			trackId: string;
+			elementIds?: string[] | undefined;
+			style: SubtitleStyleOverrides;
+			/** Params the Rust evaluator resolved from the style; never caller-supplied. */
+			resolvedParams?: Record<string, string | number | boolean> | undefined;
+	  }
+	| {
 			kind: "delete";
 			trackId: string;
 			elementId: string;
