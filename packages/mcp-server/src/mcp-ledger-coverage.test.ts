@@ -26,7 +26,7 @@ describe("complete mutating handler ledger coverage", () => {
 		});
 	});
 
-	test("exactly replays and rejects changed reuse for all 47 mutators", async () => {
+	test("exactly replays and rejects changed reuse for all 49 mutators", async () => {
 		const ledger = new OperationLedger(directory);
 		const boundary = new McpLedgerBoundary(ledger, verificationBridge());
 		try {
@@ -275,6 +275,8 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 		opencut_generate_matte: "generated-and-attached",
 		opencut_track_subject: "tracked-and-reframed",
 		opencut_export_project: "exported",
+		opencut_evaluate_export_qc: "evaluated",
+		opencut_create_delivery_package: "packaged",
 	};
 	if (toolName === "opencut_save_project") return verifiedSave(operationId);
 	if (toolName === "opencut_start_editor_worker") {

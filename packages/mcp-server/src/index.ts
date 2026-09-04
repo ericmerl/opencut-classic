@@ -25,6 +25,8 @@ import { ExportJobQueue } from "./export-jobs";
 import { ExportProjectService } from "./export-project";
 import { ExportReceiptStore } from "./export-receipts";
 import { ExportValidator } from "./export-validator";
+import { ExportQcService } from "./export-qc";
+import { DeliveryPackageService } from "./delivery-package";
 import { MatteGenerationService } from "./generate-matte";
 import { ManagedEditorWorker } from "./managed-editor-worker";
 import { NormalizeAudioOperation } from "./normalize-audio-operation";
@@ -97,6 +99,10 @@ import {
 	retryJobInputSchema,
 	resolveJobInputSchema,
 	getExportReceiptInputSchema,
+	evaluateExportQcInputSchema,
+	getExportQcInputSchema,
+	createDeliveryPackageInputSchema,
+	verifyDeliveryPackageInputSchema,
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
 	listExportJobsInputSchema,
@@ -250,6 +256,8 @@ const audioCleanup = new AudioCleanupService(
 	jobStoreDirectory,
 );
 const exportValidator = new ExportValidator(exportReceipts);
+const exportQc = new ExportQcService(exportReceipts);
+const deliveryPackages = new DeliveryPackageService(exportReceipts, exportQc);
 const projectExports = new ExportProjectService(
 	bridge,
 	exportReceipts,
@@ -2161,6 +2169,74 @@ function createServer(): McpServer {
 					: { status: "not-found", operationId },
 			);
 		},
+	);
+
+	server.registerTool(
+		"opencut_evaluate_export_qc",
+		{
+			description:
+				"Evaluate a durable export receipt against an explicit versioned QC policy. Returns pass, warn, or fail for every container, video, caption, audio, inspection, hash, and platform check with measured evidence.",
+			inputSchema: withMutationOperationId(evaluateExportQcInputSchema),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_evaluate_export_qc",
+					input,
+					() => exportQc.evaluate(input),
+					() => exportQc.evaluate(input),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_export_qc",
+		{
+			description:
+				"Read a durable structured export QC report and verify all referenced output and evidence hashes.",
+			inputSchema: getExportQcInputSchema,
+		},
+		async ({ operationId }) => {
+			const report = await exportQc.get(operationId);
+			return toolResult(
+				report
+					? {
+							status: "found",
+							reportPath: exportQc.reportPath(operationId),
+							report: await exportQc.verify(operationId),
+						}
+					: { status: "not-found", operationId },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_create_delivery_package",
+		{
+			description:
+				"Create a deterministic collision-safe delivery directory containing a master, clean and burned-in variants, sidecars, exact covers, inspection evidence, export receipts, QC reports, and a hash/provenance manifest.",
+			inputSchema: withMutationOperationId(createDeliveryPackageInputSchema),
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_create_delivery_package",
+					input,
+					() => deliveryPackages.create(input),
+					() => deliveryPackages.create(input),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_verify_delivery_package",
+		{
+			description:
+				"Re-read a durable delivery manifest and fail if the manifest or any packaged media, sidecar, cover, receipt, QC report, or evidence file is missing or changed.",
+			inputSchema: verifyDeliveryPackageInputSchema,
+		},
+		async ({ operationId }) =>
+			toolResult(await deliveryPackages.verify(operationId)),
 	);
 
 	server.registerTool(

@@ -33,6 +33,7 @@ describe("ExportValidator", () => {
 			expectedHeight: 90,
 			expectedFps: 10,
 			includeAudio: true,
+			coverFrame: { frameIndex: 3, resolvedTicks: 36_000 },
 		});
 
 		expect(validation).toMatchObject({
@@ -66,9 +67,19 @@ describe("ExportValidator", () => {
 		});
 		expect(validation.video.profile).not.toBeNull();
 		expect(validation.video.level).not.toBeNull();
+		expect(validation.video.blackSegments).toEqual([]);
+		expect(Array.isArray(validation.video.frozenSegments)).toBe(true);
 		expect(validation.audio.sampleRate).toBe(44_100);
 		expect(validation.audio.measurements?.integratedLufs).not.toBeNull();
 		expect(validation.audio.measurements?.truePeakDbtp).not.toBeNull();
+		expect(validation.audio.measurements?.silenceSegments).toEqual([]);
+		expect(validation.audio.measurements?.startOffsetSeconds).not.toBeNull();
+		expect(validation.audio.measurements?.durationDeltaSeconds).not.toBeNull();
+		expect(validation.coverFrame).toMatchObject({
+			position: "cover",
+			frameIndex: 3,
+		});
+		expect((await stat(validation.coverFrame!.path)).size).toBeGreaterThan(0);
 		expect(validation.frameSamples.map((sample) => sample.position)).toEqual([
 			"opening",
 			"middle",
@@ -158,12 +169,7 @@ async function createFixture(
 			"-i",
 			"color=c=blue:s=160x90:r=10:d=1",
 			...(includeAudio
-				? [
-						"-f",
-						"lavfi",
-						"-i",
-						`sine=frequency=440:duration=${audioDuration}`,
-					]
+				? ["-f", "lavfi", "-i", `sine=frequency=440:duration=${audioDuration}`]
 				: []),
 			...(includeAudio && shortest ? ["-shortest"] : []),
 			"-c:v",

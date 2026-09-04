@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute } from "node:path";
 import * as z from "zod/v4";
+import { QC_CHECK_IDS } from "./export-qc";
 import { BOOTSTRAP_PROJECT_ID } from "./managed-editor-worker";
 import { operationIdSchema } from "./operation-tool-schemas";
 
@@ -1914,6 +1916,193 @@ export const recordExportInspectionInputSchema = withMutationOperationId(
 	}),
 	"inspectionOperationId",
 );
+
+const qcCheckPolicySchema = z
+	.object({
+		enabled: z.boolean().optional(),
+		severity: z.enum(["warn", "fail"]).optional(),
+	})
+	.strict();
+
+export const exportQcPolicySchema = z
+	.object({
+		version: z.literal(1),
+		checks: z
+			.partialRecord(z.enum(QC_CHECK_IDS), qcCheckPolicySchema)
+			.optional(),
+		thresholds: z
+			.object({
+				fpsTolerance: z.number().finite().nonnegative().optional(),
+				durationToleranceSeconds: z.number().finite().nonnegative().optional(),
+				maxBlackDurationSeconds: z.number().finite().nonnegative().optional(),
+				maxFrozenDurationSeconds: z.number().finite().nonnegative().optional(),
+				maxCaptionOverflowPixels: z.number().finite().nonnegative().optional(),
+				integratedLufsMin: z.number().finite().optional(),
+				integratedLufsMax: z.number().finite().optional(),
+				maxTruePeakDbtp: z.number().finite().max(0).optional(),
+				clippingThresholdDbtp: z.number().finite().max(0).optional(),
+				allowedChannels: z
+					.array(z.number().int().min(1).max(32))
+					.min(1)
+					.max(32)
+					.optional(),
+				minimumSampleRate: z.number().int().min(8_000).max(384_000).optional(),
+				maxSilenceDurationSeconds: z.number().finite().nonnegative().optional(),
+				maxAvSyncOffsetSeconds: z.number().finite().nonnegative().optional(),
+				maxAvDurationDeltaSeconds: z.number().finite().nonnegative().optional(),
+			})
+			.strict()
+			.optional(),
+		platform: z
+			.object({
+				name: z.string().trim().min(1),
+				maxBytes: z.number().int().positive().optional(),
+				maxDurationSeconds: z.number().finite().positive().optional(),
+				minWidth: z.number().int().positive().optional(),
+				maxWidth: z.number().int().positive().optional(),
+				minHeight: z.number().int().positive().optional(),
+				maxHeight: z.number().int().positive().optional(),
+				maxFps: z.number().finite().positive().optional(),
+				aspectRatio: z.number().finite().positive().optional(),
+				aspectRatioTolerance: z.number().finite().nonnegative().optional(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict()
+	.superRefine((value, context) => {
+		const thresholds = value.thresholds;
+		if (
+			thresholds?.integratedLufsMin !== undefined &&
+			thresholds.integratedLufsMax !== undefined &&
+			thresholds.integratedLufsMin > thresholds.integratedLufsMax
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["thresholds", "integratedLufsMin"],
+				message: "minimum loudness must not exceed maximum loudness",
+			});
+		}
+		const platform = value.platform;
+		if (
+			platform?.minWidth !== undefined &&
+			platform.maxWidth !== undefined &&
+			platform.minWidth > platform.maxWidth
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["platform", "minWidth"],
+				message: "minimum width must not exceed maximum width",
+			});
+		}
+		if (
+			platform?.minHeight !== undefined &&
+			platform.maxHeight !== undefined &&
+			platform.minHeight > platform.maxHeight
+		) {
+			context.addIssue({
+				code: "custom",
+				path: ["platform", "minHeight"],
+				message: "minimum height must not exceed maximum height",
+			});
+		}
+	});
+
+export const evaluateExportQcInputSchema = z
+	.object({
+		operationId: legacyCompatibleOperationIdSchema,
+		exportOperationId: z.string().trim().min(1),
+		policy: exportQcPolicySchema,
+	})
+	.strict();
+
+export const getExportQcInputSchema = z
+	.object({ operationId: z.string().trim().min(1) })
+	.strict();
+
+const packageExportBindingSchema = z
+	.object({
+		exportOperationId: z.string().trim().min(1),
+		qcOperationId: z.string().trim().min(1),
+	})
+	.strict();
+
+export const createDeliveryPackageInputSchema = z
+	.object({
+		operationId: legacyCompatibleOperationIdSchema,
+		packageName: z.string().trim().min(1).max(120),
+		outputDirectory: z
+			.string()
+			.min(1)
+			.refine(isAbsolute, "outputDirectory must be an absolute path"),
+		batchId: z.string().trim().min(1).optional(),
+		allowQcWarnings: z.boolean().default(true),
+		includeEvidence: z.boolean().default(true),
+		master: packageExportBindingSchema,
+		variants: z
+			.array(
+				packageExportBindingSchema.extend({
+					variantId: z.string().trim().min(1),
+					captionMode: z.enum(["clean", "burned-in"]),
+				}),
+			)
+			.min(2)
+			.max(40),
+		sidecars: z
+			.array(
+				z
+					.object({
+						name: z.string().trim().min(1).max(120),
+						sourcePath: z
+							.string()
+							.min(1)
+							.refine(isAbsolute, "sidecar sourcePath must be absolute"),
+					})
+					.strict(),
+			)
+			.min(1)
+			.max(40),
+	})
+	.strict()
+	.superRefine((value, context) => {
+		for (const [field, values] of [
+			["variantId", value.variants.map((variant) => variant.variantId)],
+			[
+				"exportOperationId",
+				[value.master, ...value.variants].map(
+					(binding) => binding.exportOperationId,
+				),
+			],
+			[
+				"qcOperationId",
+				[value.master, ...value.variants].map(
+					(binding) => binding.qcOperationId,
+				),
+			],
+			["sidecar.name", value.sidecars.map((sidecar) => sidecar.name)],
+		] as const) {
+			if (new Set(values).size !== values.length) {
+				context.addIssue({
+					code: "custom",
+					path: [field],
+					message: `${field} values must be unique`,
+				});
+			}
+		}
+		for (const mode of ["clean", "burned-in"] as const) {
+			if (!value.variants.some((variant) => variant.captionMode === mode)) {
+				context.addIssue({
+					code: "custom",
+					path: ["variants"],
+					message: `delivery package requires a ${mode} variant`,
+				});
+			}
+		}
+	});
+
+export const verifyDeliveryPackageInputSchema = z
+	.object({ operationId: z.string().trim().min(1) })
+	.strict();
 
 const normalizedPointSchema = z
 	.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })

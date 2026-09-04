@@ -9,7 +9,11 @@ import { formatTimecode } from "opencut-wasm";
 import { downloadBlob } from "@/utils/browser";
 import type { FreshProjectReadback } from "@/services/storage/types";
 import { calculateTotalDuration } from "@/timeline";
-import { resolveExportRenderOverlay } from "@/export/render-overlay";
+import {
+	materializeExportCaptionGeometry,
+	resolveExportRenderOverlay,
+} from "@/export/render-overlay";
+import { createCaptionMeasurementContext } from "@/subtitles/build-subtitle-text-element";
 
 type SnapshotResult =
 	| { success: true; blob: Blob; filename: string }
@@ -190,6 +194,21 @@ export class RendererManager {
 				overlay: options.renderOverlay,
 			});
 			const tracks = resolved.tracks;
+			if (resolved.specification.captions.elementIds.length > 0) {
+				const context = createCaptionMeasurementContext();
+				if (!context) {
+					return {
+						success: false,
+						error: "Caption QC requires a Canvas 2D measurement context",
+					};
+				}
+				resolved.specification.captions.geometry =
+					materializeExportCaptionGeometry({
+						tracks,
+						specification: resolved.specification,
+						context,
+					});
+			}
 			const duration = calculateTotalDuration({ tracks });
 			const canvasSize = resolved.specification.canvasSize;
 

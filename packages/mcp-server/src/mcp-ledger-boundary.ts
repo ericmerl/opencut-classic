@@ -889,6 +889,18 @@ function verifiedAffectedObjects(
 	if (toolName === "opencut_compare_project_states") {
 		add("file", result.receiptId, action);
 	}
+	if (toolName === "opencut_evaluate_export_qc") {
+		const report = isRecord(result.report) ? result.report : null;
+		add("qc-report", report?.qcReceiptId ?? result.reportPath, "evaluated");
+	}
+	if (toolName === "opencut_create_delivery_package") {
+		const manifest = isRecord(result.manifest) ? result.manifest : null;
+		add(
+			"delivery-package",
+			manifest?.packageOperationId ?? result.manifestPath,
+			"packaged",
+		);
+	}
 	add(
 		"media",
 		result.assetId ?? result.mediaId,
@@ -961,6 +973,8 @@ function operationAction(
 		toolName === "opencut_export_subtitles"
 	)
 		return "exported";
+	if (toolName === "opencut_evaluate_export_qc") return "evaluated";
+	if (toolName === "opencut_create_delivery_package") return "packaged";
 	if (
 		toolName === "opencut_render_preview_frame" ||
 		toolName === "opencut_render_preview_range" ||
@@ -1512,6 +1526,8 @@ const MUTATOR_RESULT_CONTRACTS = {
 		rejected,
 	),
 	opencut_export_project: contract(["exported", "replayed"], rejected),
+	opencut_evaluate_export_qc: contract(["evaluated", "replayed"], rejected),
+	opencut_create_delivery_package: contract(["packaged", "replayed"], rejected),
 	opencut_render_preview_frame: contract(["rendered", "replayed"], rejected),
 	opencut_render_preview_range: contract(
 		["rendered", "replayed", "cancelled"],

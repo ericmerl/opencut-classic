@@ -167,6 +167,16 @@ export const MUTATING_TOOL_MANIFEST = {
 		requiresSaveVerification: false,
 		protocolMutationPolicy: "v2-required",
 	},
+	opencut_evaluate_export_qc: {
+		operationKind: "evaluate-export-qc",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
+	opencut_create_delivery_package: {
+		operationKind: "create-delivery-package",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
 	opencut_render_preview_frame: {
 		operationKind: "render-preview-frame",
 		requiresSaveVerification: false,

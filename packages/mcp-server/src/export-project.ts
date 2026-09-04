@@ -364,6 +364,7 @@ export class ExportProjectService {
 					snapshot.height,
 				expectedFps: frameRateValue(input.fps ?? snapshot.fps),
 				includeAudio: input.includeAudio,
+				coverFrame: readResolvedCoverFrame(resolvedRenderSpecification),
 			});
 		} catch (error) {
 			validation = {
@@ -435,6 +436,26 @@ export class ExportProjectService {
 		});
 		return { ...result, inspection };
 	}
+}
+
+function readResolvedCoverFrame(
+	value: Record<string, unknown>,
+): { frameIndex: number; resolvedTicks: number } | null {
+	const cover = value.coverFrame;
+	if (cover === null || cover === undefined) return null;
+	if (
+		!isRecord(cover) ||
+		!Number.isSafeInteger(cover.frameIndex) ||
+		Number(cover.frameIndex) < 0 ||
+		!Number.isSafeInteger(cover.resolvedTicks) ||
+		Number(cover.resolvedTicks) < 0
+	) {
+		throw new Error("editor export reported an invalid resolved cover frame");
+	}
+	return {
+		frameIndex: Number(cover.frameIndex),
+		resolvedTicks: Number(cover.resolvedTicks),
+	};
 }
 
 function readCapabilitySnapshotHash(value: unknown): string | undefined {

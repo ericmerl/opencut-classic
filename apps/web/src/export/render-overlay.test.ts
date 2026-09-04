@@ -1,10 +1,18 @@
 import { describe, expect, mock, test } from "bun:test";
+import { createCanvas } from "@napi-rs/canvas";
+import type { TextCanvasContext } from "@/text/layout";
 import type { SceneTracks } from "@/timeline";
 import type { MediaTime } from "@/wasm";
 
-mock.module("@/wasm", () => ({ TICKS_PER_SECOND: 120_000 }));
+mock.module("@/wasm", () => ({
+	TICKS_PER_SECOND: 120_000,
+	ZERO_MEDIA_TIME: 0,
+	mediaTime: ({ ticks }: { ticks: number }) => ticks,
+	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) => seconds * 120_000,
+}));
 
-const { resolveExportRenderOverlay } = await import("./render-overlay");
+const { materializeExportCaptionGeometry, resolveExportRenderOverlay } =
+	await import("./render-overlay");
 
 describe("immutable export render overlays", () => {
 	test("resolves canvas, safe zones, layout, reframe, captions, tracks, cover, and frame schedule", () => {
@@ -101,6 +109,28 @@ describe("immutable export render overlays", () => {
 				frameCount: 60,
 				firstFrameTicks: 0,
 				lastFrameTicks: 236_000,
+			},
+		});
+		const nodeCanvasContext = createCanvas(1080, 1920).getContext("2d");
+		// @napi-rs/canvas implements the browser Canvas 2D surface exercised here.
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+		const context = nodeCanvasContext as unknown as TextCanvasContext;
+		const geometry = materializeExportCaptionGeometry({
+			tracks: result.tracks,
+			specification: result.specification,
+			context,
+		});
+		expect(geometry).toHaveLength(1);
+		expect(geometry[0]).toMatchObject({
+			elementId: "caption-1",
+			startTicks: 0,
+			endTicks: 120_000,
+			safeZoneId: "caption",
+			geometry: {
+				version: "opencut.caption-geometry.v1",
+				measurement: "opencut.text.measureTextLayout",
+				clipped: false,
+				safeZone: { inside: false },
 			},
 		});
 	});

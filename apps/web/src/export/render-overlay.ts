@@ -1,4 +1,15 @@
 import type { TCanvasSize } from "@/project/types";
+import {
+	measureCaptionLocalLayout,
+	placeCaptionGeometry,
+	type CaptionGeometry,
+	type Rect,
+} from "@/text/caption-layout";
+import type { TextCanvasContext } from "@/text/layout";
+import {
+	buildTextBackgroundFromElement,
+	buildTextLayoutParamsFromElement,
+} from "@/text/measure-element";
 import type {
 	SceneTracks,
 	TimelineElement,
@@ -108,6 +119,7 @@ export interface ResolvedExportRenderSpecification {
 		style: ExportCaptionStyleOverlay | null;
 		position: { x: number; y: number } | null;
 		positionSafeZoneId: string | null;
+		geometry: ExportCaptionGeometryEvidence[];
 	};
 	coverFrame: {
 		requested: ExportCoverFrameSelector;
@@ -128,6 +140,14 @@ export interface ResolvedExportRenderSpecification {
 		firstFrameTicks: 0;
 		lastFrameTicks: number | null;
 	};
+}
+
+export interface ExportCaptionGeometryEvidence {
+	elementId: string;
+	startTicks: number;
+	endTicks: number;
+	safeZoneId: string | null;
+	geometry: CaptionGeometry;
 }
 
 export function resolveExportRenderOverlay({
@@ -249,6 +269,7 @@ export function resolveExportRenderOverlay({
 					? { ...overlay.captions.position }
 					: null,
 				positionSafeZoneId: overlay?.captions?.positionSafeZoneId ?? null,
+				geometry: [],
 			},
 			coverFrame,
 			output: { format, videoCodec, quality, fps: { ...fps }, includeAudio },
@@ -262,6 +283,84 @@ export function resolveExportRenderOverlay({
 			},
 		},
 	};
+}
+
+/** Materialize renderer-native caption rectangles for the resolved variant. */
+export function materializeExportCaptionGeometry({
+	tracks,
+	specification,
+	context,
+}: {
+	tracks: SceneTracks;
+	specification: ResolvedExportRenderSpecification;
+	context: TextCanvasContext;
+}): ExportCaptionGeometryEvidence[] {
+	if (specification.captions.mode === "off") return [];
+	const selected = new Set(specification.captions.elementIds);
+	const safeZone = resolveCaptionSafeZone(specification);
+	const elements = collectElements(tracks);
+	return [...selected].sort().map((elementId) => {
+		const element = elements.get(elementId);
+		if (!element || element.type !== "text") {
+			throw new Error(`resolved caption element not found: ${elementId}`);
+		}
+		const local = measureCaptionLocalLayout({
+			text: buildTextLayoutParamsFromElement({ element }),
+			background: buildTextBackgroundFromElement({ element }),
+			canvasHeight: specification.canvasSize.height,
+			ctx: context,
+		});
+		const geometry = placeCaptionGeometry({
+			local,
+			canvasSize: specification.canvasSize,
+			position: {
+				x: finiteParam(element.params["transform.positionX"]),
+				y: finiteParam(element.params["transform.positionY"]),
+			},
+			safeZone: safeZone.rect,
+		});
+		return {
+			elementId,
+			startTicks: element.startTime,
+			endTicks: element.startTime + element.duration,
+			safeZoneId: safeZone.id,
+			geometry,
+		};
+	});
+}
+
+function resolveCaptionSafeZone(
+	specification: ResolvedExportRenderSpecification,
+): { id: string | null; rect: Rect } {
+	const id = specification.captions.positionSafeZoneId;
+	const zone = id
+		? specification.safeZones.find((candidate) => candidate.id === id)
+		: null;
+	if (id && !zone)
+		throw new Error(`resolved caption safe zone not found: ${id}`);
+	return zone
+		? {
+				id: zone.id,
+				rect: {
+					left: zone.x * specification.canvasSize.width,
+					top: zone.y * specification.canvasSize.height,
+					width: zone.width * specification.canvasSize.width,
+					height: zone.height * specification.canvasSize.height,
+				},
+			}
+		: {
+				id: null,
+				rect: {
+					left: 0,
+					top: 0,
+					width: specification.canvasSize.width,
+					height: specification.canvasSize.height,
+				},
+			};
+}
+
+function finiteParam(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function resolveCaptionTracks({

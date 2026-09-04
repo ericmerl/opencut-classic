@@ -39,6 +39,8 @@ const successes: Record<MutatingToolName, Record<string, unknown>> = {
 	opencut_generate_matte: { status: "generated-and-attached" },
 	opencut_track_subject: { status: "tracked-and-reframed" },
 	opencut_export_project: { status: "exported" },
+	opencut_evaluate_export_qc: { status: "evaluated" },
+	opencut_create_delivery_package: { status: "packaged" },
 	opencut_render_preview_frame: { status: "rendered" },
 	opencut_render_preview_range: { status: "rendered" },
 	opencut_compare_project_states: { status: "rendered" },

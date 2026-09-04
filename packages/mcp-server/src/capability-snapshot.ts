@@ -49,11 +49,13 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_clone_scene",
 	"opencut_compare_project_states",
 	"opencut_connection_status",
+	"opencut_create_delivery_package",
 	"opencut_create_project",
 	"opencut_create_scene",
 	"opencut_delete_project",
 	"opencut_delete_scene",
 	"opencut_duplicate_project",
+	"opencut_evaluate_export_qc",
 	"opencut_export_project",
 	"opencut_export_subtitles",
 	"opencut_generate_matte",
@@ -61,6 +63,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_get_edit_plan_preflight",
 	"opencut_get_export_batch",
 	"opencut_get_export_job",
+	"opencut_get_export_qc",
 	"opencut_get_export_receipt",
 	"opencut_get_job",
 	"opencut_get_operation",
@@ -114,6 +117,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_track_subject",
 	"opencut_transcribe_timeline",
 	"opencut_undo",
+	"opencut_verify_delivery_package",
 ] as const;
 
 import { EXPORT_CANCELLATION_POLICY } from "./export-jobs";

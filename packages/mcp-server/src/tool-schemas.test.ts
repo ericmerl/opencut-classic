@@ -12,6 +12,9 @@ import {
 	editPlanInputSchema,
 	exportProjectInputSchema,
 	exportSubtitlesInputSchema,
+	evaluateExportQcInputSchema,
+	createDeliveryPackageInputSchema,
+	verifyDeliveryPackageInputSchema,
 	getExportBatchInputSchema,
 	getExportJobInputSchema,
 	getExportReceiptInputSchema,
@@ -40,6 +43,71 @@ import {
 	withProjectMutationSafety,
 	undoInputSchema,
 } from "./tool-schemas";
+
+describe("OpenCut QC and delivery package contracts", () => {
+	test("accepts an explicit versioned QC policy and a complete package", () => {
+		expect(
+			evaluateExportQcInputSchema.safeParse({
+				operationId: "qc-1",
+				exportOperationId: "export-1",
+				policy: {
+					version: 1,
+					checks: { "caption-clipping": { severity: "fail" } },
+					thresholds: { maxCaptionOverflowPixels: 0 },
+					platform: { name: "Square", aspectRatio: 1 },
+				},
+			}).success,
+		).toBe(true);
+		expect(
+			createDeliveryPackageInputSchema.safeParse({
+				operationId: "package-1",
+				packageName: "Delivery",
+				outputDirectory: "C:/deliveries",
+				master: { exportOperationId: "master", qcOperationId: "qc-master" },
+				variants: [
+					{
+						variantId: "clean",
+						captionMode: "clean",
+						exportOperationId: "clean",
+						qcOperationId: "qc-clean",
+					},
+					{
+						variantId: "burned",
+						captionMode: "burned-in",
+						exportOperationId: "burned",
+						qcOperationId: "qc-burned",
+					},
+				],
+				sidecars: [{ name: "captions", sourcePath: "C:/captions.vtt" }],
+			}).success,
+		).toBe(true);
+		expect(
+			verifyDeliveryPackageInputSchema.safeParse({ operationId: "package-1" })
+				.success,
+		).toBe(true);
+	});
+
+	test("rejects incomplete package matrices and contradictory thresholds", () => {
+		expect(
+			evaluateExportQcInputSchema.safeParse({
+				exportOperationId: "export-1",
+				policy: {
+					version: 1,
+					thresholds: { integratedLufsMin: -10, integratedLufsMax: -20 },
+				},
+			}).success,
+		).toBe(false);
+		expect(
+			createDeliveryPackageInputSchema.safeParse({
+				packageName: "Delivery",
+				outputDirectory: "relative",
+				master: { exportOperationId: "master", qcOperationId: "qc-master" },
+				variants: [],
+				sidecars: [],
+			}).success,
+		).toBe(false);
+	});
+});
 
 describe("OpenCut lifecycle preflight contract", () => {
 	const schema = withConnectionAffinity(preflightLifecycleMutationInputSchema);

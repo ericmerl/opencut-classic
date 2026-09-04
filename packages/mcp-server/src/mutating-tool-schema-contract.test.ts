@@ -14,10 +14,12 @@ import {
 	cancelPreviewRangeInputSchema,
 	cleanAudioInputSchema,
 	compareProjectStatesInputSchema,
+	createDeliveryPackageInputSchema,
 	createProjectInputSchema,
 	editPlanInputSchema,
 	exportProjectInputSchema,
 	exportSubtitlesInputSchema,
+	evaluateExportQcInputSchema,
 	generateMatteInputSchema,
 	importMediaInputSchema,
 	importSubtitlesInputSchema,
@@ -290,6 +292,35 @@ const cases: SchemaCase[] = [
 		input: project({ outputPath: "C:/video.mp4", format: "mp4" }),
 	},
 	{
+		name: "opencut_evaluate_export_qc",
+		schema: withMutationOperationId(evaluateExportQcInputSchema),
+		input: { exportOperationId: "export-1", policy: { version: 1 } },
+	},
+	{
+		name: "opencut_create_delivery_package",
+		schema: withMutationOperationId(createDeliveryPackageInputSchema),
+		input: {
+			packageName: "Delivery",
+			outputDirectory: "C:/deliveries",
+			master: { exportOperationId: "master", qcOperationId: "qc-master" },
+			variants: [
+				{
+					variantId: "clean",
+					captionMode: "clean",
+					exportOperationId: "clean",
+					qcOperationId: "qc-clean",
+				},
+				{
+					variantId: "burned",
+					captionMode: "burned-in",
+					exportOperationId: "burned",
+					qcOperationId: "qc-burned",
+				},
+			],
+			sidecars: [{ name: "captions", sourcePath: "C:/captions.vtt" }],
+		},
+	},
+	{
 		name: "opencut_queue_export",
 		schema: withProjectMutationSafety(queueExportInputSchema),
 		input: project({
@@ -449,7 +480,7 @@ const cases: SchemaCase[] = [
 ];
 
 describe("all mutating public MCP schema versions", () => {
-	test("covers exactly the 47 registered mutation identities", () => {
+	test("covers exactly the 49 registered mutation identities", () => {
 		expect(cases.map(({ name }) => String(name)).sort()).toEqual(
 			Object.keys(MUTATING_TOOL_MANIFEST).map(String).sort(),
 		);

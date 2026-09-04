@@ -18,6 +18,7 @@ interface ProbeStream extends Record<string, unknown> {
 	height?: number;
 	avg_frame_rate?: string;
 	r_frame_rate?: string;
+	start_time?: string;
 	duration?: string;
 	sample_rate?: string;
 	channels?: number;
@@ -30,7 +31,7 @@ interface ProbeDocument extends Record<string, unknown> {
 }
 
 export interface ExportFrameSample {
-	position: "opening" | "middle" | "ending";
+	position: "opening" | "middle" | "ending" | "cover";
 	frameIndex: number;
 	timeSeconds: number;
 	path: string;
@@ -57,6 +58,8 @@ export interface ExportMediaValidation {
 		height: number;
 		fps: number | null;
 		durationSeconds: number;
+		blackSegments: ExportTemporalSegment[];
+		frozenSegments: ExportTemporalSegment[];
 	};
 	audio: {
 		present: boolean;
@@ -72,6 +75,9 @@ export interface ExportMediaValidation {
 		measurements: {
 			integratedLufs: number | null;
 			truePeakDbtp: number | null;
+			silenceSegments: ExportTemporalSegment[];
+			startOffsetSeconds: number | null;
+			durationDeltaSeconds: number | null;
 		} | null;
 	};
 	mastering: {
@@ -80,6 +86,13 @@ export interface ExportMediaValidation {
 		difference: string;
 	};
 	frameSamples: ExportFrameSample[];
+	coverFrame: ExportFrameSample | null;
+}
+
+export interface ExportTemporalSegment {
+	startSeconds: number;
+	endSeconds: number;
+	durationSeconds: number;
 }
 
 const FIXED_MASTERING_POLICY = {
@@ -140,6 +153,7 @@ export class ExportValidator {
 		expectedHeight,
 		expectedFps,
 		includeAudio,
+		coverFrame,
 	}: {
 		operationId: string;
 		outputPath: string;
@@ -148,6 +162,7 @@ export class ExportValidator {
 		expectedHeight: number;
 		expectedFps: number;
 		includeAudio: boolean;
+		coverFrame?: { frameIndex: number; resolvedTicks: number } | null;
 	}): Promise<ExportMediaValidation> {
 		await this.preflight();
 		const probe = await this.probe(outputPath);
@@ -182,7 +197,9 @@ export class ExportValidator {
 		}
 		const audio = streams.find((stream) => stream.codec_type === "audio");
 		if (includeAudio && !audio) {
-			throw new Error("export does not contain audio even though includeAudio is true");
+			throw new Error(
+				"export does not contain audio even though includeAudio is true",
+			);
 		}
 		if (!includeAudio && audio) {
 			throw new Error(
@@ -207,8 +224,14 @@ export class ExportValidator {
 			includeAudio,
 			audioCodec,
 		});
+		const videoSignals = await this.measureVideoSignals(outputPath);
 		const audioMeasurements = audio
-			? await this.measureAudio(outputPath)
+			? await this.measureAudio({
+					outputPath,
+					video,
+					audio,
+					videoDurationSeconds: validatedVideoDurationSeconds,
+				})
 			: null;
 		const frameSamples = await this.extractFrameSamples({
 			operationId,
@@ -216,6 +239,15 @@ export class ExportValidator {
 			durationSeconds: validatedVideoDurationSeconds,
 			fps: fps ?? expectedFps,
 		});
+		const coverFrameSample = coverFrame
+			? await this.extractFrame({
+					operationId,
+					outputPath,
+					position: "cover",
+					frameIndex: coverFrame.frameIndex,
+					fps: fps ?? expectedFps,
+				})
+			: null;
 		return {
 			status: "validated",
 			validatedAt: new Date().toISOString(),
@@ -235,6 +267,8 @@ export class ExportValidator {
 				height,
 				fps,
 				durationSeconds: validatedVideoDurationSeconds,
+				blackSegments: videoSignals.blackSegments,
+				frozenSegments: videoSignals.frozenSegments,
 			},
 			audio: {
 				present: !!audio,
@@ -251,12 +285,13 @@ export class ExportValidator {
 				difference: MASTERING_SCOPE_DIFFERENCE,
 			},
 			frameSamples,
+			coverFrame: coverFrameSample,
 		};
 	}
 
-	private async measureAudio(outputPath: string): Promise<{
-		integratedLufs: number | null;
-		truePeakDbtp: number | null;
+	private async measureVideoSignals(outputPath: string): Promise<{
+		blackSegments: ExportTemporalSegment[];
+		frozenSegments: ExportTemporalSegment[];
 	}> {
 		const { stderr } = await runCommandResult(
 			this.ffmpeg,
@@ -265,18 +300,91 @@ export class ExportValidator {
 				"-nostats",
 				"-i",
 				outputPath,
-				"-map",
-				"0:a:0",
-				"-filter_complex",
-				"ebur128=peak=true",
+				"-vf",
+				"blackdetect=d=0.1:pic_th=0.98:pix_th=0.10,freezedetect=n=-60dB:d=0.5",
+				"-an",
 				"-f",
 				"null",
 				"-",
 			],
-			"export audio loudness analysis",
+			"export video signal analysis",
 			2 * 60 * 60_000,
 		);
-		return parseEbur128Summary(stderr);
+		return {
+			blackSegments: parseTemporalSegments(stderr, "black"),
+			frozenSegments: parseTemporalSegments(stderr, "freeze"),
+		};
+	}
+
+	private async measureAudio({
+		outputPath,
+		video,
+		audio,
+		videoDurationSeconds,
+	}: {
+		outputPath: string;
+		video: ProbeStream;
+		audio: ProbeStream;
+		videoDurationSeconds: number;
+	}): Promise<{
+		integratedLufs: number | null;
+		truePeakDbtp: number | null;
+		silenceSegments: ExportTemporalSegment[];
+		startOffsetSeconds: number | null;
+		durationDeltaSeconds: number | null;
+	}> {
+		const [{ stderr: loudness }, { stderr: silence }] = await Promise.all([
+			runCommandResult(
+				this.ffmpeg,
+				[
+					"-hide_banner",
+					"-nostats",
+					"-i",
+					outputPath,
+					"-map",
+					"0:a:0",
+					"-filter_complex",
+					"ebur128=peak=true",
+					"-f",
+					"null",
+					"-",
+				],
+				"export audio loudness analysis",
+				2 * 60 * 60_000,
+			),
+			runCommandResult(
+				this.ffmpeg,
+				[
+					"-hide_banner",
+					"-nostats",
+					"-i",
+					outputPath,
+					"-map",
+					"0:a:0",
+					"-af",
+					"silencedetect=noise=-50dB:d=0.5",
+					"-f",
+					"null",
+					"-",
+				],
+				"export audio silence analysis",
+				2 * 60 * 60_000,
+			),
+		]);
+		const metrics = parseEbur128Summary(loudness);
+		const videoStart = numericValueOrNull(video.start_time);
+		const audioStart = numericValueOrNull(audio.start_time);
+		const audioDuration = numericValueOrNull(audio.duration);
+		return {
+			...metrics,
+			silenceSegments: parseTemporalSegments(silence, "silence"),
+			startOffsetSeconds:
+				videoStart !== null && audioStart !== null
+					? audioStart - videoStart
+					: null,
+			durationDeltaSeconds:
+				audioDuration !== null ? audioDuration - videoDurationSeconds : null,
+		};
 	}
 
 	async verifyOutput({
@@ -363,40 +471,64 @@ export class ExportValidator {
 		}));
 		const samples: ExportFrameSample[] = [];
 		for (const position of positions) {
-			const path = join(directory, `${position.position}.png`);
-			await runCommand(
-				this.ffmpeg,
-				[
-					"-v",
-					"error",
-					"-i",
+			samples.push(
+				await this.extractFrame({
+					operationId,
 					outputPath,
-					// Seek half a frame early: WebM stores millisecond timestamps, so an
-					// exact seek could land just after a rounded-down frame time and
-					// return the following frame instead.
-					"-ss",
-					Math.max(0, (position.frameIndex - 0.5) / safeFps).toFixed(6),
-					"-frames:v",
-					"1",
-					"-an",
-					"-y",
-					path,
-				],
-				`${position.position} frame extraction`,
-				10 * 60_000,
+					position: position.position,
+					frameIndex: position.frameIndex,
+					fps: safeFps,
+				}),
 			);
-			const info = await stat(path).catch(() => null);
-			if (!info?.isFile() || info.size === 0) {
-				throw new Error(`${position.position} frame sample is empty`);
-			}
-			samples.push({
-				...position,
-				path,
-				bytes: info.size,
-				sha256: await hashFile(path),
-			});
 		}
 		return samples;
+	}
+
+	private async extractFrame({
+		operationId,
+		outputPath,
+		position,
+		frameIndex,
+		fps,
+	}: {
+		operationId: string;
+		outputPath: string;
+		position: ExportFrameSample["position"];
+		frameIndex: number;
+		fps: number;
+	}): Promise<ExportFrameSample> {
+		const directory = await this.receipts.artifactsDirectory(operationId);
+		const path = join(directory, `${position}.png`);
+		await runCommand(
+			this.ffmpeg,
+			[
+				"-v",
+				"error",
+				"-i",
+				outputPath,
+				"-ss",
+				Math.max(0, (frameIndex - 0.5) / Math.max(fps, 1)).toFixed(6),
+				"-frames:v",
+				"1",
+				"-an",
+				"-y",
+				path,
+			],
+			`${position} frame extraction`,
+			10 * 60_000,
+		);
+		const info = await stat(path).catch(() => null);
+		if (!info?.isFile() || info.size === 0) {
+			throw new Error(`${position} frame sample is empty`);
+		}
+		return {
+			position,
+			frameIndex,
+			timeSeconds: frameIndex / Math.max(fps, 1),
+			path,
+			bytes: info.size,
+			sha256: await hashFile(path),
+		};
 	}
 }
 
@@ -482,12 +614,14 @@ function parseEbur128Summary(stderr: string): {
 	if (!summary.startsWith("Summary:")) {
 		throw new Error("FFmpeg ebur128 output did not contain a summary");
 	}
-	const integrated = /Integrated loudness:\s*[\s\S]*?I:\s*(-?inf|-?\d+(?:\.\d+)?)\s+LUFS/i.exec(
-		summary,
-	)?.[1];
-	const truePeak = /True peak:\s*[\s\S]*?Peak:\s*(-?inf|-?\d+(?:\.\d+)?)\s+dBFS/i.exec(
-		summary,
-	)?.[1];
+	const integrated =
+		/Integrated loudness:\s*[\s\S]*?I:\s*(-?inf|-?\d+(?:\.\d+)?)\s+LUFS/i.exec(
+			summary,
+		)?.[1];
+	const truePeak =
+		/True peak:\s*[\s\S]*?Peak:\s*(-?inf|-?\d+(?:\.\d+)?)\s+dBFS/i.exec(
+			summary,
+		)?.[1];
 	if (!integrated || !truePeak) {
 		throw new Error("FFmpeg ebur128 summary is incomplete");
 	}
@@ -495,6 +629,64 @@ function parseEbur128Summary(stderr: string): {
 		integratedLufs: finiteMetric(integrated),
 		truePeakDbtp: finiteMetric(truePeak),
 	};
+}
+
+function parseTemporalSegments(
+	stderr: string,
+	kind: "black" | "freeze" | "silence",
+): ExportTemporalSegment[] {
+	const starts = new Map<number, number>();
+	const segments: ExportTemporalSegment[] = [];
+	const pattern =
+		kind === "black"
+			? /black_start:([\d.]+)\s+black_end:([\d.]+)\s+black_duration:([\d.]+)/g
+			: kind === "freeze"
+				? /freeze_(start|end|duration):\s*([\d.]+)/g
+				: /silence_(start|end|duration):\s*([\d.]+)/g;
+	if (kind === "black") {
+		for (const match of stderr.matchAll(pattern)) {
+			segments.push({
+				startSeconds: Number(match[1]),
+				endSeconds: Number(match[2]),
+				durationSeconds: Number(match[3]),
+			});
+		}
+		return segments.filter(validSegment);
+	}
+	let currentStart: number | null = null;
+	for (const match of stderr.matchAll(pattern)) {
+		const event = match[1];
+		const value = Number(match[2]);
+		if (!Number.isFinite(value)) continue;
+		if (event === "start") {
+			currentStart = value;
+			continue;
+		}
+		if (event === "duration" && currentStart !== null) {
+			starts.set(currentStart, value);
+			continue;
+		}
+		if (event === "end" && currentStart !== null) {
+			segments.push({
+				startSeconds: currentStart,
+				endSeconds: value,
+				durationSeconds: starts.get(currentStart) ?? value - currentStart,
+			});
+			starts.delete(currentStart);
+			currentStart = null;
+		}
+	}
+	return segments.filter(validSegment);
+}
+
+function validSegment(segment: ExportTemporalSegment): boolean {
+	return (
+		Number.isFinite(segment.startSeconds) &&
+		Number.isFinite(segment.endSeconds) &&
+		Number.isFinite(segment.durationSeconds) &&
+		segment.endSeconds >= segment.startSeconds &&
+		segment.durationSeconds >= 0
+	);
 }
 
 function finiteMetric(value: string): number | null {

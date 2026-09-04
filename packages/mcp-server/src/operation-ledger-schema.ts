@@ -93,6 +93,8 @@ export const operationAffectedObjectSchema = z
 			"export-job",
 			"export-batch",
 			"export-receipt",
+			"qc-report",
+			"delivery-package",
 		]),
 		objectId: identifierSchema,
 		action: z.enum([
@@ -111,6 +113,8 @@ export const operationAffectedObjectSchema = z
 			"cancelled",
 			"processed",
 			"inspected",
+			"evaluated",
+			"packaged",
 			"undone",
 		]),
 	})
