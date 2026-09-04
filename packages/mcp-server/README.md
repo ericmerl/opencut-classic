@@ -209,7 +209,12 @@ font bundle ships with the editor (TikTok Sans and Montserrat under the SIL Open
 Font License in `apps/web/public/fonts/bundled`, pinned by SHA-256 and reported
 as `bundled-font-bytes` provenance in receipts); local AI models remain deferred
 to issue #29, and capability readiness reports their current state rather than
-assuming an untracked cache.
+assuming an untracked cache. `opencut_capabilities.fonts` lists that catalog
+with byte hashes, reports `thirdPartyFetch: "blocked"` for the managed editor,
+which never fetches a font from Google Fonts or any other third-party host, and
+lists the reusable caption presets (`tiktok-classic`, `tiktok-classic-red`,
+`montserrat-clean`) that `insert_captions.style.preset` selects; explicit style
+fields override the preset.
 
 ### Upgrade
 

@@ -19,6 +19,7 @@ import type {
 	TextFontWeight,
 	TextLayoutParams,
 } from "@/text/primitives";
+import { applyCaptionStylePreset } from "./caption-presets";
 import type { SubtitleCue, SubtitleStyleOverrides } from "./types";
 
 const SUBTITLE_MAX_WIDTH_RATIO = 0.8;
@@ -63,10 +64,11 @@ type ResolvedSubtitleStyle = {
 };
 
 function resolveSubtitleStyle({
-	style,
+	style: requested,
 }: {
 	style: SubtitleStyleOverrides | undefined;
 }): ResolvedSubtitleStyle {
+	const style = applyCaptionStylePreset(requested);
 	const fontSize =
 		style?.fontSizeRatioOfPlayHeight != null
 			? style.fontSizeRatioOfPlayHeight * FONT_SIZE_SCALE_REFERENCE

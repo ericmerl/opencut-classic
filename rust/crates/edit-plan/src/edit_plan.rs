@@ -267,6 +267,13 @@ pub enum ErrorCode {
     ArithmeticOverflow,
 }
 
+/// The reusable caption style presets, exported so every shell resolves the
+/// same style for a preset id.
+#[export]
+pub fn caption_style_presets() -> CaptionStylePresetList {
+    model::caption_style_presets()
+}
+
 #[export]
 pub fn evaluate_edit_plan(options: EvaluateEditPlanOptions) -> EditPlanEvaluationResponse {
     match evaluate(options) {
@@ -1997,8 +2004,13 @@ impl State {
             EditOperation::InsertCaptions {
                 track_id,
                 captions,
-                style: _,
+                style,
             } => {
+                if let Some(preset) = style.as_ref().and_then(|value| value.preset.as_deref()) {
+                    if !is_caption_style_preset(preset) {
+                        return invalid(index, "unknown caption style preset");
+                    }
+                }
                 let id = required(track_id);
                 self.insert_track("text", id, true, index)?;
                 if captions.is_empty() {

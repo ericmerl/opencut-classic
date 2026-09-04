@@ -642,6 +642,10 @@ pub struct SubtitlePlacementStyle {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SubtitleStyleOverrides {
+    /// Id of a reusable caption preset (`caption_style_presets`) whose style
+    /// applies underneath every explicit override in this object.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -666,6 +670,116 @@ pub struct SubtitleStyleOverrides {
     pub line_height: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<SubtitlePlacementStyle>,
+}
+
+/// A reusable social-caption style. The table lives in Rust so the editor,
+/// the MCP server, and any other shell resolve the same style for an id.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CaptionStylePreset {
+    pub id: String,
+    pub description: String,
+    pub style: SubtitleStyleOverrides,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CaptionStylePresetList {
+    pub presets: Vec<CaptionStylePreset>,
+}
+
+fn bundled_caption_background(color: &str) -> SubtitleBackground {
+    SubtitleBackground {
+        enabled: true,
+        color: color.to_owned(),
+        corner_radius: Some(8.0),
+        padding_x: Some(16.0),
+        padding_y: Some(8.0),
+        offset_x: None,
+        offset_y: None,
+    }
+}
+
+/// The reusable caption presets. Every face they name ships with the editor
+/// (TikTok Sans and Montserrat, both OFL). The styles follow the owner's
+/// course guidance for social captions: bold, high contrast, no decorative
+/// face, centred in the lower safe area.
+pub fn caption_style_presets() -> CaptionStylePresetList {
+    let tiktok = |background_color: &str| SubtitleStyleOverrides {
+        preset: None,
+        font_size: Some(6.0),
+        font_size_ratio_of_play_height: None,
+        font_family: Some("TikTok Sans".to_owned()),
+        color: Some("#ffffff".to_owned()),
+        background: Some(bundled_caption_background(background_color)),
+        text_align: Some(TextAlign::Center),
+        font_weight: Some(TextFontWeight::Bold),
+        font_style: Some(TextFontStyle::Normal),
+        text_decoration: Some(TextDecoration::None),
+        letter_spacing: None,
+        line_height: None,
+        placement: Some(SubtitlePlacementStyle {
+            vertical_align: Some(VerticalAlign::Bottom),
+            margin_left_ratio: None,
+            margin_right_ratio: None,
+            margin_vertical_ratio: Some(0.12),
+        }),
+    };
+    CaptionStylePresetList {
+        presets: vec![
+            CaptionStylePreset {
+                id: "tiktok-classic".to_owned(),
+                description:
+                    "Bold white TikTok Sans on a black block, centred above the lower edge."
+                        .to_owned(),
+                style: tiktok("#000000"),
+            },
+            CaptionStylePreset {
+                id: "tiktok-classic-red".to_owned(),
+                description:
+                    "Bold white TikTok Sans on a red block, the high-contrast hook treatment."
+                        .to_owned(),
+                style: tiktok("#ff0000"),
+            },
+            CaptionStylePreset {
+                id: "montserrat-clean".to_owned(),
+                description: "Bold white Montserrat with no block, for quieter narrative captions."
+                    .to_owned(),
+                style: SubtitleStyleOverrides {
+                    preset: None,
+                    font_size: Some(5.0),
+                    font_size_ratio_of_play_height: None,
+                    font_family: Some("Montserrat".to_owned()),
+                    color: Some("#ffffff".to_owned()),
+                    background: None,
+                    text_align: Some(TextAlign::Center),
+                    font_weight: Some(TextFontWeight::Bold),
+                    font_style: Some(TextFontStyle::Normal),
+                    text_decoration: Some(TextDecoration::None),
+                    letter_spacing: None,
+                    line_height: None,
+                    placement: Some(SubtitlePlacementStyle {
+                        vertical_align: Some(VerticalAlign::Bottom),
+                        margin_left_ratio: None,
+                        margin_right_ratio: None,
+                        margin_vertical_ratio: Some(0.12),
+                    }),
+                },
+            },
+        ],
+    }
+}
+
+/// True when `id` names a preset in `caption_style_presets`.
+pub fn is_caption_style_preset(id: &str) -> bool {
+    caption_style_presets()
+        .presets
+        .iter()
+        .any(|preset| preset.id == id)
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]

@@ -1,6 +1,7 @@
 import type { FontAtlas } from "@/fonts/types";
 import { SYSTEM_FONTS } from "@/fonts/system-fonts";
 import { ensureBundledFonts, isBundledFontFamily } from "@/fonts/bundled-fonts";
+import { canFetchThirdPartyFonts } from "@/fonts/font-policy";
 
 const GOOGLE_FONTS_CSS = "https://fonts.googleapis.com/css2";
 const FONT_ATLAS_PATH = "/fonts/font-atlas.json";
@@ -66,6 +67,9 @@ export async function loadFullFont({
 		fullLoaded.add(family);
 		return;
 	}
+	// A managed editor renders only bundled or system faces; readiness will
+	// report the family as unavailable rather than substitute a fetched one.
+	if (!canFetchThirdPartyFonts()) return;
 
 	const url = `${GOOGLE_FONTS_CSS}?family=${encodeGoogleFontsFamily(family)}:wght@${weights.join(";")}&display=swap`;
 	const link = document.createElement("link");

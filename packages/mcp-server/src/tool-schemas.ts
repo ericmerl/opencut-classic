@@ -513,6 +513,13 @@ export const searchStickersInputSchema = z.object({
 
 const captionStyleSchema = z
 	.object({
+		preset: z
+			.string()
+			.min(1)
+			.describe(
+				"Reusable caption preset id from opencut_capabilities fonts.captionStylePresets (for example tiktok-classic); explicit fields override the preset.",
+			)
+			.optional(),
 		fontFamily: z.string().min(1).optional(),
 		fontSize: z
 			.number()

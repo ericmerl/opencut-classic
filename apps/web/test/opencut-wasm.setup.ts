@@ -17,6 +17,7 @@ interface NativeProjectState {
 	) => MediaRelinkEvaluation;
 	evaluateLifecycleMutation: (options: unknown) => unknown;
 	scheduleFrameRange: (options: unknown) => unknown;
+	captionStylePresets: () => unknown;
 }
 
 /**
@@ -89,6 +90,7 @@ mock.module("opencut-wasm", () => ({
 		nativeProjectState().evaluateMediaRelinkCompatibility(options),
 	evaluateLifecycleMutation: (options: unknown) =>
 		nativeProjectState().evaluateLifecycleMutation(options),
+	captionStylePresets: () => nativeProjectState().captionStylePresets(),
 	scheduleFrameRange: (options: unknown) =>
 		nativeProjectState().scheduleFrameRange(options),
 	guessTimecodeFormat: () => "HH:MM:SS",

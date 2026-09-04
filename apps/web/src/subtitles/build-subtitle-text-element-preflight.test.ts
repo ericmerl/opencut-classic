@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 
 mock.module("opencut-wasm", () => ({
+	captionStylePresets: () => ({ presets: [] }),
 	TICKS_PER_SECOND: () => 120_000,
 	formatTimecode: () => "00:00",
 	lastFrameTime: () => 0,

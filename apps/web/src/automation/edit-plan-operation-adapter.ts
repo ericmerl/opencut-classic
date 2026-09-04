@@ -296,6 +296,7 @@ function resolvedSubtitleStyle(
 ): SubtitleStyleOverrides | undefined {
 	if (!style) return undefined;
 	return {
+		preset: optional(style.preset),
 		fontSize: optional(style.fontSize),
 		fontSizeRatioOfPlayHeight: optional(style.fontSizeRatioOfPlayHeight),
 		fontFamily: optional(style.fontFamily),

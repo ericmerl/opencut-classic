@@ -16,6 +16,11 @@ export interface SubtitlePlacementStyle {
 
 export interface SubtitleStyleOverrides {
 	/**
+	 * Id of a reusable caption preset (Rust `caption_style_presets`) applied
+	 * underneath every explicit field in this object.
+	 */
+	preset?: string;
+	/**
 	 * Font size in app units (same coordinate space as TextElement.fontSize).
 	 * Use fontSizeRatioOfPlayHeight when the source coordinate space is unknown
 	 * (e.g. ASS files, where font size is relative to the script's play resolution).

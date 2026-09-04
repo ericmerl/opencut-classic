@@ -2677,3 +2677,37 @@ fn main_track_promotion_rejects_a_duration_change() {
     assert!(matches!(error.code, ErrorCode::IncompatibleTrack));
     assert!(error.message.contains("duration"));
 }
+
+#[test]
+fn caption_style_presets_name_bundled_faces_and_gate_insertion() {
+    let presets = caption_style_presets().presets;
+    assert_eq!(
+        presets
+            .iter()
+            .map(|preset| preset.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["tiktok-classic", "tiktok-classic-red", "montserrat-clean"]
+    );
+    for preset in &presets {
+        let family = preset.style.font_family.as_deref().unwrap();
+        assert!(matches!(family, "TikTok Sans" | "Montserrat"));
+        assert_eq!(preset.style.font_weight, Some(TextFontWeight::Bold));
+        assert!(preset.style.preset.is_none());
+    }
+
+    let insert = |preset: &str| EditOperation::InsertCaptions {
+        track_id: None,
+        captions: vec![resolved_caption(
+            "caption",
+            MediaTime::ZERO,
+            MediaTime::from_ticks(30_000),
+        )],
+        style: Some(SubtitleStyleOverrides {
+            preset: Some(preset.into()),
+            ..Default::default()
+        }),
+    };
+    assert!(evaluate(options(vec![insert("tiktok-classic")])).is_ok());
+    let error = evaluate(options(vec![insert("not-a-preset")])).unwrap_err();
+    assert_eq!(error.message, "unknown caption style preset");
+}

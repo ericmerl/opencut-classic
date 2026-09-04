@@ -16,6 +16,7 @@ import {
 } from "@/services/renderer/gpu-renderer";
 import { AutomationBridgeClient, EditorAutomation } from "@/automation";
 import { ensureBundledFonts } from "@/fonts/bundled-fonts";
+import { setThirdPartyFontFetchPolicy } from "@/fonts/font-policy";
 
 interface EditorProviderProps {
 	projectId: string;
@@ -221,6 +222,9 @@ async function loadAutomationBridgeConfig(): Promise<AutomationBridgeConfig | nu
 	const bootstrap = url.searchParams.get("automationBootstrap");
 	const queryPort = url.searchParams.get("automationBridgePort");
 	if (bootstrap) {
+		// This editor was launched by the MCP server: it must render only
+		// bundled or system faces so receipts can name the exact face.
+		setThirdPartyFontFetchPolicy("blocked");
 		const port = queryPort ?? "32191";
 		if (!/^\d+$/.test(port)) throw new Error("Invalid automation bridge port");
 		url.searchParams.delete("automationBootstrap");

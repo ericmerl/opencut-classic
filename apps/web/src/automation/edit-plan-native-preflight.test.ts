@@ -27,6 +27,7 @@ mock.module("@/services/storage/indexeddb-adapter", () => ({
 }));
 
 mock.module("opencut-wasm", () => ({
+	captionStylePresets: () => ({ presets: [] }),
 	evaluateEditPlan: () => {
 		throw new Error("test must inject the native evaluator");
 	},

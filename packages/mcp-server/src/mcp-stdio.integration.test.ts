@@ -324,13 +324,47 @@ integrationTest(
 			"connectionIdentity",
 		);
 		const capabilities = await harness.callTool("opencut_capabilities", {});
-		expect(requireRecord(capabilities.fonts, "fonts")).toMatchObject({
+		const fonts = requireRecord(capabilities.fonts, "fonts");
+		expect(fonts).toMatchObject({
 			status: "ready",
+			thirdPartyFetch: "blocked",
 			presets: [
 				{ id: "tiktok-sans-caption", status: "ready" },
 				{ id: "montserrat-caption", status: "ready" },
 			],
 		});
+		expect(
+			requireRecords(fonts.catalog, "catalog").map((file) => [
+				file.family,
+				file.style,
+				file.license,
+				file.sha256,
+			]),
+		).toEqual([
+			[
+				"TikTok Sans",
+				"normal",
+				"OFL-1.1",
+				"0e7f0a3e924c9a86478fc6fc2946de2e4ab8fc704ed72ee40434ade94bb9b0c6",
+			],
+			[
+				"Montserrat",
+				"normal",
+				"OFL-1.1",
+				"0f7b311b2f3279e4eef9b2f968bcdbab6e28f4daeb1f049f4f278a902bcd82f7",
+			],
+			[
+				"Montserrat",
+				"italic",
+				"OFL-1.1",
+				"51607f316bc020e59f03cbf51543eecffbea501c0b31d73e5b82927c5cca442c",
+			],
+		]);
+		expect(
+			requireRecords(fonts.captionStylePresets, "captionStylePresets").map(
+				(preset) => preset.id,
+			),
+		).toEqual(["tiktok-classic", "tiktok-classic-red", "montserrat-clean"]);
 		const project = await harness.callTool(
 			"opencut_get_project",
 			affinity(identity),
@@ -372,12 +406,9 @@ integrationTest(
 								duration: 240_000,
 							},
 						],
-						style: {
-							fontFamily: "TikTok Sans",
-							fontWeight: "bold",
-							fontSize: 6,
-							background: { enabled: true, color: "#000000" },
-						},
+						// The preset supplies TikTok Sans bold on a black block; the
+						// explicit size overrides it.
+						style: { preset: "tiktok-classic", fontSize: 6 },
 					},
 				],
 				policy: {

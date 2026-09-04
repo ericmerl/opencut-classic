@@ -1,4 +1,6 @@
-import { ensureBundledFonts } from "@/fonts/bundled-fonts";
+import { BUNDLED_FONT_FILES, ensureBundledFonts } from "@/fonts/bundled-fonts";
+import { thirdPartyFontFetchPolicy } from "@/fonts/font-policy";
+import { listCaptionStylePresets } from "@/subtitles/caption-presets";
 
 /**
  * Mirrors NAMED_FONT_PRESETS in packages/mcp-server/src/capability-snapshot.ts.
@@ -56,7 +58,24 @@ export async function readRuntimeCapabilities() {
 	};
 }
 
+/** The bundled faces as a catalog: what ships, from where, and its byte hash. */
+function readFontCatalog() {
+	return BUNDLED_FONT_FILES.map((file) => ({
+		family: file.family,
+		style: file.style,
+		weight: file.weight,
+		stretch: file.stretch,
+		path: file.path,
+		sha256: file.sha256,
+		license: file.license,
+		licensePath: file.licensePath,
+	}));
+}
+
 async function readFontReadiness() {
+	const catalog = readFontCatalog();
+	const thirdPartyFetch = thirdPartyFontFetchPolicy();
+	const captionStylePresets = listCaptionStylePresets();
 	if (!document.fonts) {
 		return {
 			status: "unavailable",
@@ -66,6 +85,9 @@ async function readFontReadiness() {
 				status: "unknown",
 				missingDescriptors: [...preset.descriptors],
 			})),
+			catalog,
+			thirdPartyFetch,
+			captionStylePresets,
 		};
 	}
 	try {
@@ -100,6 +122,9 @@ async function readFontReadiness() {
 				? null
 				: "One or more named caption font faces are unavailable.",
 			presets,
+			catalog,
+			thirdPartyFetch,
+			captionStylePresets,
 		};
 	} catch (error) {
 		return {
@@ -111,6 +136,9 @@ async function readFontReadiness() {
 				status: "unknown",
 				missingDescriptors: [...preset.descriptors],
 			})),
+			catalog,
+			thirdPartyFetch,
+			captionStylePresets,
 		};
 	}
 }
