@@ -106,6 +106,7 @@ describe("caption layout evidence contract", () => {
 		geometry.textEffects = {
 			outline: { color: "#000000", width: 2, join: "round" },
 			shadow: { color: "#00000099", offsetX: 2, offsetY: 3, blur: 4 },
+			miterLimit: 2,
 			extents: { left: 2, top: 1, right: 6, bottom: 7 },
 		};
 

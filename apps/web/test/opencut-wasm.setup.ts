@@ -22,7 +22,10 @@ interface NativeProjectState {
 	resolveCaptionStyleParams: (options: unknown) => unknown;
 	textStyleContract: () => unknown;
 	resolveTextEffectGeometry: (options: unknown) => unknown;
+	resolveTextEffectParams: (options: unknown) => unknown;
+	resolveTextEffectBounds: (options: unknown) => unknown;
 	mapAssTextEffects: (options: unknown) => unknown;
+	mapTextEffectsToAss: (options: unknown) => unknown;
 }
 
 /**
@@ -103,8 +106,14 @@ mock.module("opencut-wasm", () => ({
 	textStyleContract: () => nativeProjectState().textStyleContract(),
 	resolveTextEffectGeometry: (options: unknown) =>
 		nativeProjectState().resolveTextEffectGeometry(options),
+	resolveTextEffectParams: (options: unknown) =>
+		nativeProjectState().resolveTextEffectParams(options),
+	resolveTextEffectBounds: (options: unknown) =>
+		nativeProjectState().resolveTextEffectBounds(options),
 	mapAssTextEffects: (options: unknown) =>
 		nativeProjectState().mapAssTextEffects(options),
+	mapTextEffectsToAss: (options: unknown) =>
+		nativeProjectState().mapTextEffectsToAss(options),
 	scheduleFrameRange: (options: unknown) =>
 		nativeProjectState().scheduleFrameRange(options),
 	guessTimecodeFormat: () => "HH:MM:SS",

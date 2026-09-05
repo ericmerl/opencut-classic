@@ -1,7 +1,10 @@
 import * as nativeWasm from "opencut-wasm";
 import type {
+	ResolvedTextEffectBounds,
 	ResolvedTextEffectGeometry,
 	TextOutline,
+	TextEffectExtents,
+	TextEffectRect,
 	TextShadow,
 	TextStyleContract,
 } from "opencut-wasm";
@@ -23,46 +26,25 @@ export function resolveTextEffects({
 	canvasHeight: number;
 }): ResolvedTextEffectGeometry {
 	const contract = getTextStyleContract();
-	const outline: TextOutline = {
-		color: readString({
-			params,
-			key: "outline.color",
-			fallback: contract.outline.default.color,
-		}),
-		width: readNumber({
-			params,
-			key: "outline.width",
-			fallback: contract.outline.default.width,
-		}),
-		join: readOutlineJoin({
-			params,
-			key: "outline.join",
-			fallback: contract.outline.default.join,
-		}),
-	};
-	const shadow: TextShadow = {
-		color: readString({
-			params,
-			key: "shadow.color",
-			fallback: contract.shadow.default.color,
-		}),
-		offsetX: readNumber({
-			params,
-			key: "shadow.offsetX",
-			fallback: contract.shadow.default.offsetX,
-		}),
-		offsetY: readNumber({
-			params,
-			key: "shadow.offsetY",
-			fallback: contract.shadow.default.offsetY,
-		}),
-		blur: readNumber({
-			params,
-			key: "shadow.blur",
-			fallback: contract.shadow.default.blur,
-		}),
-	};
-	return resolveTextEffectStyle({ outline, shadow, canvasHeight });
+	return resolveTextEffectParams({
+		params,
+		pixelsPerUnit: canvasHeight / contract.scaleReference,
+	});
+}
+
+export function resolveTextEffectParams({
+	params,
+	pixelsPerUnit,
+}: {
+	params: ParamValues;
+	pixelsPerUnit: number;
+}): ResolvedTextEffectGeometry {
+	const response = nativeWasm.resolveTextEffectParams({
+		params,
+		pixelsPerUnit,
+	});
+	if (response.status === "rejected") throw new Error(response.reason);
+	return response.geometry;
 }
 
 export function resolveTextEffectStyle({
@@ -86,51 +68,20 @@ export function resolveTextEffectStyle({
 	return response.geometry;
 }
 
-function readString({
-	params,
-	key,
-	fallback,
+export function resolveTextEffectBounds({
+	text,
+	baseVisual,
+	extents,
 }: {
-	params: ParamValues;
-	key: string;
-	fallback: string;
-}): string {
-	const value = params[key];
-	if (value === undefined) return fallback;
-	if (typeof value !== "string") throw new Error(`${key} must be a string`);
-	return value;
-}
-
-function readNumber({
-	params,
-	key,
-	fallback,
-}: {
-	params: ParamValues;
-	key: string;
-	fallback: number;
-}): number {
-	const value = params[key];
-	if (value === undefined) return fallback;
-	if (typeof value !== "number" || !Number.isFinite(value)) {
-		throw new Error(`${key} must be a finite number`);
-	}
-	return value;
-}
-
-function readOutlineJoin({
-	params,
-	key,
-	fallback,
-}: {
-	params: ParamValues;
-	key: string;
-	fallback: TextOutline["join"];
-}): TextOutline["join"] {
-	const value = params[key];
-	if (value === undefined) return fallback;
-	if (value !== "round" && value !== "bevel" && value !== "miter") {
-		throw new Error(`${key} is invalid`);
-	}
-	return value;
+	text: TextEffectRect;
+	baseVisual: TextEffectRect;
+	extents: TextEffectExtents;
+}): ResolvedTextEffectBounds {
+	const response = nativeWasm.resolveTextEffectBounds({
+		text,
+		baseVisual,
+		extents,
+	});
+	if (response.status === "rejected") throw new Error(response.reason);
+	return response.bounds;
 }

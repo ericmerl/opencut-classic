@@ -309,6 +309,7 @@ export function drawMeasuredTextLayout({
 			strokeColor: textEffects.outline.color,
 			strokeWidth: textEffects.outline.width,
 			strokeJoin: textEffects.outline.join,
+			miterLimit: textEffects.miterLimit,
 			textBaseline,
 		});
 	}
@@ -382,6 +383,7 @@ export function strokeMeasuredTextLayout({
 	strokeColor,
 	strokeWidth,
 	strokeJoin = "round",
+	miterLimit,
 	textBaseline = "middle",
 }: {
 	ctx: TextCanvasContext;
@@ -389,6 +391,7 @@ export function strokeMeasuredTextLayout({
 	strokeColor: string;
 	strokeWidth: number;
 	strokeJoin?: CanvasLineJoin;
+	miterLimit?: number;
 	textBaseline?: CanvasTextBaseline;
 }): void {
 	ctx.font = layout.fontString;
@@ -397,6 +400,7 @@ export function strokeMeasuredTextLayout({
 	ctx.strokeStyle = strokeColor;
 	ctx.lineWidth = strokeWidth;
 	ctx.lineJoin = strokeJoin;
+	if (miterLimit !== undefined) ctx.miterLimit = miterLimit;
 	ctx.lineCap = "round";
 	setCanvasLetterSpacing({ ctx, letterSpacingPx: layout.letterSpacing });
 

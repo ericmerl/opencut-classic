@@ -68,6 +68,7 @@ import {
 	buildTextLayoutParamsFromElement,
 } from "@/text/measure-element";
 import type { SubtitleCue, SubtitleStyleOverrides } from "@/subtitles/types";
+import { resolveTextEffectParams } from "@/text/effects";
 import { DEFAULT_TRANSCRIPTION_SAMPLE_RATE } from "@/transcription/audio";
 import { buildCaptionChunks } from "@/transcription/caption";
 import { transcriptionService } from "@/services/transcription/service";
@@ -4163,6 +4164,10 @@ function captionStyleFromElement(
 	const text = buildTextLayoutParamsFromElement({ element });
 	const background = buildTextBackgroundFromElement({ element });
 	const color = element.params.color;
+	const textEffects = resolveTextEffectParams({
+		params: element.params,
+		pixelsPerUnit: 1,
+	});
 	return {
 		fontFamily: text.fontFamily,
 		fontSize: text.fontSize,
@@ -4173,6 +4178,8 @@ function captionStyleFromElement(
 		textDecoration: text.textDecoration,
 		letterSpacing: text.letterSpacing,
 		lineHeight: text.lineHeight,
+		outline: textEffects.outline,
+		shadow: textEffects.shadow,
 		...(background.enabled ? { background } : {}),
 		...(element.params["highlight.enabled"] === true
 			? {

@@ -3414,6 +3414,7 @@ fn text_style_contract_reports_rust_owned_defaults_and_ranges() {
     assert_eq!(contract.outline.default.color, "#000000");
     assert_eq!(contract.outline.default.width, 0.0);
     assert_eq!(contract.outline.default.join, TextOutlineJoin::Round);
+    assert_eq!(contract.outline.miter_limit, 2.0);
     assert_eq!(
         contract.outline.width,
         NumericControlRange {
@@ -3653,19 +3654,61 @@ fn update_caption_applies_rust_resolved_outline_and_shadow() {
 }
 
 #[test]
+fn update_caption_resolves_the_outline_shadow_preset_before_applying_params() {
+    let result = evaluate(options_with_before(
+        full_snapshot(),
+        vec![EditOperation::UpdateCaption {
+            track_id: "track-text".into(),
+            element_id: "text-1".into(),
+            text: None,
+            start_time: None,
+            duration: None,
+            style: Some(SubtitleStyleOverrides {
+                preset: Some("tiktok-outline-shadow".into()),
+                color: Some("#00FF00".into()),
+                ..Default::default()
+            }),
+            resolved_params: None,
+            resolved_allocations: None,
+        }],
+    ))
+    .unwrap();
+    let caption = result.predicted_after.project.scenes[0]
+        .tracks
+        .iter()
+        .find(|track| track.id == "track-text")
+        .unwrap()
+        .elements
+        .iter()
+        .find(|element| element.common().id == "text-1")
+        .unwrap()
+        .common();
+    assert_eq!(
+        scalar_string_of(&caption.params, "fontFamily"),
+        Some("TikTok Sans")
+    );
+    assert_eq!(scalar_string_of(&caption.params, "color"), Some("#00FF00"));
+    assert_eq!(
+        scalar_number_of(&caption.params, "outline.width"),
+        Some(2.0)
+    );
+    assert_eq!(scalar_number_of(&caption.params, "shadow.blur"), Some(3.0));
+}
+
+#[test]
 fn text_effect_geometry_reports_shared_draw_values_and_visual_extents() {
     let response = resolve_text_effect_geometry(ResolveTextEffectGeometryOptions {
-        outline: TextOutline {
+        outline: Some(TextOutline {
             color: "#010203".into(),
             width: 4.0,
             join: TextOutlineJoin::Bevel,
-        },
-        shadow: TextShadow {
+        }),
+        shadow: Some(TextShadow {
             color: "#11223380".into(),
             offset_x: -3.0,
             offset_y: 5.0,
             blur: 6.0,
-        },
+        }),
         pixels_per_unit: 2.0,
     });
     let ResolveTextEffectGeometryResponse::Resolved { geometry } = response else {
@@ -3683,6 +3726,99 @@ fn text_effect_geometry_reports_shared_draw_values_and_visual_extents() {
             top: 4.0,
             right: 6.0,
             bottom: 22.0,
+        }
+    );
+}
+
+#[test]
+fn flat_text_effect_params_resolve_defaults_and_fail_closed_in_rust() {
+    let response = resolve_text_effect_params(ResolveTextEffectParamsOptions {
+        params: Params::from_iter([
+            ("outline.color".into(), Scalar::String("#ABCDEF".into())),
+            ("outline.width".into(), Scalar::Number(3.0)),
+            ("outline.join".into(), Scalar::String("bevel".into())),
+        ]),
+        pixels_per_unit: 2.0,
+    });
+    let ResolveTextEffectGeometryResponse::Resolved { geometry } = response else {
+        panic!("valid flat params should resolve")
+    };
+    assert_eq!(geometry.outline.color, "#abcdef");
+    assert_eq!(geometry.outline.width, 6.0);
+    assert_eq!(geometry.shadow.color, DEFAULT_TEXT_SHADOW_COLOR);
+
+    let rejected = resolve_text_effect_params(ResolveTextEffectParamsOptions {
+        params: Params::from_iter([("outline.join".into(), Scalar::String("spiky".into()))]),
+        pixels_per_unit: 1.0,
+    });
+    assert!(matches!(
+        rejected,
+        ResolveTextEffectGeometryResponse::Rejected { .. }
+    ));
+}
+
+#[test]
+fn miter_outline_uses_the_shared_limit_for_draw_and_bounds() {
+    let response = resolve_text_effect_geometry(ResolveTextEffectGeometryOptions {
+        outline: Some(TextOutline {
+            color: "#ffffff".into(),
+            width: 4.0,
+            join: TextOutlineJoin::Miter,
+        }),
+        shadow: None,
+        pixels_per_unit: 2.0,
+    });
+    let ResolveTextEffectGeometryResponse::Resolved { geometry } = response else {
+        panic!("miter geometry should resolve")
+    };
+    assert_eq!(geometry.miter_limit, TEXT_OUTLINE_MITER_LIMIT);
+    assert_eq!(geometry.extents.left, 8.0);
+    assert_eq!(geometry.extents.top, 8.0);
+    assert_eq!(geometry.extents.right, 8.0);
+    assert_eq!(geometry.extents.bottom, 8.0);
+}
+
+#[test]
+fn text_effect_bounds_expand_text_then_union_the_background() {
+    let response = resolve_text_effect_bounds(ResolveTextEffectBoundsOptions {
+        text: TextEffectRect {
+            left: -10.0,
+            top: -5.0,
+            width: 20.0,
+            height: 10.0,
+        },
+        base_visual: TextEffectRect {
+            left: -30.0,
+            top: -20.0,
+            width: 60.0,
+            height: 40.0,
+        },
+        extents: TextEffectExtents {
+            left: 2.0,
+            top: 3.0,
+            right: 4.0,
+            bottom: 5.0,
+        },
+    });
+    let ResolveTextEffectBoundsResponse::Resolved { bounds } = response else {
+        panic!("bounds should resolve")
+    };
+    assert_eq!(
+        bounds.decorated_text,
+        TextEffectRect {
+            left: -12.0,
+            top: -8.0,
+            width: 26.0,
+            height: 18.0,
+        }
+    );
+    assert_eq!(
+        bounds.visual,
+        TextEffectRect {
+            left: -30.0,
+            top: -20.0,
+            width: 60.0,
+            height: 40.0,
         }
     );
 }
@@ -3717,6 +3853,70 @@ fn ass_text_effect_fields_map_through_the_rust_contract() {
             blur: 0.0,
         })
     );
+}
+
+#[test]
+fn ass_text_effect_export_mapping_and_losses_are_rust_owned() {
+    let response = map_text_effects_to_ass(MapTextEffectsToAssOptions {
+        outline: Some(TextOutline {
+            color: "#112233".into(),
+            width: 2.0,
+            join: TextOutlineJoin::Miter,
+        }),
+        shadow: Some(TextShadow {
+            color: "#44556680".into(),
+            offset_x: 2.0,
+            offset_y: 3.0,
+            blur: 4.0,
+        }),
+        background: Some(SubtitleBackground {
+            enabled: true,
+            color: "#abcdef".into(),
+            per_line: None,
+            corner_radius: None,
+            padding_x: None,
+            padding_y: None,
+            offset_x: None,
+            offset_y: None,
+        }),
+        play_res_y: 180.0,
+    });
+    let MapTextEffectsToAssResponse::Mapped { mapping } = response else {
+        panic!("valid effects should map")
+    };
+    assert_eq!(mapping.outline_colour, "&H00332211");
+    assert_eq!(mapping.back_colour, "&H00efcdab");
+    assert_eq!(mapping.border_style, 3);
+    assert_eq!(mapping.outline, 4.0);
+    assert_eq!(mapping.shadow, 0.0);
+    assert_eq!(
+        mapping
+            .losses
+            .iter()
+            .map(|loss| loss.feature.as_str())
+            .collect::<Vec<_>>(),
+        vec!["outline.join", "shadow.blur", "shadow.offset", "shadow"]
+    );
+
+    let rgba_background = map_text_effects_to_ass(MapTextEffectsToAssOptions {
+        outline: None,
+        shadow: None,
+        background: Some(SubtitleBackground {
+            enabled: true,
+            color: "rgba(0, 128, 255, 0.5)".into(),
+            per_line: None,
+            corner_radius: None,
+            padding_x: None,
+            padding_y: None,
+            offset_x: None,
+            offset_y: None,
+        }),
+        play_res_y: 1080.0,
+    });
+    let MapTextEffectsToAssResponse::Mapped { mapping } = rgba_background else {
+        panic!("rgba background should map")
+    };
+    assert_eq!(mapping.back_colour, "&H80ff8000");
 }
 
 fn caption_plan(operations: Vec<EditOperation>) -> Vec<EditOperation> {
@@ -4130,6 +4330,16 @@ fn scalar_string_of<'a>(params: &'a CanonicalValue, key: &str) -> Option<&'a str
     match params {
         CanonicalValue::Object(fields) => match fields.get(key) {
             Some(CanonicalValue::String(value)) => Some(value.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn scalar_number_of(params: &CanonicalValue, key: &str) -> Option<f64> {
+    match params {
+        CanonicalValue::Object(fields) => match fields.get(key) {
+            Some(CanonicalValue::Number(value)) => Some(*value),
             _ => None,
         },
         _ => None,

@@ -23,6 +23,9 @@ const projectState =
 			status: string;
 		}) => { durableSuccess: boolean; retainSnapshot: boolean };
 		evaluateProjectSnapshotRetention: (options: unknown) => unknown;
+		resolveTextEffectParams: (options: unknown) => unknown;
+		mapTextEffectsToAss: (options: unknown) => unknown;
+		textStyleContract: () => unknown;
 	};
 
 mock.module("opencut-wasm", () => ({
@@ -34,6 +37,9 @@ mock.module("opencut-wasm", () => ({
 	},
 	evaluateProjectSnapshotRetention:
 		projectState.evaluateProjectSnapshotRetention,
+	resolveTextEffectParams: projectState.resolveTextEffectParams,
+	mapTextEffectsToAss: projectState.mapTextEffectsToAss,
+	textStyleContract: projectState.textStyleContract,
 	formatTimecode: () => "00:00",
 	lastFrameTime: () => 0,
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) => seconds * 120000,
@@ -97,6 +103,69 @@ afterEach(() => {
 });
 
 describe("EditorAutomation save barrier", () => {
+	test("public ASS export carries persisted outline and shadow params", async () => {
+		const project = buildProject("Styled subtitle export");
+		const scene = project.scenes[0]!;
+		scene.tracks.overlay.push({
+			id: "captions",
+			name: "Captions",
+			type: "text",
+			hidden: false,
+			elements: [
+				{
+					id: "caption-1",
+					name: "Caption 1",
+					type: "text",
+					startTime: mediaTime({ ticks: 0 }),
+					duration: mediaTime({ ticks: 120_000 }),
+					trimStart: mediaTime({ ticks: 0 }),
+					trimEnd: mediaTime({ ticks: 0 }),
+					params: {
+						content: "Styled caption",
+						fontSize: 6,
+						fontFamily: "TikTok Sans",
+						color: "#ffffff",
+						textAlign: "center",
+						fontWeight: "bold",
+						fontStyle: "normal",
+						textDecoration: "none",
+						letterSpacing: 0,
+						lineHeight: 1.2,
+						"outline.color": "#112233",
+						"outline.width": 2,
+						"outline.join": "round",
+						"shadow.color": "#00000080",
+						"shadow.offsetX": 3,
+						"shadow.offsetY": 3,
+						"shadow.blur": 0,
+					},
+				},
+			],
+		});
+		const automation = new EditorAutomation(
+			createEditor({ project, scene, onFlush: () => undefined }),
+		);
+		const snapshot = await automation.readProject();
+		const result = await automation.exportSubtitles({
+			projectId: project.metadata.id,
+			expectedRevision: snapshot.revision,
+			format: "ass",
+			trackIds: ["captions"],
+		});
+
+		expect(result.status).toBe("serialized");
+		if (result.status !== "serialized") return;
+		expect(result.content).toContain("&H00332211");
+		expect(result.content).toContain("&H7f000000");
+		expect(
+			result.lossReport?.dropped.filter(
+				(loss) =>
+					loss.feature.startsWith("outline") ||
+					loss.feature.startsWith("shadow"),
+			),
+		).toEqual([]);
+	});
+
 	test("serves explicit legacy v1 hashes for persisted receipt recovery", async () => {
 		const project = buildProject("Projection migration");
 		const automation = new EditorAutomation(

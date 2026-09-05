@@ -628,6 +628,7 @@ pub const DEFAULT_TEXT_OUTLINE_WIDTH: f64 = 0.0;
 pub const DEFAULT_TEXT_OUTLINE_JOIN: TextOutlineJoin = TextOutlineJoin::Round;
 pub const TEXT_OUTLINE_WIDTH_MIN: f64 = 0.0;
 pub const TEXT_OUTLINE_WIDTH_MAX: f64 = 64.0;
+pub const TEXT_OUTLINE_MITER_LIMIT: f64 = 2.0;
 pub const DEFAULT_TEXT_SHADOW_COLOR: &str = "#00000000";
 pub const DEFAULT_TEXT_SHADOW_OFFSET_X: f64 = 0.0;
 pub const DEFAULT_TEXT_SHADOW_OFFSET_Y: f64 = 0.0;
@@ -673,6 +674,7 @@ pub struct TextOutlineControlContract {
     pub default: TextOutline,
     pub width: NumericControlRange,
     pub joins: Vec<TextOutlineJoin>,
+    pub miter_limit: f64,
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -699,8 +701,19 @@ pub struct TextStyleContract {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResolveTextEffectGeometryOptions {
-    pub outline: TextOutline,
-    pub shadow: TextShadow,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<TextOutline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<TextShadow>,
+    pub pixels_per_unit: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolveTextEffectParamsOptions {
+    pub params: Params,
     pub pixels_per_unit: f64,
 }
 
@@ -720,6 +733,7 @@ pub struct TextEffectExtents {
 pub struct ResolvedTextEffectGeometry {
     pub outline: TextOutline,
     pub shadow: TextShadow,
+    pub miter_limit: f64,
     pub extents: TextEffectExtents,
 }
 
@@ -734,6 +748,43 @@ pub enum ResolveTextEffectGeometryResponse {
     Rejected {
         reason: String,
     },
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextEffectRect {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolveTextEffectBoundsOptions {
+    pub text: TextEffectRect,
+    pub base_visual: TextEffectRect,
+    pub extents: TextEffectExtents,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolvedTextEffectBounds {
+    pub decorated_text: TextEffectRect,
+    pub visual: TextEffectRect,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ResolveTextEffectBoundsResponse {
+    Resolved { bounds: ResolvedTextEffectBounds },
+    Rejected { reason: String },
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -758,6 +809,49 @@ pub enum MapAssTextEffectsResponse {
     Rejected { reason: String },
 }
 
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MapTextEffectsToAssOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<TextOutline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<TextShadow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<SubtitleBackground>,
+    pub play_res_y: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AssTextEffectLoss {
+    pub feature: String,
+    pub reason: String,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AssTextEffectMapping {
+    pub outline_colour: String,
+    pub back_colour: String,
+    pub border_style: u8,
+    pub outline: f64,
+    pub shadow: f64,
+    pub losses: Vec<AssTextEffectLoss>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum MapTextEffectsToAssResponse {
+    Mapped { mapping: AssTextEffectMapping },
+    Rejected { reason: String },
+}
+
 pub fn compute_text_effect_geometry(
     options: ResolveTextEffectGeometryOptions,
 ) -> Result<ResolvedTextEffectGeometry, String> {
@@ -767,9 +861,10 @@ pub fn compute_text_effect_geometry(
     {
         return Err("pixelsPerUnit must be finite and between 0 and 1000".into());
     }
+    let contract = text_style_contract();
     let mut style = SubtitleStyleOverrides {
-        outline: Some(options.outline),
-        shadow: Some(options.shadow),
+        outline: Some(options.outline.unwrap_or(contract.outline.default)),
+        shadow: Some(options.shadow.unwrap_or(contract.shadow.default)),
         ..Default::default()
     };
     canonicalize_text_effects(&mut style)?;
@@ -780,7 +875,12 @@ pub fn compute_text_effect_geometry(
     shadow.offset_y *= options.pixels_per_unit;
     shadow.blur *= options.pixels_per_unit;
     let outline_extent = if color_is_visible(&outline.color) {
-        outline.width / 2.0
+        let join_factor = if outline.join == TextOutlineJoin::Miter {
+            TEXT_OUTLINE_MITER_LIMIT
+        } else {
+            1.0
+        };
+        (outline.width / 2.0) * join_factor
     } else {
         0.0
     };
@@ -808,6 +908,7 @@ pub fn compute_text_effect_geometry(
     Ok(ResolvedTextEffectGeometry {
         outline,
         shadow,
+        miter_limit: TEXT_OUTLINE_MITER_LIMIT,
         extents: TextEffectExtents {
             left: outline_extent.max(shadow_left),
             top: outline_extent.max(shadow_top),
@@ -815,6 +916,133 @@ pub fn compute_text_effect_geometry(
             bottom: outline_extent.max(shadow_bottom),
         },
     })
+}
+
+pub fn compute_text_effect_params(
+    options: ResolveTextEffectParamsOptions,
+) -> Result<ResolvedTextEffectGeometry, String> {
+    let contract = text_style_contract();
+    let outline = TextOutline {
+        color: text_effect_string_param(
+            &options.params,
+            "outline.color",
+            &contract.outline.default.color,
+        )?,
+        width: text_effect_number_param(
+            &options.params,
+            "outline.width",
+            contract.outline.default.width,
+        )?,
+        join: match text_effect_string_param(
+            &options.params,
+            "outline.join",
+            match contract.outline.default.join {
+                TextOutlineJoin::Round => "round",
+                TextOutlineJoin::Bevel => "bevel",
+                TextOutlineJoin::Miter => "miter",
+            },
+        )?
+        .as_str()
+        {
+            "round" => TextOutlineJoin::Round,
+            "bevel" => TextOutlineJoin::Bevel,
+            "miter" => TextOutlineJoin::Miter,
+            _ => return Err("outline.join must be round, bevel, or miter".into()),
+        },
+    };
+    let shadow = TextShadow {
+        color: text_effect_string_param(
+            &options.params,
+            "shadow.color",
+            &contract.shadow.default.color,
+        )?,
+        offset_x: text_effect_number_param(
+            &options.params,
+            "shadow.offsetX",
+            contract.shadow.default.offset_x,
+        )?,
+        offset_y: text_effect_number_param(
+            &options.params,
+            "shadow.offsetY",
+            contract.shadow.default.offset_y,
+        )?,
+        blur: text_effect_number_param(
+            &options.params,
+            "shadow.blur",
+            contract.shadow.default.blur,
+        )?,
+    };
+    compute_text_effect_geometry(ResolveTextEffectGeometryOptions {
+        outline: Some(outline),
+        shadow: Some(shadow),
+        pixels_per_unit: options.pixels_per_unit,
+    })
+}
+
+fn text_effect_string_param(params: &Params, key: &str, fallback: &str) -> Result<String, String> {
+    match params.get(key) {
+        None => Ok(fallback.to_owned()),
+        Some(Scalar::String(value)) => Ok(value.clone()),
+        Some(_) => Err(format!("{key} must be a string")),
+    }
+}
+
+fn text_effect_number_param(params: &Params, key: &str, fallback: f64) -> Result<f64, String> {
+    match params.get(key) {
+        None => Ok(fallback),
+        Some(Scalar::Number(value)) if value.is_finite() => Ok(*value),
+        Some(_) => Err(format!("{key} must be a finite number")),
+    }
+}
+
+pub fn compute_text_effect_bounds(
+    options: ResolveTextEffectBoundsOptions,
+) -> Result<ResolvedTextEffectBounds, String> {
+    validate_text_effect_rect(&options.text, "text")?;
+    validate_text_effect_rect(&options.base_visual, "baseVisual")?;
+    for (name, value) in [
+        ("extents.left", options.extents.left),
+        ("extents.top", options.extents.top),
+        ("extents.right", options.extents.right),
+        ("extents.bottom", options.extents.bottom),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("{name} must be finite and non-negative"));
+        }
+    }
+    let decorated_text = TextEffectRect {
+        left: options.text.left - options.extents.left,
+        top: options.text.top - options.extents.top,
+        width: options.text.width + options.extents.left + options.extents.right,
+        height: options.text.height + options.extents.top + options.extents.bottom,
+    };
+    let left = options.base_visual.left.min(decorated_text.left);
+    let top = options.base_visual.top.min(decorated_text.top);
+    let right = (options.base_visual.left + options.base_visual.width)
+        .max(decorated_text.left + decorated_text.width);
+    let bottom = (options.base_visual.top + options.base_visual.height)
+        .max(decorated_text.top + decorated_text.height);
+    Ok(ResolvedTextEffectBounds {
+        decorated_text,
+        visual: TextEffectRect {
+            left,
+            top,
+            width: right - left,
+            height: bottom - top,
+        },
+    })
+}
+
+fn validate_text_effect_rect(rect: &TextEffectRect, name: &str) -> Result<(), String> {
+    if ![rect.left, rect.top, rect.width, rect.height]
+        .into_iter()
+        .all(f64::is_finite)
+        || rect.width < 0.0
+        || rect.height < 0.0
+    {
+        return Err(format!("{name} must be a finite non-negative rectangle"));
+    }
+    Ok(())
 }
 
 fn color_is_visible(color: &str) -> bool {
@@ -893,6 +1121,155 @@ pub fn compute_ass_text_effects(
     })
 }
 
+pub fn compute_text_effects_to_ass(
+    options: MapTextEffectsToAssOptions,
+) -> Result<AssTextEffectMapping, String> {
+    if !options.play_res_y.is_finite() || options.play_res_y <= 0.0 {
+        return Err("playResY must be finite and positive".into());
+    }
+    let mut style = resolve_caption_style(&SubtitleStyleOverrides {
+        outline: options.outline,
+        shadow: options.shadow,
+        background: options.background,
+        ..Default::default()
+    })?;
+    let outline = style.outline.take();
+    let shadow = style.shadow.take();
+    let visible_background = style
+        .background
+        .as_ref()
+        .filter(|background| background.enabled && css_color_is_visible(&background.color));
+    let scale = options.play_res_y / TEXT_STYLE_SCALE_REFERENCE;
+    let mut losses = Vec::new();
+    if outline
+        .as_ref()
+        .is_some_and(|outline| outline.join != TextOutlineJoin::Round)
+    {
+        losses.push(AssTextEffectLoss {
+            feature: "outline.join".into(),
+            reason: "ASS styles do not encode outline joins".into(),
+        });
+    }
+    if let Some(shadow) = &shadow {
+        if shadow.blur != 0.0 {
+            losses.push(AssTextEffectLoss {
+                feature: "shadow.blur".into(),
+                reason: "ASS styles do not encode shadow blur".into(),
+            });
+        }
+        if shadow.offset_x != shadow.offset_y {
+            losses.push(AssTextEffectLoss {
+                feature: "shadow.offset".into(),
+                reason: "ASS styles encode one shared shadow offset".into(),
+            });
+        }
+        if style
+            .background
+            .as_ref()
+            .is_some_and(|background| background.enabled)
+        {
+            losses.push(AssTextEffectLoss {
+                feature: "shadow".into(),
+                reason: "ASS uses BackColour for both opaque boxes and shadows".into(),
+            });
+        }
+    }
+    let outline_colour = outline
+        .as_ref()
+        .map(|outline| css_color_to_ass(&outline.color))
+        .transpose()?
+        .unwrap_or_else(|| "&H00000000".into());
+    let back_colour = if let Some(background) = visible_background {
+        css_color_to_ass(&background.color)?
+    } else if let Some(shadow) = &shadow {
+        css_color_to_ass(&shadow.color)?
+    } else {
+        "&H00000000".into()
+    };
+    Ok(AssTextEffectMapping {
+        outline_colour,
+        back_colour,
+        border_style: if visible_background.is_some() { 3 } else { 1 },
+        outline: outline.map_or(0.0, |outline| outline.width * scale),
+        shadow: if visible_background.is_some() {
+            0.0
+        } else {
+            shadow.map_or(0.0, |shadow| shadow.offset_x * scale)
+        },
+        losses,
+    })
+}
+
+fn css_color_to_ass(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    let (red, green, blue, alpha) = if let Ok(color) = canonical_text_effect_color(value, "color") {
+        (
+            u8::from_str_radix(&color[1..3], 16).map_err(|_| "invalid red")?,
+            u8::from_str_radix(&color[3..5], 16).map_err(|_| "invalid green")?,
+            u8::from_str_radix(&color[5..7], 16).map_err(|_| "invalid blue")?,
+            if color.len() == 9 {
+                f64::from(u8::from_str_radix(&color[7..9], 16).map_err(|_| "invalid alpha")?)
+                    / 255.0
+            } else {
+                1.0
+            },
+        )
+    } else {
+        parse_css_rgb(value)?
+    };
+    let ass_alpha = ((1.0 - alpha) * 255.0).round().clamp(0.0, 255.0) as u8;
+    Ok(format!("&H{ass_alpha:02x}{blue:02x}{green:02x}{red:02x}"))
+}
+
+fn css_color_is_visible(value: &str) -> bool {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("transparent") {
+        return false;
+    }
+    if let Ok((_, _, _, alpha)) = parse_css_rgb(value) {
+        return alpha > 0.0;
+    }
+    let digits = value.strip_prefix('#').unwrap_or("");
+    digits.len() != 8 || &digits[6..8] != "00"
+}
+
+fn parse_css_rgb(value: &str) -> Result<(u8, u8, u8, f64), String> {
+    let lower = value.to_ascii_lowercase();
+    let (body, has_alpha) = if let Some(body) = lower
+        .strip_prefix("rgba(")
+        .and_then(|body| body.strip_suffix(')'))
+    {
+        (body, true)
+    } else if let Some(body) = lower
+        .strip_prefix("rgb(")
+        .and_then(|body| body.strip_suffix(')'))
+    {
+        (body, false)
+    } else {
+        return Err(format!("unsupported colour for ASS export: {value}"));
+    };
+    let fields = body.split(',').map(str::trim).collect::<Vec<_>>();
+    if fields.len() != if has_alpha { 4 } else { 3 } {
+        return Err(format!("unsupported colour for ASS export: {value}"));
+    }
+    let channel = |index: usize| -> Result<u8, String> {
+        fields[index]
+            .parse::<u8>()
+            .map_err(|_| format!("unsupported colour for ASS export: {value}"))
+    };
+    let alpha = if has_alpha {
+        fields[3]
+            .parse::<f64>()
+            .map_err(|_| format!("unsupported colour for ASS export: {value}"))?
+    } else {
+        1.0
+    };
+    if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
+        return Err(format!("unsupported colour for ASS export: {value}"));
+    }
+    Ok((channel(0)?, channel(1)?, channel(2)?, alpha))
+}
+
 fn parse_optional_ass_number(value: Option<&str>, field: &str) -> Result<Option<f64>, String> {
     let Some(value) = value else {
         return Ok(None);
@@ -948,6 +1325,7 @@ pub fn text_style_contract() -> TextStyleContract {
                 TextOutlineJoin::Bevel,
                 TextOutlineJoin::Miter,
             ],
+            miter_limit: TEXT_OUTLINE_MITER_LIMIT,
         },
         shadow: TextShadowControlContract {
             default: TextShadow {

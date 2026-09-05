@@ -1,5 +1,6 @@
 import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 import type { SubtitleCue, SubtitleStyleOverrides } from "./types";
+import * as nativeWasm from "opencut-wasm";
 
 /**
  * One feature the export could not carry into the target format, with the
@@ -97,7 +98,11 @@ export function serializeAss({
 	const events = captions.map((caption) => {
 		const style = caption.style ?? {};
 		reportUnmappable(style, countLoss);
-		const fields = mapStyleFields({ style, playRes });
+		const mappedStyle = mapStyleFields({ style, playRes });
+		for (const loss of mappedStyle.effectLosses) {
+			countLoss(loss.feature, loss.reason);
+		}
+		const fields = mappedStyle.fields;
 		const key = fields.join(",");
 		let name = styleNames.get(key);
 		if (!name) {
@@ -151,54 +156,64 @@ function mapStyleFields({
 }: {
 	style: SubtitleStyleOverrides;
 	playRes: { width: number; height: number };
-}): string[] {
+}): {
+	fields: string[];
+	effectLosses: Array<{ feature: string; reason: string }>;
+} {
 	const fontSizeRatio =
 		style.fontSizeRatioOfPlayHeight ??
 		(style.fontSize !== undefined
 			? style.fontSize / FONT_SIZE_SCALE_REFERENCE
 			: undefined);
 	const primary = toAssColor(style.color ?? "#ffffff");
-	const background =
-		style.background?.enabled && style.background.color !== "transparent"
-			? toAssColor(style.background.color)
-			: null;
-	const outline = style.outline;
-	const shadow = !background ? style.shadow : undefined;
-	const scaleToAss = (value: number) =>
-		String((value / FONT_SIZE_SCALE_REFERENCE) * playRes.height);
+	const effectResponse = nativeWasm.mapTextEffectsToAss({
+		outline: style.outline,
+		shadow: style.shadow,
+		background: style.background,
+		playResY: playRes.height,
+	});
+	if (effectResponse.status === "rejected") {
+		throw new Error(
+			`invalid ASS export text effects: ${effectResponse.reason}`,
+		);
+	}
+	const effects = effectResponse.mapping;
 	const verticalAlign = style.placement?.verticalAlign ?? "bottom";
 	const textAlign = style.textAlign ?? "center";
 	const alignment = ALIGNMENT_CODES[verticalAlign]?.[textAlign] ?? 2;
 	const margin = (ratio: number | undefined, extent: number) =>
 		ratio === undefined ? 0 : Math.round(ratio * extent);
-	return [
-		style.fontFamily ?? "Arial",
-		String(
-			fontSizeRatio === undefined
-				? Math.round((5 / FONT_SIZE_SCALE_REFERENCE) * playRes.height)
-				: Math.round(fontSizeRatio * playRes.height),
-		),
-		primary,
-		primary,
-		outline ? toAssColor(outline.color) : "&H00000000",
-		background ?? (shadow ? toAssColor(shadow.color) : "&H00000000"),
-		style.fontWeight === "bold" ? "-1" : "0",
-		style.fontStyle === "italic" ? "-1" : "0",
-		style.textDecoration === "underline" ? "-1" : "0",
-		style.textDecoration === "line-through" ? "-1" : "0",
-		"100",
-		"100",
-		String(style.letterSpacing ?? 0),
-		"0",
-		background ? "3" : "1",
-		outline ? scaleToAss(outline.width) : "0",
-		shadow ? scaleToAss(shadow.offsetX) : "0",
-		String(alignment),
-		String(margin(style.placement?.marginLeftRatio, playRes.width)),
-		String(margin(style.placement?.marginRightRatio, playRes.width)),
-		String(margin(style.placement?.marginVerticalRatio, playRes.height)),
-		"1",
-	];
+	return {
+		fields: [
+			style.fontFamily ?? "Arial",
+			String(
+				fontSizeRatio === undefined
+					? Math.round((5 / FONT_SIZE_SCALE_REFERENCE) * playRes.height)
+					: Math.round(fontSizeRatio * playRes.height),
+			),
+			primary,
+			primary,
+			effects.outlineColour,
+			effects.backColour,
+			style.fontWeight === "bold" ? "-1" : "0",
+			style.fontStyle === "italic" ? "-1" : "0",
+			style.textDecoration === "underline" ? "-1" : "0",
+			style.textDecoration === "line-through" ? "-1" : "0",
+			"100",
+			"100",
+			String(style.letterSpacing ?? 0),
+			"0",
+			String(effects.borderStyle),
+			String(effects.outline),
+			String(effects.shadow),
+			String(alignment),
+			String(margin(style.placement?.marginLeftRatio, playRes.width)),
+			String(margin(style.placement?.marginRightRatio, playRes.width)),
+			String(margin(style.placement?.marginVerticalRatio, playRes.height)),
+			"1",
+		],
+		effectLosses: effects.losses,
+	};
 }
 
 function reportUnmappable(
@@ -213,23 +228,6 @@ function reportUnmappable(
 			"highlight",
 			"ASS karaoke tags fill words as they are sung rather than emphasizing the spoken word",
 		);
-	}
-	if (style.outline && style.outline.join !== "round") {
-		countLoss("outline.join", "ASS styles do not encode outline joins");
-	}
-	if (style.shadow) {
-		if (style.shadow.blur !== 0) {
-			countLoss("shadow.blur", "ASS styles do not encode shadow blur");
-		}
-		if (style.shadow.offsetX !== style.shadow.offsetY) {
-			countLoss("shadow.offset", "ASS styles encode one shared shadow offset");
-		}
-		if (style.background?.enabled) {
-			countLoss(
-				"shadow",
-				"ASS uses BackColour for both opaque boxes and shadows",
-			);
-		}
 	}
 	const background = style.background;
 	if (background?.enabled) {

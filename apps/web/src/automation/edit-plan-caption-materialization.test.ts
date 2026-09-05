@@ -41,6 +41,7 @@ const geometryFixture = {
 	textEffects: {
 		outline: { color: "#000000", width: 0, join: "round" },
 		shadow: { color: "#00000000", offsetX: 0, offsetY: 0, blur: 0 },
+		miterLimit: 2,
 		extents: { left: 0, top: 0, right: 0, bottom: 0 },
 	},
 	visual: { left: 440, top: 1620, width: 200, height: 80 },

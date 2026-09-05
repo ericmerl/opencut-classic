@@ -658,6 +658,7 @@ const captionGeometryV2Schema = captionGeometryV1Schema
 						blur: z.number().nonnegative(),
 					})
 					.strict(),
+				miterLimit: z.number().positive(),
 				extents: captionEdgeOverflowSchema,
 			})
 			.strict(),

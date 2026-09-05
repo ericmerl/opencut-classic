@@ -302,12 +302,43 @@ pub fn resolve_text_effect_geometry(
     }
 }
 
+/// Resolves flat persisted text params using Rust-owned defaults and validation.
+#[export]
+pub fn resolve_text_effect_params(
+    options: ResolveTextEffectParamsOptions,
+) -> ResolveTextEffectGeometryResponse {
+    match model::compute_text_effect_params(options) {
+        Ok(geometry) => ResolveTextEffectGeometryResponse::Resolved { geometry },
+        Err(reason) => ResolveTextEffectGeometryResponse::Rejected { reason },
+    }
+}
+
+/// Expands the text rectangle and unions it with the unmodified base visual bounds.
+#[export]
+pub fn resolve_text_effect_bounds(
+    options: ResolveTextEffectBoundsOptions,
+) -> ResolveTextEffectBoundsResponse {
+    match model::compute_text_effect_bounds(options) {
+        Ok(bounds) => ResolveTextEffectBoundsResponse::Resolved { bounds },
+        Err(reason) => ResolveTextEffectBoundsResponse::Rejected { reason },
+    }
+}
+
 /// Maps ASS outline/shadow fields into the canonical OpenCut text style.
 #[export]
 pub fn map_ass_text_effects(options: MapAssTextEffectsOptions) -> MapAssTextEffectsResponse {
     match model::compute_ass_text_effects(options) {
         Ok(style) => MapAssTextEffectsResponse::Mapped { style },
         Err(reason) => MapAssTextEffectsResponse::Rejected { reason },
+    }
+}
+
+/// Maps canonical OpenCut text effects to representable ASS fields and losses.
+#[export]
+pub fn map_text_effects_to_ass(options: MapTextEffectsToAssOptions) -> MapTextEffectsToAssResponse {
+    match model::compute_text_effects_to_ass(options) {
+        Ok(mapping) => MapTextEffectsToAssResponse::Mapped { mapping },
+        Err(reason) => MapTextEffectsToAssResponse::Rejected { reason },
     }
 }
 

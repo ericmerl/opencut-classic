@@ -308,7 +308,7 @@ describe("caption geometry golden", () => {
 					fontFamily: "TikTok Sans",
 					fontWeight: "bold",
 					fontSize: 8,
-					outline: { color: "#ff0000", width: 1, join: "bevel" },
+					outline: { color: "#ff0000", width: 1, join: "miter" },
 					shadow: {
 						color: "#0000ff",
 						offsetX: 2,
@@ -321,7 +321,8 @@ describe("caption geometry golden", () => {
 			ctx: measurementContext(),
 		});
 		const canvas = createCanvas(500, 200);
-		const ctx = canvas.getContext("2d") as unknown as TextCanvasContext;
+		const canvasContext = canvas.getContext("2d");
+		const ctx = canvasContext as unknown as TextCanvasContext;
 		(ctx as unknown as CanvasRenderingContext2D).translate(250, 100);
 		drawMeasuredTextLayout({
 			ctx,
@@ -337,6 +338,10 @@ describe("caption geometry golden", () => {
 		).data;
 		let red = 0;
 		let blue = 0;
+		let minX = 500;
+		let minY = 200;
+		let maxX = -1;
+		let maxY = -1;
 		for (let offset = 0; offset < pixels.length; offset += 4) {
 			const [r, g, b, a] = [
 				pixels[offset]!,
@@ -344,12 +349,39 @@ describe("caption geometry golden", () => {
 				pixels[offset + 2]!,
 				pixels[offset + 3]!,
 			];
+			if (a === 0) continue;
+			const pixelIndex = offset / 4;
+			const x = pixelIndex % 500;
+			const y = Math.floor(pixelIndex / 500);
+			minX = Math.min(minX, x);
+			minY = Math.min(minY, y);
+			maxX = Math.max(maxX, x);
+			maxY = Math.max(maxY, y);
 			if (a < 200) continue;
 			if (r > 180 && g < 80 && b < 80) red += 1;
 			if (b > 180 && r < 80 && g < 80) blue += 1;
 		}
 		expect(red).toBeGreaterThan(0);
 		expect(blue).toBeGreaterThan(0);
+		expect(canvasContext.miterLimit).toBe(
+			measured.local.textEffects.miterLimit,
+		);
+		expect(minX).toBeGreaterThanOrEqual(
+			Math.floor(250 + measured.local.visual.left) - 1,
+		);
+		expect(minY).toBeGreaterThanOrEqual(
+			Math.floor(100 + measured.local.visual.top) - 1,
+		);
+		expect(maxX).toBeLessThanOrEqual(
+			Math.ceil(
+				250 + measured.local.visual.left + measured.local.visual.width,
+			) + 1,
+		);
+		expect(maxY).toBeLessThanOrEqual(
+			Math.ceil(
+				100 + measured.local.visual.top + measured.local.visual.height,
+			) + 1,
+		);
 	});
 
 	test("the bubble follows the renderer's padding and corner rounding", () => {

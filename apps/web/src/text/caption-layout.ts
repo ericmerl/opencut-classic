@@ -15,7 +15,7 @@ import {
 	type TextLayoutParams,
 } from "./primitives";
 import { clamp } from "@/utils/math";
-import { resolveTextEffectStyle } from "./effects";
+import { resolveTextEffectBounds, resolveTextEffectStyle } from "./effects";
 import type {
 	ResolvedTextEffectGeometry,
 	TextOutline,
@@ -201,11 +201,12 @@ export function measureCaptionLocalLayout({
 		fontSizeRatio: layout.fontSizeRatio,
 	});
 	const textEffects = resolveTextEffectStyle({ outline, shadow, canvasHeight });
-	const decoratedText = expandRect({
-		rect: block,
+	const effectBounds = resolveTextEffectBounds({
+		text: block,
+		baseVisual,
 		extents: textEffects.extents,
 	});
-	const visual = unionRects({ left: baseVisual, right: decoratedText });
+	const visual = effectBounds.visual;
 	const lines = layout.lines.map((line, index) => {
 		const metrics = layout.lineMetrics[index]!;
 		const anchorY =
@@ -237,7 +238,11 @@ export function measureCaptionLocalLayout({
 			ascent,
 			descent,
 			anchorY,
-			box: expandRect({ rect: textBox, extents: textEffects.extents }),
+			box: resolveTextEffectBounds({
+				text: textBox,
+				baseVisual: textBox,
+				extents: textEffects.extents,
+			}).decoratedText,
 		};
 	});
 	return { layout, lines, block, bubble, lineBubbles, textEffects, visual };
@@ -303,29 +308,6 @@ export function placeCaptionGeometry({
 			overflow: safeZoneOverflow,
 		},
 	};
-}
-
-function expandRect({
-	rect,
-	extents,
-}: {
-	rect: Rect;
-	extents: EdgeOverflow;
-}): Rect {
-	return {
-		left: rect.left - extents.left,
-		top: rect.top - extents.top,
-		width: rect.width + extents.left + extents.right,
-		height: rect.height + extents.top + extents.bottom,
-	};
-}
-
-function unionRects({ left, right }: { left: Rect; right: Rect }): Rect {
-	const x = Math.min(left.left, right.left);
-	const y = Math.min(left.top, right.top);
-	const farX = Math.max(left.left + left.width, right.left + right.width);
-	const farY = Math.max(left.top + left.height, right.top + right.height);
-	return { left: x, top: y, width: farX - x, height: farY - y };
 }
 
 function edgeOverflow(inner: Rect, outer: Rect): EdgeOverflow {
