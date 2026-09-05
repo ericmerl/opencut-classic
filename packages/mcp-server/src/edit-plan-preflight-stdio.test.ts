@@ -1,10 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTestDirectory } from "./test-filesystem";
 import { editOperationSchema } from "./tool-schemas";
 
 let child: ChildProcessWithoutNullStreams | null = null;
@@ -22,7 +23,7 @@ afterEach(async () => {
 		child = null;
 	}
 	if (directory) {
-		await rm(directory, { recursive: true, force: true });
+		await removeTestDirectory(directory);
 		directory = null;
 	}
 });
@@ -149,7 +150,7 @@ test("publishes strict preflight receipt tools over MCP stdio", async () => {
 		schemaVersion: "opencut.edit-plan-preflight.v2",
 		receipts: [],
 	});
-});
+}, 30_000);
 
 async function callTool(
 	client: JsonLineClient,

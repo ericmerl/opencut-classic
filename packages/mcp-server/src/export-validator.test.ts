@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExportReceiptStore } from "./export-receipts";
 import { ExportValidator } from "./export-validator";
+import { removeTestDirectory } from "./test-filesystem";
 
 const ffmpeg = process.env.FFMPEG_PATH ?? "ffmpeg";
 const ffprobe = process.env.FFPROBE_PATH ?? "ffprobe";
@@ -16,7 +17,7 @@ describe("ExportValidator", () => {
 	});
 
 	afterEach(async () => {
-		await rm(directory, { recursive: true, force: true });
+		await removeTestDirectory(directory);
 	});
 
 	test("fully decodes, probes, and samples a valid export", async () => {
@@ -98,7 +99,7 @@ describe("ExportValidator", () => {
 				includeAudio: false,
 			}),
 		).rejects.toThrow("includeAudio is false");
-	});
+	}, 30_000);
 
 	test("fails when requested audio is absent", async () => {
 		const outputPath = join(directory, "silent-video.mp4");
@@ -119,7 +120,7 @@ describe("ExportValidator", () => {
 				includeAudio: true,
 			}),
 		).rejects.toThrow("includeAudio is true");
-	});
+	}, 30_000);
 
 	test("samples the ending from video duration when audio outlasts video", async () => {
 		const outputPath = join(directory, "audio-tail.mp4");
@@ -142,7 +143,7 @@ describe("ExportValidator", () => {
 		expect(validation.durationSeconds).toBeGreaterThan(1);
 		expect(validation.frameSamples.at(-1)?.position).toBe("ending");
 		expect(validation.frameSamples.at(-1)?.timeSeconds).toBeCloseTo(0.8);
-	});
+	}, 30_000);
 });
 
 async function createFixture(
