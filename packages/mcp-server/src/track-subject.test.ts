@@ -250,6 +250,77 @@ describe("SubjectTrackingService", () => {
 		expect(operations[5]).toMatchObject({ time: 120_000 });
 	});
 
+	test("maps tracker samples through ramp, reverse, and hold source time", () => {
+		const operations = buildTrackingEditOperations({
+			input: {
+				...input(),
+				sampleIntervalTicks: 30_000,
+				smoothing: 0,
+			},
+			clip: {
+				duration: 120_000,
+				trimStart: 0,
+				retimeRate: 1,
+				timeMap: {
+					schemaVersion: "opencut.time-map.v1",
+					frameInterpolation: { requested: "nearest", fallback: "nearest" },
+					audioPolicy: { maintainPitch: false, hold: "mute" },
+					segments: [
+						{
+							kind: "speed",
+							timelineStart: 0,
+							timelineEnd: 60_000,
+							sourceStart: 0,
+							startRate: 1,
+							endRate: 1,
+							direction: "forward",
+						},
+						{
+							kind: "hold",
+							timelineStart: 60_000,
+							timelineEnd: 90_000,
+							sourceTime: 60_000,
+							frameIdentity: "source-frame:60000",
+						},
+						{
+							kind: "speed",
+							timelineStart: 90_000,
+							timelineEnd: 120_000,
+							sourceStart: 60_000,
+							startRate: 1,
+							endRate: 1,
+							direction: "reverse",
+						},
+					],
+				},
+			},
+			samples: [
+				{
+					sourceTime: 0,
+					box: { x: 0.1, y: 0.2, width: 0.2, height: 0.4 },
+				},
+				{
+					sourceTime: 60_000,
+					box: { x: 0.7, y: 0.2, width: 0.2, height: 0.4 },
+				},
+			],
+		});
+		expect(
+			operations.flatMap((operation) =>
+				operation.kind === "upsert_keyframe" &&
+				operation.propertyPath === "reframe.focalX"
+					? [[operation.time, operation.value]]
+					: [],
+			),
+		).toEqual([
+			[0, 0.2],
+			[30_000, 0.5],
+			[60_000, 0.8],
+			[90_000, 0.8],
+			[120_000, 0.5],
+		]);
+	});
+
 	test("clamps a boundary subject center to the reframe keyframe range", () => {
 		const operations = buildTrackingEditOperations({
 			input: input(),

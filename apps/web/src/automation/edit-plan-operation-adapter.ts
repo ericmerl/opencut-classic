@@ -290,6 +290,11 @@ export function toAutomationResolvedOperation(
 				maintainPitch: optional(operation.maintainPitch),
 				resolvedAllocations: optional(operation.resolvedAllocations),
 			};
+		case "set_time_map":
+			return {
+				...operation,
+				resolvedAllocations: optional(operation.resolvedAllocations),
+			};
 		case "set_matte_state":
 		case "remove_matte":
 		case "remove_mask":
@@ -683,6 +688,11 @@ function toNativeEditOperation(
 			return {
 				...operation,
 				maintainPitch: operation.maintainPitch,
+				resolvedAllocations: operation.resolvedAllocations,
+			};
+		case "set_time_map":
+			return {
+				...operation,
 				resolvedAllocations: operation.resolvedAllocations,
 			};
 		case "trim":

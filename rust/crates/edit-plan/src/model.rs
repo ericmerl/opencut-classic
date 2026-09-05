@@ -3,7 +3,7 @@ use std::{
     collections::BTreeMap,
     ops::{Deref, DerefMut},
 };
-use time::{FrameRate, MediaTime};
+use time::{FrameRate, MediaTime, TimeMap};
 
 pub const CONTRACT_VERSION: &str = "opencut.edit-plan-preflight.v2";
 
@@ -1406,6 +1406,13 @@ pub enum EditOperation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolved_allocations: Option<Vec<ObjectIdAllocation>>,
     },
+    SetTimeMap {
+        track_id: String,
+        element_id: String,
+        time_map: TimeMap,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_allocations: Option<Vec<ObjectIdAllocation>>,
+    },
     Trim {
         track_id: String,
         element_id: String,
@@ -1592,6 +1599,7 @@ pub struct Element {
     pub fade: Option<Fade>,
     pub retime_rate: Option<f64>,
     pub maintain_pitch: Option<bool>,
+    pub time_map: Option<TimeMap>,
     pub effects: Vec<Effect>,
     pub keyframes: Vec<Keyframe>,
     pub masks: Vec<Mask>,

@@ -3,6 +3,7 @@ import type { Effect } from "@/effects/types";
 import type { Mask } from "@/masks/types";
 import type { ParamValues } from "@/params";
 import type { MediaTime } from "@/wasm";
+import type { TimeMap } from "opencut-wasm";
 
 export type ElementRef = {
 	trackId: string;
@@ -94,6 +95,8 @@ export interface SceneTracks {
 export interface RetimeConfig {
 	rate: number;
 	maintainPitch?: boolean;
+	mode?: "time-map";
+	timeMap?: TimeMap;
 }
 
 export const CLIP_TRANSITION_TYPES = [

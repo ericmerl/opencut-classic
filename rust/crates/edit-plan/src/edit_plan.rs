@@ -235,6 +235,7 @@ pub enum WarningCode {
     RelationshipPruned,
     CaptionOverlap,
     CaptionReadingSpeed,
+    FrameInterpolationFallback,
 }
 
 /// Captions faster than this are hard to read at full speed; the evaluator
@@ -431,6 +432,10 @@ fn clear_internal_resolved_fields(operations: &mut [EditOperation]) {
                 ..
             }
             | EditOperation::SetRetime {
+                resolved_allocations,
+                ..
+            }
+            | EditOperation::SetTimeMap {
                 resolved_allocations,
                 ..
             }
@@ -1290,6 +1295,12 @@ impl State {
                 *resolved_allocations = Some(allocations);
             }
             EditOperation::SetRetime {
+                track_id,
+                element_id,
+                resolved_allocations,
+                ..
+            }
+            | EditOperation::SetTimeMap {
                 track_id,
                 element_id,
                 resolved_allocations,
@@ -3192,11 +3203,71 @@ impl State {
                 }
                 element.retime_rate = Some(*rate);
                 element.maintain_pitch = Some(maintain_pitch.unwrap_or(false));
+                element.time_map = None;
                 element.duration = timeline_duration_for_source_span(
                     MediaTime::from_ticks(visible_source_ticks),
                     element,
                     index,
                 )?;
+                clamp_keyframes_to_duration(
+                    element,
+                    element.duration,
+                    resolved_allocations.as_deref().unwrap_or_default(),
+                    index,
+                )?;
+                if element.source_duration.is_none() {
+                    element.source_duration = Some(source_duration);
+                }
+                Ok(())
+            }
+            EditOperation::SetTimeMap {
+                track_id,
+                element_id,
+                time_map,
+                resolved_allocations,
+            } => {
+                time_map
+                    .validate()
+                    .map_err(|reason| invalid_error(index, &reason))?;
+                if time_map.frame_interpolation.requested != time::FrameInterpolation::Nearest {
+                    warnings.insert(Warning {
+                        code: WarningCode::FrameInterpolationFallback,
+                        operation_index: index,
+                        object_id: Some(element_id.clone()),
+                        message: format!(
+                            "requested {:?} frame interpolation is unavailable; using {:?}",
+                            time_map.frame_interpolation.requested,
+                            time_map.frame_interpolation.fallback
+                        ),
+                    });
+                }
+                let element = self.element_mut(track_id, element_id, index)?;
+                if !matches!(element.element_type.as_str(), "video" | "audio") {
+                    return incompatible(index, "only video and audio elements can be retimed");
+                }
+                let source_duration = element_source_duration(element, index)?;
+                let visible_source_ticks = source_duration
+                    .as_ticks()
+                    .checked_sub(element.trim_start.as_ticks())
+                    .and_then(|value| value.checked_sub(element.trim_end.as_ticks()))
+                    .ok_or_else(|| {
+                        error(
+                            ErrorCode::ArithmeticOverflow,
+                            "retimed source span overflow",
+                            Some(index),
+                            None,
+                        )
+                    })?;
+                let (source_min, source_max) = time_map
+                    .source_bounds()
+                    .map_err(|reason| invalid_error(index, &reason))?;
+                if source_min < MediaTime::ZERO || source_max.as_ticks() > visible_source_ticks {
+                    return invalid(index, "time map exceeds the visible source span");
+                }
+                element.retime_rate = None;
+                element.maintain_pitch = Some(time_map.audio_policy.maintain_pitch);
+                element.time_map = Some(time_map.clone());
+                element.duration = time_map.duration();
                 clamp_keyframes_to_duration(
                     element,
                     element.duration,
@@ -5537,6 +5608,34 @@ impl State {
         });
         {
             let e = self.element_mut(track, id, index)?;
+            if let Some(time_map) = e.time_map.clone() {
+                if trim_start != e.trim_start || trim_end != e.trim_end {
+                    return invalid(
+                        index,
+                        "time-map trim preserves source trimStart/trimEnd; crop with startTime and duration",
+                    );
+                }
+                let requested_start = start.unwrap_or(e.start_time);
+                let next_start = effective_start.unwrap_or(e.start_time);
+                if requested_start < e.start_time {
+                    return invalid(index, "time-map trim startTime cannot precede the clip");
+                }
+                let slice_start = sub(requested_start, e.start_time, index)?;
+                let available_duration = sub(e.duration, slice_start, index)?;
+                let next_duration = duration.unwrap_or(available_duration);
+                if next_duration > available_duration {
+                    return invalid(index, "time-map trim exceeds the clip interval");
+                }
+                let slice_end = add(slice_start, next_duration, index)?;
+                let next_time_map = time_map
+                    .slice(slice_start, slice_end)
+                    .map_err(|reason| invalid_error(index, &reason))?;
+                e.start_time = next_start;
+                e.duration = next_duration;
+                e.time_map = Some(next_time_map);
+                clamp_keyframes_to_duration(e, next_duration, resolved_allocations, index)?;
+                return Ok(());
+            }
             let source_duration = element_source_duration(e, index)?;
             let remaining_source_ticks = source_duration
                 .as_ticks()
@@ -5643,9 +5742,28 @@ impl State {
         }
         let left_duration = sub(at, source.start_time, index)?;
         let right_duration = sub(end, at, index)?;
-        let left_source_span = source_span_at_clip_time(left_duration, &source, index)?;
-        let total_source_span = source_span_at_clip_time(source.duration, &source, index)?;
-        let right_source_span = sub(total_source_span, left_source_span, index)?;
+        let (left_time_map, right_time_map, left_source_span, right_source_span) =
+            if let Some(time_map) = &source.time_map {
+                (
+                    Some(
+                        time_map
+                            .slice(MediaTime::ZERO, left_duration)
+                            .map_err(|reason| invalid_error(index, &reason))?,
+                    ),
+                    Some(
+                        time_map
+                            .slice(left_duration, source.duration)
+                            .map_err(|reason| invalid_error(index, &reason))?,
+                    ),
+                    MediaTime::ZERO,
+                    MediaTime::ZERO,
+                )
+            } else {
+                let left_source_span = source_span_at_clip_time(left_duration, &source, index)?;
+                let total_source_span = source_span_at_clip_time(source.duration, &source, index)?;
+                let right_source_span = sub(total_source_span, left_source_span, index)?;
+                (None, None, left_source_span, right_source_span)
+            };
         let (left_keyframes, right_keyframes) =
             split_keyframes(&source, left_duration, allocations, index)?;
         let pos = self
@@ -5661,6 +5779,9 @@ impl State {
             left.name = format!("{} (left)", left.name);
             left.duration = left_duration;
             left.trim_end = add(left.trim_end, right_source_span, index)?;
+            if let Some(time_map) = &left_time_map {
+                left.time_map = Some(time_map.clone());
+            }
             left.keyframes = left_keyframes;
             split_elements.push(left);
         }
@@ -5681,6 +5802,9 @@ impl State {
             right.start_time = at;
             right.duration = right_duration;
             right.trim_start = add(right.trim_start, left_source_span, index)?;
+            if let Some(time_map) = right_time_map {
+                right.time_map = Some(time_map);
+            }
             right.keyframes = right_keyframes;
             split_elements.push(right);
         }
@@ -5757,9 +5881,23 @@ fn clamp_keyframes_to_duration(
     allocations: &[ObjectIdAllocation],
     index: usize,
 ) -> Result<(), EditPlanError> {
+    let split_allocations = duration_clamp_as_split_allocations(element, allocations, index)?;
+    let (left, _) = split_keyframes(element, duration, &split_allocations, index)?;
+    element.keyframes = left;
+    Ok(())
+}
+
+fn duration_clamp_as_split_allocations(
+    element: &Element,
+    allocations: &[ObjectIdAllocation],
+    index: usize,
+) -> Result<Vec<ObjectIdAllocation>, EditPlanError> {
     let property_paths = animation_storage_keys(element);
     if allocations.len() != property_paths.len() * 2 {
-        return invalid(index, "duration-clamp allocation set is incomplete");
+        return Err(invalid_error(
+            index,
+            "duration-clamp allocation set is incomplete",
+        ));
     }
     let mut split_allocations = Vec::with_capacity(allocations.len());
     for property_path in &property_paths {
@@ -5780,7 +5918,10 @@ fn clamp_keyframes_to_duration(
                 })
                 .collect();
             if matches.len() != 1 {
-                return invalid(index, "duration-clamp allocation set is inconsistent");
+                return Err(invalid_error(
+                    index,
+                    "duration-clamp allocation set is inconsistent",
+                ));
             }
             split_allocations.push(ObjectIdAllocation {
                 role: split_role,
@@ -5789,9 +5930,7 @@ fn clamp_keyframes_to_duration(
             });
         }
     }
-    let (left, _) = split_keyframes(element, duration, &split_allocations, index)?;
-    element.keyframes = left;
-    Ok(())
+    Ok(split_allocations)
 }
 
 fn split_keyframes(
@@ -6500,6 +6639,7 @@ fn new_element(id: &str, kind: &str, name: &str, start: MediaTime, duration: Med
         fade: None,
         retime_rate: None,
         maintain_pitch: None,
+        time_map: None,
         effects: vec![],
         keyframes: vec![],
         masks: vec![],

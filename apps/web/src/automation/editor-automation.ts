@@ -56,6 +56,7 @@ import {
 	buildConstantRetime,
 	MAX_RETIME_RATE,
 	MIN_RETIME_RATE,
+	sliceRetimeForTimelineRange,
 } from "@/retime";
 import { DEFAULT_CANVAS_PRESETS } from "@/canvas/sizes";
 import type { TProject, TProjectSettings } from "@/project/types";
@@ -3543,6 +3544,30 @@ export class EditorAutomation {
 				],
 			});
 		}
+		if (operation.kind === "set_time_map") {
+			if (!isRetimableElement(element)) {
+				throw new Error("only video and audio elements can be retimed");
+			}
+			return new UpdateElementsCommand({
+				updates: [
+					{
+						trackId: operation.trackId,
+						elementId: operation.elementId,
+						durationClampBoundaryIds: buildDurationClampBoundaryIds({
+							resolvedAllocations: operation.resolvedAllocations,
+						}),
+						patch: {
+							retime: {
+								rate: 1,
+								maintainPitch: operation.timeMap.audioPolicy.maintainPitch,
+								mode: "time-map",
+								timeMap: operation.timeMap,
+							},
+						},
+					},
+				],
+			});
+		}
 		if (operation.kind === "move") {
 			assertMediaTime({
 				value: operation.startTime,
@@ -3572,6 +3597,50 @@ export class EditorAutomation {
 						}),
 					}),
 			);
+		}
+		if (
+			operation.kind === "trim" &&
+			isRetimableElement(element) &&
+			element.retime?.timeMap
+		) {
+			if (
+				operation.trimStart !== element.trimStart ||
+				operation.trimEnd !== element.trimEnd
+			) {
+				throw new Error(
+					"time-map trim preserves source trimStart/trimEnd; crop with startTime and duration",
+				);
+			}
+			const requestedStart = operation.startTime ?? element.startTime;
+			const startClipTime = requestedStart - element.startTime;
+			const nextDuration =
+				operation.duration ?? element.duration - startClipTime;
+			const nextRetime = sliceRetimeForTimelineRange({
+				retime: element.retime,
+				startClipTime,
+				endClipTime: startClipTime + nextDuration,
+			});
+			return withRipple({
+				enabled: operation.ripple,
+				command: new UpdateElementsCommand({
+					updates: [
+						{
+							trackId: operation.trackId,
+							elementId: operation.elementId,
+							durationClampBoundaryIds: buildDurationClampBoundaryIds({
+								resolvedAllocations: operation.resolvedAllocations,
+							}),
+							patch: {
+								startTime: mediaTime({ ticks: requestedStart }),
+								duration: mediaTime({ ticks: nextDuration }),
+								trimStart: operation.trimStart,
+								trimEnd: operation.trimEnd,
+								retime: nextRetime,
+							},
+						},
+					],
+				}),
+			});
 		}
 
 		return withRipple({

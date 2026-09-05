@@ -5,6 +5,8 @@ import type {
 	AutomationTrackSnapshot,
 } from "./types";
 import type { ProjectContentHashResult } from "./project-content-hash";
+import { getSourceTimeAtClipTime } from "@/retime";
+import type { RetimeConfig } from "@/timeline";
 
 export interface AutomationTimelineQueryRequest {
 	projectId: string;
@@ -27,6 +29,19 @@ export interface AutomationTimelineQueryElement {
 	sourceDuration: MediaTime;
 	mediaId?: string;
 	hidden?: boolean;
+	retime?: RetimeConfig;
+	sourceTimeReadback?: Array<{
+		clipTime: MediaTime;
+		timelineTime: MediaTime;
+		sourceTime: MediaTime;
+		absoluteSourceTime: MediaTime;
+	}>;
+	mappingPolicy?: {
+		trim: "slice-time-map";
+		split: "slice-and-rebase-time-map";
+		timelineAnchored: ["keyframe", "transition", "caption"];
+		sourceMapped: ["tracker", "matte", "video-decoder", "audio"];
+	};
 }
 
 export interface AutomationTimelineQueryGap {
@@ -246,6 +261,17 @@ function buildRelationships({
 function toQueryElement(
 	element: AutomationElementSnapshot,
 ): AutomationTimelineQueryElement {
+	const timeMap = element.retime?.timeMap;
+	const boundaryTimes = timeMap
+		? [
+				...new Set(
+					timeMap.segments.flatMap((segment) => [
+						segment.timelineStart,
+						segment.timelineEnd,
+					]),
+				),
+			].sort((left, right) => left - right)
+		: [];
 	return {
 		elementId: element.elementId,
 		type: element.type,
@@ -258,6 +284,40 @@ function toQueryElement(
 		sourceDuration: element.sourceDuration,
 		...(element.mediaId ? { mediaId: element.mediaId } : {}),
 		...(element.hidden === undefined ? {} : { hidden: element.hidden }),
+		...(element.retime ? { retime: element.retime } : {}),
+		...(timeMap
+			? {
+					sourceTimeReadback: boundaryTimes.map((clipTime) => {
+						const sourceTime = getSourceTimeAtClipTime({
+							clipTime,
+							retime: element.retime,
+						});
+						return {
+							clipTime: mediaTime({ ticks: clipTime }),
+							timelineTime: mediaTime({ ticks: element.startTime + clipTime }),
+							sourceTime: mediaTime({ ticks: sourceTime }),
+							absoluteSourceTime: mediaTime({
+								ticks: element.trimStart + sourceTime,
+							}),
+						};
+					}),
+					mappingPolicy: {
+						trim: "slice-time-map" as const,
+						split: "slice-and-rebase-time-map" as const,
+						timelineAnchored: ["keyframe", "transition", "caption"] as [
+							"keyframe",
+							"transition",
+							"caption",
+						],
+						sourceMapped: ["tracker", "matte", "video-decoder", "audio"] as [
+							"tracker",
+							"matte",
+							"video-decoder",
+							"audio",
+						],
+					},
+				}
+			: {}),
 	};
 }
 

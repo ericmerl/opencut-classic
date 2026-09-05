@@ -1,6 +1,7 @@
 mod frame_rate;
 mod frame_schedule;
 mod media_time;
+mod time_map;
 mod timecode;
 
 pub use frame_rate::FrameRate;
@@ -18,6 +19,12 @@ pub use media_time::{
     media_time_add, media_time_clamp, media_time_from_frame, media_time_from_seconds,
     media_time_max, media_time_min, media_time_sub, media_time_to_frame, media_time_to_seconds,
     round_to_frame, snapped_seek_time,
+};
+pub use time_map::{
+    AudioHoldPolicy, AudioTimeMapPolicy, EvaluateTimeMapOptions, FrameInterpolation,
+    FrameInterpolationPolicy, ResolveTimeMapSourceTimeOptions, SliceTimeMapOptions, TimeMap,
+    TimeMapDiagnostic, TimeMapEvaluation, TimeMapEvaluationResponse, TimeMapSegment,
+    TimeMapSourceReadback, evaluate_time_map, resolve_time_map_source_time, slice_time_map,
 };
 pub use timecode::{
     FormatTimecodeOptions, GuessTimecodeFormatOptions, ParseTimecodeOptions, TimeCodeFormat,

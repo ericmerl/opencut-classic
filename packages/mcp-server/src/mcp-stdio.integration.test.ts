@@ -3815,6 +3815,378 @@ integrationTest(
 	20 * 60_000,
 );
 
+integrationTest(
+	"persists ramp hold and reverse mapping with preview export parity",
+	async () => {
+		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
+		if (!baseUrl)
+			throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		const browserPath = process.env.OPENCUT_HEADLESS_BROWSER_PATH;
+		if (!browserPath)
+			throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
+		const bridgePort = await availablePort();
+		const profileDirectory = join(directory, "time-map-profile");
+		const receiptDirectory = join(directory, "time-map-receipts");
+		const sourcePath = join(directory, "time-map-source.mp4");
+		const outputPath = join(directory, "time-map-export.webm");
+		await createSyntheticVideo(
+			sourcePath,
+			"color=c=0x102030:size=320x240:rate=30:duration=2,drawbox=x=20+100*t:y=70:w=70:h=90:color=0xff4020:t=fill",
+		);
+
+		const first = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await first.callTool("opencut_start_editor_worker", {});
+		const status = await first.callTool("opencut_connection_status", {});
+		const identity = requireRecord(
+			status.connectionIdentity,
+			"connectionIdentity",
+		);
+		const initial = await first.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		const projectId = requireString(initial.projectId, "projectId");
+		const imported = await first.callTool("opencut_import_media", {
+			...affinity(identity),
+			projectId,
+			operationId: "time-map-import",
+			expectedRevision: requireNumber(initial.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(initial),
+			path: sourcePath,
+			startTime: 0,
+			adoptMediaSettings: true,
+		});
+		const importedSnapshot = requireRecord(
+			imported.snapshot,
+			"import snapshot",
+		);
+		const importedHash = requireProjectContentHash(importedSnapshot);
+		const elementId = requireString(imported.elementId, "elementId");
+		const element = requireRecords(importedSnapshot.elements, "elements").find(
+			(candidate) => candidate.elementId === elementId,
+		);
+		if (!element) throw new Error("imported time-map element is missing");
+		const trackId = requireString(element.trackId, "trackId");
+		const sceneId = requireString(importedSnapshot.sceneId, "sceneId");
+		const importedRevision = requireNumber(imported.revision, "revision");
+		const sourceSave = await first.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "time-map-source-save",
+			expectedRevision: importedRevision,
+			expectedContentHash: importedHash,
+		});
+		const operations = [
+			{
+				kind: "set_time_map",
+				trackId,
+				elementId,
+				timeMap: {
+					schemaVersion: "opencut.time-map.v1",
+					frameInterpolation: {
+						requested: "frame-blend",
+						fallback: "nearest",
+					},
+					audioPolicy: { maintainPitch: true, hold: "mute" },
+					segments: [
+						{
+							kind: "speed",
+							timelineStart: 0,
+							timelineEnd: 60_000,
+							sourceStart: 0,
+							startRate: 0.5,
+							endRate: 1.5,
+							direction: "forward",
+						},
+						{
+							kind: "hold",
+							timelineStart: 60_000,
+							timelineEnd: 120_000,
+							sourceTime: 60_000,
+							frameIdentity: "source-frame:60000",
+						},
+						{
+							kind: "speed",
+							timelineStart: 120_000,
+							timelineEnd: 240_000,
+							sourceStart: 60_000,
+							startRate: 0.5,
+							endRate: 0.5,
+							direction: "reverse",
+						},
+					],
+				},
+			},
+		];
+		const description = "Apply durable ramp hold and reverse time mapping";
+		const preflight = await first.callTool("opencut_preflight_edit_plan", {
+			contractVersion: 2,
+			...affinity(identity),
+			preflightId: "time-map-preflight",
+			projectId,
+			sceneId,
+			expectedRevision: importedRevision,
+			expectedProjectContentHash: importedHash,
+			expectedWriteVersion: requireNumber(
+				sourceSave.writeVersion,
+				"writeVersion",
+			),
+			saveReceiptOperationId: "time-map-source-save",
+			expectedSaveReceiptId: requireString(sourceSave.receiptId, "receiptId"),
+			description,
+			operations,
+			policy: {
+				warningPolicy: "allow",
+				providerExecution: "forbidden",
+				costPolicy: "require-exact",
+			},
+		});
+		const preflightResult = requireRecord(preflight.result, "preflight result");
+		const evaluation = requireRecord(preflightResult.evaluation, "evaluation");
+		expect(preflightResult).toMatchObject({
+			status: "validated",
+			evaluation: {
+				warnings: [
+					expect.objectContaining({
+						code: "FRAME_INTERPOLATION_FALLBACK",
+						operationIndex: 0,
+						objectId: elementId,
+					}),
+				],
+			},
+		});
+		const applyRequest = {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "time-map-apply",
+			expectedRevision: importedRevision,
+			expectedProjectContentHash: importedHash,
+			description,
+			operations,
+			preflight: {
+				receiptId: requireString(preflight.receiptId, "preflight receiptId"),
+				planFingerprint: requireString(
+					evaluation.planFingerprint,
+					"planFingerprint",
+				),
+				preflightFingerprint: requireString(
+					evaluation.preflightFingerprint,
+					"preflightFingerprint",
+				),
+				planDiffHash: requireString(evaluation.planDiffHash, "planDiffHash"),
+			},
+		};
+		const applied = await first.callTool(
+			"opencut_apply_edit_plan",
+			applyRequest,
+		);
+		expect(applied.status).toBe("applied");
+		const appliedSnapshot = requireRecord(applied.snapshot, "applied snapshot");
+		const appliedHash = requireProjectContentHash(appliedSnapshot);
+
+		const query = await first.callTool("opencut_query_timeline", {
+			...affinity(identity),
+			projectId,
+			expectedRevision: requireNumber(applied.revision, "applied revision"),
+			trackIds: [trackId],
+		});
+		const queriedElement = requireRecords(
+			requireRecords(query.tracks, "query tracks")[0]?.elements,
+			"query elements",
+		)[0];
+		expect(queriedElement).toMatchObject({
+			elementId,
+			duration: 240_000,
+			retime: { mode: "time-map" },
+			sourceTimeReadback: [
+				{ clipTime: 0, sourceTime: 0 },
+				{ clipTime: 60_000, sourceTime: 60_000 },
+				{ clipTime: 120_000, sourceTime: 60_000 },
+				{ clipTime: 240_000, sourceTime: 0 },
+			],
+			mappingPolicy: {
+				trim: "slice-time-map",
+				split: "slice-and-rebase-time-map",
+				sourceMapped: ["tracker", "matte", "video-decoder", "audio"],
+			},
+		});
+
+		const undone = await first.callTool("opencut_undo", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "time-map-undo",
+			expectedRevision: requireNumber(applied.revision, "applied revision"),
+			expectedProjectContentHash: appliedHash,
+			steps: 1,
+			undoOfOperationId: "time-map-apply",
+		});
+		expect(
+			requireProjectContentHash(
+				requireRecord(undone.snapshot, "undo snapshot"),
+			),
+		).toBe(importedHash);
+		const redone = await first.callTool("opencut_redo", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "time-map-redo",
+			expectedRevision: requireNumber(undone.revision, "undo revision"),
+			expectedProjectContentHash: importedHash,
+			steps: 1,
+			redoOfOperationId: "time-map-undo",
+		});
+		const redoneSnapshot = requireRecord(redone.snapshot, "redo snapshot");
+		expect(requireProjectContentHash(redoneSnapshot)).toBe(appliedHash);
+		const paritySave = await first.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "time-map-parity-save",
+			expectedRevision: requireNumber(redone.revision, "redo revision"),
+			expectedContentHash: appliedHash,
+		});
+
+		await first.callTool("opencut_stop_editor_worker", {});
+		await first.close();
+		const restarted = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await restarted.callTool("opencut_start_editor_worker", { projectId });
+		const restartedStatus = await restarted.callTool(
+			"opencut_connection_status",
+			{},
+		);
+		const restartedIdentity = requireRecord(
+			restartedStatus.connectionIdentity,
+			"restarted connectionIdentity",
+		);
+		const reloaded = await restarted.callTool(
+			"opencut_get_project",
+			affinity(restartedIdentity),
+		);
+		expect(requireProjectContentHash(reloaded)).toBe(appliedHash);
+		expect(
+			await restarted.callTool("opencut_apply_edit_plan", applyRequest),
+		).toMatchObject({ status: "applied", durableOperationStatus: "replayed" });
+
+		const previewBase = {
+			...affinity(restartedIdentity),
+			contractVersion: 2,
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(reloaded.revision, "reloaded revision"),
+			expectedProjectContentHash: appliedHash,
+			expectedWriteVersion: requireNumber(
+				paritySave.writeVersion,
+				"writeVersion",
+			),
+			saveReceiptOperationId: "time-map-parity-save",
+			expectedSaveReceiptId: requireString(paritySave.receiptId, "receiptId"),
+			canvasSize: { width: 320, height: 240 },
+			format: "png",
+		} as const;
+		const holdFrames = await Promise.all(
+			[64_000, 100_000].map((ticks) =>
+				restarted.callTool(
+					"opencut_render_preview_frame",
+					{
+						...previewBase,
+						operationId: `time-map-hold-${ticks}`,
+						time: { kind: "media-time", ticks, rounding: "exact" },
+					},
+					5 * 60_000,
+				),
+			),
+		);
+		expect(holdFrames[0]?.pixelRgbaSha256).toBe(holdFrames[1]?.pixelRgbaSha256);
+
+		const exported = await restarted.callTool(
+			"opencut_export_project",
+			{
+				...affinity(restartedIdentity),
+				projectId,
+				operationId: "time-map-export",
+				expectedRevision: previewBase.expectedRevision,
+				expectedProjectContentHash: appliedHash,
+				outputPath,
+				format: "webm",
+				quality: "very_high",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: true,
+				canvasSize: { width: 320, height: 240 },
+			},
+			5 * 60_000,
+		);
+		expect(exported).toMatchObject({
+			status: "exported",
+			validation: { status: "validated", video: { durationSeconds: 2 } },
+		});
+		const exportedPcm = await extractPcmI16(outputPath);
+		const pcmRms = ({
+			startSeconds,
+			endSeconds,
+		}: {
+			startSeconds: number;
+			endSeconds: number;
+		}) => {
+			const start = Math.round(
+				startSeconds * PARITY_AUDIO_SAMPLE_RATE * PARITY_AUDIO_CHANNELS,
+			);
+			const end = Math.round(
+				endSeconds * PARITY_AUDIO_SAMPLE_RATE * PARITY_AUDIO_CHANNELS,
+			);
+			const samples = exportedPcm.subarray(start, end);
+			return Math.sqrt(
+				samples.reduce((sum, sample) => sum + sample * sample, 0) /
+					Math.max(1, samples.length),
+			);
+		};
+		const rampRms = pcmRms({ startSeconds: 0.1, endSeconds: 0.4 });
+		const holdRms = pcmRms({ startSeconds: 0.65, endSeconds: 0.9 });
+		expect(rampRms).toBeGreaterThan(100);
+		expect(holdRms).toBeLessThan(rampRms * 0.1);
+		const reversePreview = await restarted.callTool(
+			"opencut_render_preview_frame",
+			{
+				...previewBase,
+				operationId: "time-map-reverse-preview",
+				time: { kind: "media-time", ticks: 160_000, rounding: "exact" },
+			},
+			5 * 60_000,
+		);
+		const previewRgba = await extractRgba(
+			requireString(reversePreview.outputPath, "reverse preview path"),
+		);
+		const exportRgba = await extractRgba(outputPath, 160_000 / 120_000);
+		const parity = rgbaComparisonMetrics(previewRgba, exportRgba);
+		assertMetricAtMost({
+			label: "time-map preview/export RGBA MAE",
+			actual: parity.meanAbsoluteError,
+			maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+		});
+		assertMetricAtLeast({
+			label: "time-map preview/export PSNR",
+			actual: parity.psnrDb,
+			minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
+		});
+		await restarted.callTool("opencut_stop_editor_worker", {});
+	},
+	10 * 60_000,
+);
+
 function affinity(identity: Record<string, unknown>) {
 	return { bridgeProtocolVersion: 2, expectedConnectionIdentity: identity };
 }

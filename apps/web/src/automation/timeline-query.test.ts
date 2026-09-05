@@ -11,6 +11,37 @@ mock.module("opencut-wasm", () => ({
 	parseTimecode: () => 0,
 	roundToFrame: ({ time }: { time: number }) => time,
 	snappedSeekTime: ({ time }: { time: number }) => time,
+	resolveTimeMapSourceTime: ({
+		clipTime,
+		timeMap,
+	}: {
+		clipTime: number;
+		timeMap: { segments: Array<Record<string, number | string>> };
+	}) => {
+		const segment = timeMap.segments.find(
+			(candidate) =>
+				clipTime >= Number(candidate.timelineStart) &&
+				clipTime <= Number(candidate.timelineEnd),
+		);
+		if (!segment) return undefined;
+		if (segment.kind === "hold") return segment.sourceTime;
+		const elapsed = clipTime - Number(segment.timelineStart);
+		const duration =
+			Number(segment.timelineEnd) - Number(segment.timelineStart);
+		const position = elapsed / duration;
+		const delta =
+			duration *
+			(Number(segment.startRate) * position +
+				0.5 *
+					(Number(segment.endRate) - Number(segment.startRate)) *
+					position *
+					position);
+		return Math.round(
+			Number(segment.sourceStart) +
+				(segment.direction === "reverse" ? -delta : delta),
+		);
+	},
+	sliceTimeMap: () => undefined,
 }));
 
 const { mediaTime } = await import("@/wasm");
@@ -86,6 +117,71 @@ function buildSnapshot(): AutomationProjectSnapshot {
 }
 
 describe("timeline query", () => {
+	test("reads canonical source times and boundary policies for a durable time map", () => {
+		const snapshot = buildSnapshot();
+		snapshot.elements[0]!.duration = ticks(120);
+		snapshot.elements[0]!.trimStart = ticks(10);
+		snapshot.elements[0]!.sourceDuration = ticks(200);
+		snapshot.elements[0]!.retime = {
+			rate: 1,
+			maintainPitch: true,
+			mode: "time-map",
+			timeMap: {
+				schemaVersion: "opencut.time-map.v1",
+				frameInterpolation: { requested: "nearest", fallback: "nearest" },
+				audioPolicy: { maintainPitch: true, hold: "mute" },
+				segments: [
+					{
+						kind: "speed",
+						timelineStart: 0,
+						timelineEnd: 60,
+						sourceStart: 0,
+						startRate: 1,
+						endRate: 1,
+						direction: "forward",
+					},
+					{
+						kind: "hold",
+						timelineStart: 60,
+						timelineEnd: 120,
+						sourceTime: 60,
+						frameIdentity: "source-frame:70",
+					},
+				],
+			},
+		};
+		const result = queryTimelineSnapshot({
+			snapshot,
+			request: { projectId: "project-1", expectedRevision: 7 },
+		});
+		expect(result.status).toBe("queried");
+		if (result.status !== "queried") return;
+		expect(result.tracks[0]?.elements[0]).toMatchObject({
+			retime: { mode: "time-map" },
+			sourceTimeReadback: [
+				{ clipTime: 0, timelineTime: 0, sourceTime: 0, absoluteSourceTime: 10 },
+				{
+					clipTime: 60,
+					timelineTime: 60,
+					sourceTime: 60,
+					absoluteSourceTime: 70,
+				},
+				{
+					clipTime: 120,
+					timelineTime: 120,
+					sourceTime: 60,
+					absoluteSourceTime: 70,
+				},
+			],
+			mappingPolicy: {
+				trim: "slice-time-map",
+				split: "slice-and-rebase-time-map",
+				timelineAnchored: ["keyframe", "transition", "caption"],
+				sourceMapped: ["tracker", "matte", "video-decoder", "audio"],
+			},
+		});
+	});
+
 	test("reports ordered elements, cuts, gaps, overlaps, and transitions", () => {
 		const result = queryTimelineSnapshot({
 			snapshot: buildSnapshot(),

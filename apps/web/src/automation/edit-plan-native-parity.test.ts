@@ -169,6 +169,50 @@ const parityCases: NativeParityCase[] = [
 		},
 	},
 	{
+		name: "set_time_map ramp hold and reverse",
+		state: richState,
+		operation: {
+			kind: "set_time_map",
+			trackId: "scene-target-main",
+			elementId: "video-1",
+			timeMap: {
+				schemaVersion: "opencut.time-map.v1",
+				frameInterpolation: {
+					requested: "frame-blend",
+					fallback: "nearest",
+				},
+				audioPolicy: { maintainPitch: true, hold: "mute" },
+				segments: [
+					{
+						kind: "speed",
+						timelineStart: mediaTime({ ticks: 0 }),
+						timelineEnd: mediaTime({ ticks: 60_000 }),
+						sourceStart: mediaTime({ ticks: 0 }),
+						startRate: 0.5,
+						endRate: 1.5,
+						direction: "forward",
+					},
+					{
+						kind: "hold",
+						timelineStart: mediaTime({ ticks: 60_000 }),
+						timelineEnd: mediaTime({ ticks: 90_000 }),
+						sourceTime: mediaTime({ ticks: 60_000 }),
+						frameIdentity: "source-frame:60000",
+					},
+					{
+						kind: "speed",
+						timelineStart: mediaTime({ ticks: 90_000 }),
+						timelineEnd: mediaTime({ ticks: 120_000 }),
+						sourceStart: mediaTime({ ticks: 60_000 }),
+						startRate: 1,
+						endRate: 1,
+						direction: "reverse",
+					},
+				],
+			},
+		},
+	},
+	{
 		name: "set_key chroma controls",
 		state: richState,
 		operation: {
@@ -1446,6 +1490,7 @@ function invalidOperation(
 		case "remove_keyframe":
 		case "retime_keyframe":
 		case "set_retime":
+		case "set_time_map":
 		case "move":
 		case "delete":
 		case "split":

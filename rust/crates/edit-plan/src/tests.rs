@@ -3,6 +3,20 @@ use std::collections::BTreeMap;
 use super::*;
 use time::{FrameRate, MediaTime};
 
+fn sample_time_map() -> time::TimeMap {
+    serde_json::from_value(serde_json::json!({
+        "schemaVersion": "opencut.time-map.v1",
+        "frameInterpolation": { "requested": "frame-blend", "fallback": "nearest" },
+        "audioPolicy": { "maintainPitch": true, "hold": "mute" },
+        "segments": [
+            { "kind": "speed", "timelineStart": 0, "timelineEnd": 30_000, "sourceStart": 0, "startRate": 1, "endRate": 3, "direction": "forward" },
+            { "kind": "hold", "timelineStart": 30_000, "timelineEnd": 60_000, "sourceTime": 60_000, "frameIdentity": "source-frame:60000" },
+            { "kind": "speed", "timelineStart": 60_000, "timelineEnd": 120_000, "sourceStart": 60_000, "startRate": 1, "endRate": 1, "direction": "reverse" }
+        ]
+    }))
+    .unwrap()
+}
+
 fn canonical_settings() -> CanonicalObject {
     BTreeMap::from([
         (
@@ -783,7 +797,7 @@ fn adjust_mix_gain_rejects_projects_without_audible_timeline_elements() {
 }
 
 #[test]
-fn all_51_operation_variants_have_a_strict_typed_transport_shape() {
+fn all_52_operation_variants_have_a_strict_typed_transport_shape() {
     let reference = serde_json::json!({ "trackId": "main", "elementId": "element" });
     let operations = vec![
         serde_json::json!({ "kind": "insert_text", "content": "x", "startTime": 0, "duration": 1 }),
@@ -829,6 +843,7 @@ fn all_51_operation_variants_have_a_strict_typed_transport_shape() {
         serde_json::json!({ "kind": "upsert_transition", "trackId": "t", "transitionId": "tr", "fromElementId": "a", "toElementId": "b", "transitionType": "crossfade", "duration": 1 }),
         serde_json::json!({ "kind": "remove_transition", "trackId": "t", "transitionId": "tr" }),
         serde_json::json!({ "kind": "set_retime", "trackId": "t", "elementId": "e", "rate": 1.25 }),
+        serde_json::json!({ "kind": "set_time_map", "trackId": "t", "elementId": "e", "timeMap": serde_json::to_value(sample_time_map()).unwrap() }),
         serde_json::json!({ "kind": "trim", "trackId": "t", "elementId": "e", "trimStart": 0, "trimEnd": 0, "ripple": false }),
         serde_json::json!({ "kind": "split", "trackId": "t", "elementId": "e", "splitTime": 1, "ripple": false }),
         serde_json::json!({ "kind": "set_matte_state", "trackId": "t", "elementId": "e", "enabled": true }),
@@ -838,7 +853,7 @@ fn all_51_operation_variants_have_a_strict_typed_transport_shape() {
         serde_json::json!({ "kind": "set_audio_replacement_state", "trackId": "t", "elementId": "e", "enabled": true }),
         serde_json::json!({ "kind": "remove_audio_replacement", "trackId": "t", "elementId": "e" }),
     ];
-    assert_eq!(operations.len(), 51);
+    assert_eq!(operations.len(), 52);
     for operation in operations {
         let expected_kind = operation["kind"].clone();
         let typed: EditOperation = serde_json::from_value(operation.clone()).unwrap();
@@ -847,7 +862,7 @@ fn all_51_operation_variants_have_a_strict_typed_transport_shape() {
 }
 
 #[test]
-fn all_61_operation_variants_have_valid_and_invalid_evaluator_coverage() {
+fn all_62_operation_variants_have_valid_and_invalid_evaluator_coverage() {
     let t = MediaTime::from_ticks;
     let reference = || ElementRef {
         track_id: "track-text".into(),
@@ -1424,6 +1439,16 @@ fn all_61_operation_variants_have_valid_and_invalid_evaluator_coverage() {
             }],
         ),
         (
+            "set_time_map",
+            full_snapshot(),
+            vec![EditOperation::SetTimeMap {
+                track_id: "track-main".into(),
+                element_id: "video-1".into(),
+                time_map: sample_time_map(),
+                resolved_allocations: None,
+            }],
+        ),
+        (
             "trim",
             full_snapshot(),
             vec![EditOperation::Trim {
@@ -1603,7 +1628,7 @@ fn all_61_operation_variants_have_valid_and_invalid_evaluator_coverage() {
             }],
         ),
     ];
-    assert_eq!(cases.len(), 61);
+    assert_eq!(cases.len(), 62);
     for (name, before, operations) in cases {
         let valid = evaluate(options_with_before(before.clone(), operations.clone()));
         if let Err(error) = valid {
@@ -1612,6 +1637,138 @@ fn all_61_operation_variants_have_valid_and_invalid_evaluator_coverage() {
         let invalid_operations = invalid_operations_for(&operations);
         let invalid = evaluate(options_with_before(before, invalid_operations));
         assert!(invalid.is_err(), "invalid {name} unexpectedly validated");
+    }
+}
+
+#[test]
+fn time_map_is_canonical_and_split_rebases_hold_and_reverse_segments() {
+    let result = evaluate(options_with_before(
+        full_snapshot(),
+        vec![
+            EditOperation::SetTimeMap {
+                track_id: "track-main".into(),
+                element_id: "video-1".into(),
+                time_map: sample_time_map(),
+                resolved_allocations: None,
+            },
+            EditOperation::Split {
+                track_id: "track-main".into(),
+                element_id: "video-1".into(),
+                split_time: MediaTime::from_ticks(60_000),
+                right_element_id: None,
+                retain_side: None,
+                ripple: false,
+                resolved_allocations: None,
+            },
+        ],
+    ))
+    .unwrap();
+    assert!(result.warnings.iter().any(|warning| {
+        warning.code == WarningCode::FrameInterpolationFallback
+            && warning.operation_index == 0
+            && warning.object_id.as_deref() == Some("video-1")
+    }));
+    let EditOperation::Split {
+        right_element_id: Some(right_id),
+        ..
+    } = &result.resolved_operations[1]
+    else {
+        panic!("split right id was not resolved");
+    };
+    let scene = &result.predicted_after.project.scenes[0];
+    let left = scene.tracks[0]
+        .elements
+        .iter()
+        .find(|element| element.common().id == "video-1")
+        .unwrap();
+    let right = scene.tracks[0]
+        .elements
+        .iter()
+        .find(|element| element.common().id == right_id.as_str())
+        .unwrap();
+    assert_eq!(left.common().duration, MediaTime::from_ticks(60_000));
+    assert_eq!(right.common().duration, MediaTime::from_ticks(60_000));
+    let read_map = |element: &CanonicalElement| {
+        let CanonicalElement::Video { retime, .. } = element else {
+            panic!("retimed element changed type");
+        };
+        let CanonicalValue::Object(retime) = retime else {
+            panic!("retime was not canonical object");
+        };
+        serde_json::from_value::<time::TimeMap>(serde_json::to_value(&retime["timeMap"]).unwrap())
+            .unwrap()
+    };
+    let left_map = read_map(left);
+    let right_map = read_map(right);
+    assert_eq!(
+        left_map
+            .source_time_at(MediaTime::from_ticks(45_000))
+            .unwrap()
+            .source_time,
+        MediaTime::from_ticks(60_000),
+    );
+    assert_eq!(
+        right_map
+            .source_time_at(MediaTime::from_ticks(30_000))
+            .unwrap()
+            .source_time,
+        MediaTime::from_ticks(30_000),
+    );
+}
+
+#[test]
+fn time_map_trim_slices_timeline_and_preserves_source_boundaries() {
+    let result = evaluate(options_with_before(
+        full_snapshot(),
+        vec![
+            EditOperation::SetTimeMap {
+                track_id: "track-main".into(),
+                element_id: "video-1".into(),
+                time_map: sample_time_map(),
+                resolved_allocations: None,
+            },
+            EditOperation::Trim {
+                track_id: "track-main".into(),
+                element_id: "video-1".into(),
+                start_time: Some(MediaTime::from_ticks(15_000)),
+                duration: Some(MediaTime::from_ticks(90_000)),
+                trim_start: MediaTime::ZERO,
+                trim_end: MediaTime::ZERO,
+                ripple: false,
+                resolved_allocations: None,
+            },
+        ],
+    ))
+    .unwrap();
+    let video = result.predicted_after.project.scenes[0].tracks[0]
+        .elements
+        .iter()
+        .find(|element| element.common().id == "video-1")
+        .unwrap();
+    assert_eq!(video.common().start_time, MediaTime::ZERO);
+    assert_eq!(video.common().duration, MediaTime::from_ticks(90_000));
+    let CanonicalElement::Video { retime, .. } = video else {
+        panic!("retimed element changed type");
+    };
+    let CanonicalValue::Object(retime) = retime else {
+        panic!("retime was not canonical object");
+    };
+    let time_map =
+        serde_json::from_value::<time::TimeMap>(serde_json::to_value(&retime["timeMap"]).unwrap())
+            .unwrap();
+    for (clip_time, expected_source_time) in [
+        (0, 22_500),
+        (15_000, 60_000),
+        (45_000, 60_000),
+        (90_000, 15_000),
+    ] {
+        assert_eq!(
+            time_map
+                .source_time_at(MediaTime::from_ticks(clip_time))
+                .unwrap()
+                .source_time,
+            MediaTime::from_ticks(expected_source_time),
+        );
     }
 }
 

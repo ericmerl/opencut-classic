@@ -19,6 +19,9 @@ interface NativeProjectState {
 	scheduleFrameRange: (options: unknown) => unknown;
 	captionStylePresets: () => unknown;
 	resolveCaptionStyle: (options: unknown) => unknown;
+	evaluateTimeMap: (options: unknown) => unknown;
+	resolveTimeMapSourceTime: (options: unknown) => number | undefined;
+	sliceTimeMap: (options: unknown) => unknown;
 }
 
 /**
@@ -94,6 +97,12 @@ mock.module("opencut-wasm", () => ({
 	captionStylePresets: () => nativeProjectState().captionStylePresets(),
 	resolveCaptionStyle: (options: unknown) =>
 		nativeProjectState().resolveCaptionStyle(options),
+	evaluateTimeMap: (options: unknown) =>
+		nativeProjectState().evaluateTimeMap(options),
+	resolveTimeMapSourceTime: (options: unknown) =>
+		nativeProjectState().resolveTimeMapSourceTime(options),
+	sliceTimeMap: (options: unknown) =>
+		nativeProjectState().sliceTimeMap(options),
 	scheduleFrameRange: (options: unknown) =>
 		nativeProjectState().scheduleFrameRange(options),
 	guessTimecodeFormat: () => "HH:MM:SS",

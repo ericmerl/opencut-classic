@@ -51,6 +51,7 @@ import { RangePreviewService } from "./range-preview-service";
 import { ComparisonEvidenceStore } from "./comparison-evidence-store";
 import { ComparisonService } from "./comparison-service";
 import { nativeComparison } from "./native-comparison";
+import { evaluateTimeMap } from "./native-time-map";
 import { readPreviewRangeLimits } from "./range-preview-config";
 import { EditPlanPreflightStore } from "./edit-plan-preflight-store";
 import { EditPlanPreflightService } from "./edit-plan-preflight-service";
@@ -178,6 +179,7 @@ import {
 	stopEditorWorkerInputSchema,
 	syncAudioInputSchema,
 	timelineQueryInputSchema,
+	evaluateTimeMapInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
 	withConnectionAffinity,
@@ -466,6 +468,16 @@ function createServer(): McpServer {
 			instructions:
 				"Call opencut_capabilities first. List, create, or open a project as needed. Read the active project before editing and pass its exact projectId and revision into every mutation.",
 		},
+	);
+
+	server.registerTool(
+		"opencut_evaluate_time_map",
+		{
+			description:
+				"Validate a canonical source-to-timeline map in Rust and read exact source times, effective frame interpolation, explicit fallback diagnostics, and independent audio policy without mutating a project.",
+			inputSchema: evaluateTimeMapInputSchema,
+		},
+		async (input) => toolResult(evaluateTimeMap(input)),
 	);
 
 	server.registerTool(

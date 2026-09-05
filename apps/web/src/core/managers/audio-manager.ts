@@ -471,7 +471,7 @@ export class AudioManager {
 
 	private hasCurveRetime({ clip }: { clip: AudioClipSource }): boolean {
 		const mode = (clip.retime as { mode?: unknown } | undefined)?.mode;
-		return mode === "curve";
+		return mode === "curve" || mode === "time-map";
 	}
 
 	private scheduleClipGainAutomation({

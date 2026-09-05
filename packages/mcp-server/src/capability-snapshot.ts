@@ -62,6 +62,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_diff_editorial_decision",
 	"opencut_duplicate_project",
 	"opencut_evaluate_export_qc",
+	"opencut_evaluate_time_map",
 	"opencut_export_editorial_decision_json",
 	"opencut_export_project",
 	"opencut_export_subtitles",

@@ -5,6 +5,52 @@ import { QC_CHECK_IDS } from "./export-qc";
 import { BOOTSTRAP_PROJECT_ID } from "./managed-editor-worker";
 import { operationIdSchema } from "./operation-tool-schemas";
 
+const timeMapTickSchema = z.number().int().nonnegative();
+const timeMapRateSchema = z.number().min(0.01).max(5);
+
+const timeMapSpeedSegmentSchema = z.object({
+	kind: z.literal("speed"),
+	timelineStart: timeMapTickSchema,
+	timelineEnd: timeMapTickSchema,
+	sourceStart: timeMapTickSchema,
+	startRate: timeMapRateSchema,
+	endRate: timeMapRateSchema,
+	direction: z.enum(["forward", "reverse"]),
+});
+
+const timeMapHoldSegmentSchema = z.object({
+	kind: z.literal("hold"),
+	timelineStart: timeMapTickSchema,
+	timelineEnd: timeMapTickSchema,
+	sourceTime: timeMapTickSchema,
+	frameIdentity: z.string().trim().min(1),
+});
+
+export const timeMapSchema = z.object({
+	schemaVersion: z.literal("opencut.time-map.v1"),
+	frameInterpolation: z.object({
+		requested: z.enum(["nearest", "frame-blend", "optical-flow"]),
+		fallback: z.literal("nearest"),
+	}),
+	audioPolicy: z.object({
+		maintainPitch: z.boolean(),
+		hold: z.enum(["mute", "hold-sample"]),
+	}),
+	segments: z
+		.array(
+			z.discriminatedUnion("kind", [
+				timeMapSpeedSegmentSchema,
+				timeMapHoldSegmentSchema,
+			]),
+		)
+		.min(1),
+});
+
+export const evaluateTimeMapInputSchema = z.object({
+	timeMap: timeMapSchema,
+	sampleClipTimes: z.array(timeMapTickSchema).max(1_000),
+});
+
 const legacyCompatibleOperationIdSchema = operationIdSchema.optional();
 
 function withLegacyOperationIdDefault<T extends z.ZodType>(
@@ -1438,6 +1484,13 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
 	z.object({
+		kind: z.literal("set_time_map"),
+		trackId: z.string().min(1),
+		elementId: z.string().min(1),
+		timeMap: timeMapSchema,
+		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
+	}),
+	z.object({
 		kind: z.literal("trim"),
 		trackId: z.string().min(1),
 		elementId: z.string().min(1),
@@ -1547,6 +1600,7 @@ const resolvedAllocationKinds = new Set([
 	"split_caption",
 	"rechunk_captions",
 	"set_retime",
+	"set_time_map",
 	"trim",
 	"split",
 	"duplicate_track",

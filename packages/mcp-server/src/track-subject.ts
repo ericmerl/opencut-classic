@@ -18,6 +18,7 @@ import {
 } from "./subject-tracker";
 import type { BridgeConnectionIdentity } from "./editor-bridge";
 import type { CompositeOperationObserver } from "./composite-operation-observer";
+import { evaluateTimeMap } from "./native-time-map";
 
 const TICKS_PER_SECOND = 120_000;
 
@@ -84,6 +85,7 @@ interface TrackingClip {
 	trimStart: number;
 	trimEnd: number;
 	retimeRate: number;
+	timeMap?: Record<string, unknown>;
 }
 
 interface TrackingKeyframeOperation {
@@ -447,28 +449,41 @@ export function buildTrackingEditOperations({
 	samples,
 }: {
 	input: TrackSubjectInput;
-	clip: Pick<TrackingClip, "duration" | "trimStart" | "retimeRate">;
+	clip: Pick<TrackingClip, "duration" | "trimStart" | "retimeRate" | "timeMap">;
 	samples: SubjectTrackingSample[];
 }): ReframeOperation[] {
-	const visibleSourceEnd = clip.trimStart + clip.duration * clip.retimeRate;
-	const visible = samples
+	const confidentSamples = samples
 		.filter(
 			(sample) =>
-				sample.sourceTime >= clip.trimStart &&
-				sample.sourceTime <= visibleSourceEnd &&
-				(sample.confidence === undefined ||
-					sample.confidence >= input.minConfidence),
+				sample.confidence === undefined ||
+				sample.confidence >= input.minConfidence,
 		)
-		.map((sample) => ({
-			time: Math.max(
-				0,
-				Math.min(
-					clip.duration,
-					Math.round((sample.sourceTime - clip.trimStart) / clip.retimeRate),
-				),
-			),
-			box: sample.box,
-		}));
+		.sort((left, right) => left.sourceTime - right.sourceTime);
+	const visibleSourceEnd = clip.trimStart + clip.duration * clip.retimeRate;
+	const visible = clip.timeMap
+		? mapTimeMapTrackingSamples({
+				clip,
+				samples: confidentSamples,
+				sampleIntervalTicks: input.sampleIntervalTicks,
+			})
+		: confidentSamples
+				.filter(
+					(sample) =>
+						sample.sourceTime >= clip.trimStart &&
+						sample.sourceTime <= visibleSourceEnd,
+				)
+				.map((sample) => ({
+					time: Math.max(
+						0,
+						Math.min(
+							clip.duration,
+							Math.round(
+								(sample.sourceTime - clip.trimStart) / clip.retimeRate,
+							),
+						),
+					),
+					box: sample.box,
+				}));
 	const deduplicated = deduplicateTimes(
 		smoothSamples(visible, input.smoothing),
 	);
@@ -500,6 +515,82 @@ export function buildTrackingEditOperations({
 		}
 	}
 	return operations;
+}
+
+function mapTimeMapTrackingSamples({
+	clip,
+	samples,
+	sampleIntervalTicks,
+}: {
+	clip: Pick<TrackingClip, "duration" | "trimStart" | "timeMap">;
+	samples: SubjectTrackingSample[];
+	sampleIntervalTicks: number;
+}): Array<{ time: number; box: NormalizedTrackingBox }> {
+	if (!clip.timeMap || samples.length === 0) return [];
+	const clipTimes: number[] = [];
+	for (let time = 0; time < clip.duration; time += sampleIntervalTicks) {
+		clipTimes.push(time);
+	}
+	clipTimes.push(clip.duration);
+	const result = evaluateTimeMap({
+		timeMap: clip.timeMap,
+		sampleClipTimes: clipTimes,
+	});
+	if (
+		result.status !== "evaluated" ||
+		!Array.isArray(result.sourceTimeReadback)
+	) {
+		throw new Error(
+			`Rust rejected tracker time map: ${String(result.reason ?? "invalid readback")}`,
+		);
+	}
+	return result.sourceTimeReadback.flatMap((value) => {
+		if (!isRecord(value)) return [];
+		const clipTime = value.clipTime;
+		const sourceTime = value.sourceTime;
+		if (typeof clipTime !== "number" || typeof sourceTime !== "number")
+			return [];
+		const box = interpolateTrackingBox({
+			samples,
+			sourceTime: clip.trimStart + sourceTime,
+		});
+		return box ? [{ time: clipTime, box }] : [];
+	});
+}
+
+function interpolateTrackingBox({
+	samples,
+	sourceTime,
+}: {
+	samples: SubjectTrackingSample[];
+	sourceTime: number;
+}): NormalizedTrackingBox | null {
+	const first = samples[0];
+	const last = samples.at(-1);
+	if (
+		!first ||
+		!last ||
+		sourceTime < first.sourceTime ||
+		sourceTime > last.sourceTime
+	) {
+		return null;
+	}
+	const upperIndex = samples.findIndex(
+		(sample) => sample.sourceTime >= sourceTime,
+	);
+	const upper = samples[Math.max(0, upperIndex)] ?? last;
+	const lower = samples[Math.max(0, upperIndex - 1)] ?? first;
+	if (upper.sourceTime === lower.sourceTime) return upper.box;
+	const position =
+		(sourceTime - lower.sourceTime) / (upper.sourceTime - lower.sourceTime);
+	const interpolate = (left: number, right: number) =>
+		Math.round((left + (right - left) * position) * 1e12) / 1e12;
+	return {
+		x: interpolate(lower.box.x, upper.box.x),
+		y: interpolate(lower.box.y, upper.box.y),
+		width: interpolate(lower.box.width, upper.box.width),
+		height: interpolate(lower.box.height, upper.box.height),
+	};
 }
 
 function buildTrackerJob({
@@ -615,6 +706,7 @@ function findTrackingClip({
 		trimStart: element.trimStart,
 		trimEnd: element.trimEnd,
 		retimeRate,
+		...(retime && isRecord(retime.timeMap) ? { timeMap: retime.timeMap } : {}),
 	};
 }
 
@@ -675,8 +767,14 @@ function valuesForSample({
 }): Array<[string, number]> {
 	if (mode === "focal-point") {
 		return [
-			["reframe.focalX", Math.min(0.999, box.x + box.width / 2)],
-			["reframe.focalY", Math.min(0.999, box.y + box.height / 2)],
+			[
+				"reframe.focalX",
+				Math.round(Math.min(0.999, box.x + box.width / 2) * 1e12) / 1e12,
+			],
+			[
+				"reframe.focalY",
+				Math.round(Math.min(0.999, box.y + box.height / 2) * 1e12) / 1e12,
+			],
 		];
 	}
 	const padded = padBox(box, padding);

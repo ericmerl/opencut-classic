@@ -71,8 +71,10 @@ test("publishes strict preflight receipt tools over MCP stdio", async () => {
 	const publishedOperationKinds = [...collectStringConstants(operations)]
 		.filter((value) => expectedOperationKindSet.has(value))
 		.sort();
-	expect(expectedOperationKinds).toHaveLength(61);
+	expect(expectedOperationKinds).toHaveLength(62);
 	expect(publishedOperationKinds).toEqual(expectedOperationKinds);
+	expect(expectedOperationKinds).toContain("set_time_map");
+	expect(JSON.stringify(inputSchema)).toContain("opencut.time-map.v1");
 	expect(inputSchema.required).toEqual(
 		expect.arrayContaining([
 			"contractVersion",

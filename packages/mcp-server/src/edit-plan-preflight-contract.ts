@@ -482,6 +482,7 @@ export const editPlanEvaluationSchema = z
 						"RELATIONSHIP_PRUNED",
 						"CAPTION_OVERLAP",
 						"CAPTION_READING_SPEED",
+						"FRAME_INTERPOLATION_FALLBACK",
 					]),
 					operationIndex: z.number().int().nonnegative(),
 					objectId: z.string().nullable(),

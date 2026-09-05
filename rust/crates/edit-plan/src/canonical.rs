@@ -476,6 +476,7 @@ fn active_element_at(
         fade: None,
         retime_rate: None,
         maintain_pitch: None,
+        time_map: None,
         effects: vec![],
         keyframes: parse_keyframes(&common.animations),
         masks: vec![],
@@ -1423,8 +1424,35 @@ fn read_retime(value: &CanonicalValue, element: &mut Element) {
     };
     element.retime_rate = scalar_number_from(map.get("rate"));
     element.maintain_pitch = scalar_bool_from(map.get("maintainPitch"));
+    element.time_map = map.get("timeMap").and_then(|value| {
+        serde_json::to_value(value)
+            .ok()
+            .and_then(|value| serde_json::from_value(value).ok())
+    });
 }
 fn write_retime(mut value: CanonicalValue, element: &Element) -> CanonicalValue {
+    if let Some(time_map) = &element.time_map {
+        if !matches!(value, CanonicalValue::Object(_)) {
+            value = CanonicalValue::Object(BTreeMap::new());
+        }
+        set_object_field(
+            &mut value,
+            "mode",
+            CanonicalValue::String("time-map".into()),
+        );
+        set_object_field(&mut value, "rate", CanonicalValue::Number(1.0));
+        set_object_field(
+            &mut value,
+            "maintainPitch",
+            CanonicalValue::Boolean(time_map.audio_policy.maintain_pitch),
+        );
+        let canonical_time_map = serde_json::to_value(time_map)
+            .ok()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .expect("validated time map is canonical JSON");
+        set_object_field(&mut value, "timeMap", canonical_time_map);
+        return value;
+    }
     let Some(rate) = element.retime_rate else {
         return value;
     };
@@ -1441,6 +1469,8 @@ fn write_retime(mut value: CanonicalValue, element: &Element) -> CanonicalValue 
     if let Some(pitch) = element.maintain_pitch {
         set_object_field(&mut value, "maintainPitch", CanonicalValue::Boolean(pitch));
     }
+    remove_object_field(&mut value, "mode");
+    remove_object_field(&mut value, "timeMap");
     value
 }
 fn update_attachment(
@@ -1657,6 +1687,12 @@ fn set_object_field(value: &mut CanonicalValue, key: &str, entry: CanonicalValue
     }
     if let CanonicalValue::Object(map) = value {
         map.insert(key.into(), entry);
+    }
+}
+
+fn remove_object_field(value: &mut CanonicalValue, key: &str) {
+    if let CanonicalValue::Object(map) = value {
+        map.remove(key);
     }
 }
 

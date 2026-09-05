@@ -28,6 +28,7 @@ import type {
 	FrameRate,
 	FrameRangeSchedule,
 	ObjectIdAllocation,
+	TimeMap,
 } from "opencut-wasm";
 import type {
 	AnimationInterpolation,
@@ -1035,6 +1036,13 @@ export type AutomationEditOperation =
 			elementId: string;
 			rate: number;
 			maintainPitch?: boolean | undefined;
+			resolvedAllocations?: ObjectIdAllocation[] | undefined;
+	  }
+	| {
+			kind: "set_time_map";
+			trackId: string;
+			elementId: string;
+			timeMap: TimeMap;
 			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {

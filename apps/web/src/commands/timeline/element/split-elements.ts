@@ -8,7 +8,7 @@ import { generateUUID } from "@/utils/id";
 import { EditorCore } from "@/core";
 import { isRetimableElement } from "@/timeline";
 import { splitAnimationsAtTime } from "@/animation";
-import { getSourceSpanAtClipTime } from "@/retime";
+import { getSourceSpanAtClipTime, splitRetimeAtClipTime } from "@/retime";
 import {
 	addMediaTime,
 	type MediaTime,
@@ -111,6 +111,10 @@ export class SplitElementsCommand extends Command {
 				const retimeRef = isRetimableElement(element)
 					? element.retime
 					: undefined;
+				const splitRetime = splitRetimeAtClipTime({
+					retime: retimeRef,
+					splitClipTime: relativeTime,
+				});
 				// Snap the source-side split point exactly once and derive the right
 				// half from it. Independently rounding both spans (left and total)
 				// would let a 1-tick rounding error desynchronise them, breaking the
@@ -151,14 +155,18 @@ export class SplitElementsCommand extends Command {
 				});
 				let splitResult: TimelineElement[];
 
-				const leftTrimEnd = addMediaTime({
-					a: element.trimEnd,
-					b: rightSourceSpan,
-				});
-				const rightTrimStart = addMediaTime({
-					a: element.trimStart,
-					b: leftSourceSpan,
-				});
+				const leftTrimEnd = retimeRef?.timeMap
+					? element.trimEnd
+					: addMediaTime({
+							a: element.trimEnd,
+							b: rightSourceSpan,
+						});
+				const rightTrimStart = retimeRef?.timeMap
+					? element.trimStart
+					: addMediaTime({
+							a: element.trimStart,
+							b: leftSourceSpan,
+						});
 
 				if (this.retainSide === "left") {
 					splitResult = [
@@ -168,7 +176,9 @@ export class SplitElementsCommand extends Command {
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
 							animations: leftAnimations,
-							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
+							...(splitRetime.left !== undefined
+								? { retime: splitRetime.left }
+								: {}),
 						},
 					];
 				} else if (this.retainSide === "right") {
@@ -195,7 +205,9 @@ export class SplitElementsCommand extends Command {
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
 							transitionIn: undefined,
-							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
+							...(splitRetime.right !== undefined
+								? { retime: splitRetime.right }
+								: {}),
 						},
 					];
 				} else {
@@ -218,7 +230,9 @@ export class SplitElementsCommand extends Command {
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
 							animations: leftAnimations,
-							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
+							...(splitRetime.left !== undefined
+								? { retime: splitRetime.left }
+								: {}),
 						},
 						{
 							...rightOwned,
@@ -229,7 +243,9 @@ export class SplitElementsCommand extends Command {
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
 							transitionIn: undefined,
-							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
+							...(splitRetime.right !== undefined
+								? { retime: splitRetime.right }
+								: {}),
 						},
 					];
 				}
