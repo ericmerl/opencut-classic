@@ -49,8 +49,9 @@ export function buildTransitionCommand({
 		transitionId: operation.transitionId,
 		transitionType: operation.transitionType,
 		trackType: track.type,
-		fromElement: toTransitionBoundary(fromElement),
-		toElement: toTransitionBoundary(toElement),
+		fromElementId: fromElement.id,
+		toElementId: toElement.id,
+		trackElements: track.elements.map(toTransitionBoundary),
 		duration: operation.duration,
 		existingIncomingTransitionId: toElement.transitionIn?.id,
 	});

@@ -436,8 +436,9 @@ function decodeTrack({
 			transitionId: transition.id,
 			transitionType: transition.type,
 			trackType: track.type,
-			fromElement: toTransitionBoundary(fromElement),
-			toElement: toTransitionBoundary(toElement),
+			fromElementId: fromElement.id,
+			toElementId: toElement.id,
+			trackElements: elements.map(toTransitionBoundary),
 			duration: transition.duration,
 			existingIncomingTransitionId: transition.id,
 		});

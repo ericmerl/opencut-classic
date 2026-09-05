@@ -13,6 +13,8 @@ mock.module("opencut-wasm", () => ({
 	parseTimecode: () => 0,
 	resolveSplitTransition: (options: unknown) =>
 		nativeWasm().resolveSplitTransition(options),
+	evaluateStoredTransition: (options: unknown) =>
+		nativeWasm().evaluateStoredTransition(options),
 	roundToFrame: ({ time }: { time: number }) => time,
 	snappedSeekTime: ({ time }: { time: number }) => time,
 }));
@@ -175,5 +177,42 @@ describe("SplitElementsCommand transition integrity", () => {
 		expect(tracks.main.elements[2]?.transitionIn?.fromElementId).toBe(
 			"right-replacement",
 		);
+	});
+
+	test("rejects a split that would leave a transition longer than a retained half", () => {
+		const before = {
+			overlay: [],
+			main: {
+				id: "main",
+				name: "Main",
+				type: "video",
+				muted: false,
+				hidden: false,
+				elements: [
+					video({ id: "previous", startTime: 0 }),
+					{
+						...video({ id: "split-target", startTime: 240_000 }),
+						transitionIn: {
+							id: "transition",
+							type: "crossfade",
+							duration: mediaTime({ ticks: 90_000 }),
+							fromElementId: "previous",
+						},
+					},
+				],
+			},
+			audio: [],
+		} satisfies SceneTracks;
+		tracks = before;
+
+		expect(() =>
+			new SplitElementsCommand({
+				elements: [{ trackId: "main", elementId: "split-target" }],
+				splitTime: mediaTime({ ticks: 300_000 }),
+				retainSide: "both",
+				rightElementIds: ["right-replacement"],
+			}).execute(),
+		).toThrow("transition duration must be positive");
+		expect(tracks).toBe(before);
 	});
 });

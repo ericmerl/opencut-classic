@@ -3405,6 +3405,14 @@ fn named_treatment_render_state_is_deterministic_and_montage_is_monotonic() {
             canvas_height: 240.0,
         })
     };
+    assert!(matches!(
+        render("simple-media.unknown", 15_000),
+        ResolveMediaTreatmentRenderResponse::Rejected { .. }
+    ));
+    assert_eq!(
+        render("blur", 15_000),
+        ResolveMediaTreatmentRenderResponse::NotTreatment
+    );
 
     let ResolveMediaTreatmentRenderResponse::Resolved { motion, passes, .. } =
         render("simple-media.play-pendulum", 15_000)
@@ -3642,6 +3650,29 @@ fn transition_catalog_owns_ids_and_compound_boundary_policy() {
     .unwrap_err();
     assert!(matches!(wipe.code, ErrorCode::IncompatibleTrack));
     assert_eq!(wipe.path.as_deref(), Some("transitionType"));
+
+    let mut nonconsecutive_snapshot = full_snapshot_without_transitions();
+    let track = &mut nonconsecutive_snapshot.project.scenes[0].tracks[0];
+    let mut interposed = track.elements[0].clone();
+    interposed.common_mut().id = "interposed-video".into();
+    interposed.common_mut().order = 1;
+    interposed.common_mut().start_time = MediaTime::from_ticks(60_060);
+    interposed.common_mut().duration = MediaTime::from_ticks(60_060);
+    track.elements[1].common_mut().order = 2;
+    track.elements.insert(1, interposed);
+    let nonconsecutive = evaluate(options_with_before(
+        nonconsecutive_snapshot,
+        vec![EditOperation::UpsertTransition {
+            track_id: "track-main".into(),
+            transition_id: "nonconsecutive".into(),
+            from_element_id: "video-1".into(),
+            to_element_id: "compound-1".into(),
+            transition_type: TransitionType::Crossfade,
+            duration: MediaTime::from_ticks(30_000),
+        }],
+    ))
+    .unwrap_err();
+    assert_eq!(nonconsecutive.path.as_deref(), Some("fromElementId"));
 }
 
 fn caption_plan(operations: Vec<EditOperation>) -> Vec<EditOperation> {

@@ -313,8 +313,9 @@ pub struct EvaluateTransitionOptions {
     pub transition_id: String,
     pub transition_type: String,
     pub track_type: String,
-    pub from_element: TransitionBoundaryElement,
-    pub to_element: TransitionBoundaryElement,
+    pub from_element_id: String,
+    pub to_element_id: String,
+    pub track_elements: Vec<TransitionBoundaryElement>,
     pub duration: i64,
     pub existing_incoming_transition_id: Option<String>,
 }
@@ -697,7 +698,13 @@ pub fn resolve_media_treatment_render(
     options: ResolveMediaTreatmentRenderOptions,
 ) -> ResolveMediaTreatmentRenderResponse {
     let Some(descriptor) = media_treatment_descriptor(&options.treatment_id) else {
-        return ResolveMediaTreatmentRenderResponse::NotTreatment;
+        return if options.treatment_id.starts_with("simple-media.") {
+            ResolveMediaTreatmentRenderResponse::Rejected {
+                reason: format!("unknown treatment ID: {}", options.treatment_id),
+            }
+        } else {
+            ResolveMediaTreatmentRenderResponse::NotTreatment
+        };
     };
     let definition = descriptor.definition();
     if options.local_time < 0
@@ -894,16 +901,38 @@ fn validate_transition(
             path: "trackId".to_owned(),
         });
     }
-    if options.from_element.id == options.to_element.id {
+    if options.from_element_id == options.to_element_id {
         return Err(TransitionValidationError {
             kind: TransitionValidationKind::Invalid,
             reason: "transition endpoints must differ".to_owned(),
             path: "toElementId".to_owned(),
         });
     }
+
+    let endpoint = |id: &str, path: &str| {
+        let mut matches = options
+            .track_elements
+            .iter()
+            .filter(|element| element.id == id);
+        let element = matches.next().ok_or_else(|| TransitionValidationError {
+            kind: TransitionValidationKind::Invalid,
+            reason: "transition endpoint is missing from its track".to_owned(),
+            path: path.to_owned(),
+        })?;
+        if matches.next().is_some() {
+            return Err(TransitionValidationError {
+                kind: TransitionValidationKind::Invalid,
+                reason: "transition track contains duplicate element IDs".to_owned(),
+                path: path.to_owned(),
+            });
+        }
+        Ok(element)
+    };
+    let from_element = endpoint(&options.from_element_id, "fromElementId")?;
+    let to_element = endpoint(&options.to_element_id, "toElementId")?;
     if options.duration < definition.duration.minimum
-        || options.duration > options.from_element.duration
-        || options.duration > options.to_element.duration
+        || options.duration > from_element.duration
+        || options.duration > to_element.duration
     {
         return Err(TransitionValidationError {
             kind: TransitionValidationKind::Bounds,
@@ -912,18 +941,28 @@ fn validate_transition(
             path: "duration".to_owned(),
         });
     }
-    if require_adjacency
-        && options
-            .from_element
-            .start_time
-            .checked_add(options.from_element.duration)
-            != Some(options.to_element.start_time)
-    {
-        return Err(TransitionValidationError {
-            kind: TransitionValidationKind::Invalid,
-            reason: "transition elements must be consecutive and edge-adjacent".to_owned(),
-            path: "fromElementId".to_owned(),
+    if require_adjacency {
+        let mut ordered = options.track_elements.iter().collect::<Vec<_>>();
+        ordered.sort_by(|left, right| {
+            left.start_time
+                .cmp(&right.start_time)
+                .then_with(|| left.id.cmp(&right.id))
         });
+        let to_index = ordered
+            .iter()
+            .position(|element| element.id == options.to_element_id)
+            .expect("validated destination endpoint");
+        if to_index == 0
+            || ordered[to_index - 1].id != options.from_element_id
+            || from_element.start_time.checked_add(from_element.duration)
+                != Some(to_element.start_time)
+        {
+            return Err(TransitionValidationError {
+                kind: TransitionValidationKind::Invalid,
+                reason: "transition elements must be consecutive and edge-adjacent".to_owned(),
+                path: "fromElementId".to_owned(),
+            });
+        }
     }
     if options
         .existing_incoming_transition_id
@@ -936,8 +975,7 @@ fn validate_transition(
             path: "transitionId".to_owned(),
         });
     }
-    if (options.from_element.element_type == "compound"
-        || options.to_element.element_type == "compound")
+    if (from_element.element_type == "compound" || to_element.element_type == "compound")
         && definition.compound_boundary_policy == TransitionBoundaryPolicy::Unsupported
     {
         return Err(TransitionValidationError {
@@ -949,7 +987,7 @@ fn validate_transition(
             path: "transitionType".to_owned(),
         });
     }
-    if options.to_element.has_masks
+    if to_element.has_masks
         && definition.masked_incoming_policy == TransitionBoundaryPolicy::Unsupported
     {
         return Err(TransitionValidationError {

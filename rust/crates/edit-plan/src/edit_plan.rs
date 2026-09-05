@@ -5544,6 +5544,7 @@ impl State {
             &track_state.track_type,
             from_element,
             to_element,
+            &self.snapshot.elements,
             duration,
             existing_incoming,
         ))
@@ -5800,6 +5801,7 @@ fn transition_evaluation_options(
     track_type: &str,
     from_element: &Element,
     to_element: &Element,
+    track_elements: &[Element],
     duration: MediaTime,
     existing_incoming_transition_id: Option<&str>,
 ) -> EvaluateTransitionOptions {
@@ -5807,8 +5809,13 @@ fn transition_evaluation_options(
         transition_id: transition_id.to_owned(),
         transition_type: transition_type.to_owned(),
         track_type: track_type.to_owned(),
-        from_element: transition_boundary(from_element),
-        to_element: transition_boundary(to_element),
+        from_element_id: from_element.element_id.clone(),
+        to_element_id: to_element.element_id.clone(),
+        track_elements: track_elements
+            .iter()
+            .filter(|element| element.track_id == from_element.track_id)
+            .map(transition_boundary)
+            .collect(),
         duration: duration.as_ticks(),
         existing_incoming_transition_id: existing_incoming_transition_id.map(str::to_owned),
     }
@@ -5922,6 +5929,7 @@ fn validate_catalog_state(
             &track.track_type,
             from_element,
             to_element,
+            elements,
             transition.duration,
             Some(&transition.transition_id),
         )) {

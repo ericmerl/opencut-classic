@@ -3,7 +3,12 @@ import {
 	createElementSelectionResult,
 	type CommandResult,
 } from "@/commands/base-command";
-import type { SceneTracks, TimelineElement } from "@/timeline";
+import {
+	getTrackTransitionStates,
+	type SceneTracks,
+	type TimelineElement,
+	type TimelineTrack,
+} from "@/timeline";
 import { generateUUID } from "@/utils/id";
 import { EditorCore } from "@/core";
 import { isRetimableElement } from "@/timeline";
@@ -19,6 +24,7 @@ import { cloneCompoundTracks } from "./duplicate-elements";
 import type { ObjectIdAllocation } from "opencut-wasm";
 import * as OpenCutWasm from "opencut-wasm";
 import { ResolvedObjectIds } from "@/automation/resolved-object-ids";
+import { toTransitionBoundary } from "@/automation/transition-boundary";
 
 export class SplitElementsCommand extends Command {
 	private savedState: SceneTracks | null = null;
@@ -287,6 +293,13 @@ export class SplitElementsCommand extends Command {
 			main: splitTrack(this.savedState.main),
 			audio: this.savedState.audio.map((track) => splitTrack(track)),
 		};
+		for (const track of [
+			updatedTracks.main,
+			...updatedTracks.overlay,
+			...updatedTracks.audio,
+		]) {
+			assertTrackTransitionsValid(track);
+		}
 		this.resolvedIds.assertExhausted();
 
 		editor.timeline.updateTracks(updatedTracks);
@@ -314,6 +327,25 @@ export class SplitElementsCommand extends Command {
 		const id = this.rightElementIds.get(`${trackId}\0${elementId}`);
 		if (!id) throw new Error("missing resolved right-side element ID");
 		return id;
+	}
+}
+
+function assertTrackTransitionsValid(track: TimelineTrack): void {
+	for (const { transition, fromElement, toElement } of getTrackTransitionStates({
+		track,
+	})) {
+		if (!fromElement) throw new Error("retained transition endpoint is missing");
+		const validation = OpenCutWasm.evaluateStoredTransition({
+			transitionId: transition.id,
+			transitionType: transition.type,
+			trackType: track.type,
+			fromElementId: fromElement.id,
+			toElementId: toElement.id,
+			trackElements: track.elements.map(toTransitionBoundary),
+			duration: transition.duration,
+			existingIncomingTransitionId: transition.id,
+		});
+		if (validation.status === "rejected") throw new Error(validation.reason);
 	}
 }
 
