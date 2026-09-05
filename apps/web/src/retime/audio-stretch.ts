@@ -3,9 +3,8 @@ import { clampRetimeRate, shouldMaintainPitch } from "@/retime/rate";
 import type { RetimeConfig } from "@/timeline";
 import * as opencutWasm from "opencut-wasm";
 import type { TimeMap, TimeMapAudioChunk } from "opencut-wasm";
-import { getSourceTimeAtClipTime } from "./resolve";
-
-const MEDIA_TICKS_PER_SECOND = 120_000;
+import { getSourceTimeAtClipTimeSeconds } from "./resolve";
+import { TICKS_PER_SECOND } from "@/wasm";
 
 const RATE_EPSILON = 1e-6;
 export function planTimeMapAudioChunks({
@@ -50,7 +49,7 @@ export function sampleRetimedAudioChannel({
 	clipTime: number;
 	retime?: RetimeConfig;
 }): number {
-	const clipTicks = Math.round(clipTime * MEDIA_TICKS_PER_SECOND);
+	const clipTicks = Math.round(clipTime * TICKS_PER_SECOND);
 	const audioMapping = retime?.timeMap
 		? opencutWasm.resolveTimeMapAudioSample({
 				timeMap: retime.timeMap,
@@ -62,8 +61,8 @@ export function sampleRetimedAudioChannel({
 	}
 	if (audioMapping?.muted) return 0;
 	const mappedSourceTime = audioMapping
-		? audioMapping.sourceTime / MEDIA_TICKS_PER_SECOND
-		: getSourceTimeAtClipTime({ clipTime, retime });
+		? audioMapping.sourceTime / TICKS_PER_SECOND
+		: getSourceTimeAtClipTimeSeconds({ clipTimeSeconds: clipTime, retime });
 	return sampleLinear({
 		channelData,
 		position: (trimStart + mappedSourceTime) * sourceSampleRate,
@@ -230,20 +229,18 @@ async function buildPitchPreservedTimeMapBuffer({
 	);
 	for (const chunk of planTimeMapAudioChunks({ timeMap })) {
 		const outputStart = Math.round(
-			(chunk.timelineStart / MEDIA_TICKS_PER_SECOND) * targetSampleRate,
+			(chunk.timelineStart / TICKS_PER_SECOND) * targetSampleRate,
 		);
 		const outputEnd = Math.min(
 			outputLength,
-			Math.round(
-				(chunk.timelineEnd / MEDIA_TICKS_PER_SECOND) * targetSampleRate,
-			),
+			Math.round((chunk.timelineEnd / TICKS_PER_SECOND) * targetSampleRate),
 		);
 		if (outputEnd <= outputStart) continue;
 
 		if (chunk.kind === "hold") {
 			if (!chunk.muted) {
 				const sourceIndex =
-					(trimStart + chunk.sourceTime / MEDIA_TICKS_PER_SECOND) *
+					(trimStart + chunk.sourceTime / TICKS_PER_SECOND) *
 					sourceBuffer.sampleRate;
 				for (let channel = 0; channel < numChannels; channel++) {
 					const source = sourceBuffer.getChannelData(
@@ -260,14 +257,14 @@ async function buildPitchPreservedTimeMapBuffer({
 		}
 
 		const clipSeconds =
-			(chunk.timelineEnd - chunk.timelineStart) / MEDIA_TICKS_PER_SECOND;
+			(chunk.timelineEnd - chunk.timelineStart) / TICKS_PER_SECOND;
 		if (chunk.startRate < RATE_EPSILON || chunk.endRate < RATE_EPSILON)
 			continue;
 		const reverse = chunk.direction === "reverse";
 		const sourceStartTicks = Math.min(chunk.sourceStart, chunk.sourceEnd);
 		const rendered = await buildPitchPreservedBuffer({
 			sourceBuffer,
-			trimStart: trimStart + sourceStartTicks / MEDIA_TICKS_PER_SECOND,
+			trimStart: trimStart + sourceStartTicks / TICKS_PER_SECOND,
 			clipDuration: clipSeconds,
 			rate: chunk.startRate,
 			endRate: chunk.endRate,

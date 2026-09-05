@@ -18,7 +18,11 @@ import { doesElementHaveEnabledAudio } from "@/timeline/audio-separation";
 import { canElementHaveAudio, hasMediaId } from "@/timeline/element-utils";
 import { canTrackHaveAudio } from "@/timeline";
 import { mediaSupportsAudio } from "@/media/media-utils";
-import { getSourceTimeAtClipTime, renderRetimedBuffer } from "@/retime";
+import {
+	getSourceTimeAtClipTimeSeconds,
+	getSourceTimeAtClipTimeTicks,
+	renderRetimedBuffer,
+} from "@/retime";
 import { Input, ALL_FORMATS, BlobSource, AudioBufferSink } from "mediabunny";
 import { TICKS_PER_SECOND } from "@/wasm";
 import { mediaTime } from "@/wasm";
@@ -153,15 +157,15 @@ function flattenAudioWindow({
 			if (!canElementHaveAudio(element)) continue;
 			const localTimeOffset = visibleStart - element.startTime;
 			const visibleDuration = visibleEnd - visibleStart;
-			const sourceAtStart = getSourceTimeAtClipTime({
-				clipTime: localTimeOffset,
+			const sourceAtStart = getSourceTimeAtClipTimeTicks({
+				clipTime: mediaTime({ ticks: localTimeOffset }),
 				retime: element.retime,
 			});
-			const sourceAtEnd = getSourceTimeAtClipTime({
-				clipTime: localTimeOffset + visibleDuration,
+			const sourceAtEnd = getSourceTimeAtClipTimeTicks({
+				clipTime: mediaTime({ ticks: localTimeOffset + visibleDuration }),
 				retime: element.retime,
 			});
-			const sourceAtElementEnd = getSourceTimeAtClipTime({
+			const sourceAtElementEnd = getSourceTimeAtClipTimeTicks({
 				clipTime: element.duration,
 				retime: element.retime,
 			});
@@ -1015,7 +1019,8 @@ function mixAudioChannels({
 
 			const clipTime = i / sampleRate;
 			const sourceTime =
-				trimStart + getSourceTimeAtClipTime({ clipTime, retime });
+				trimStart +
+				getSourceTimeAtClipTimeSeconds({ clipTimeSeconds: clipTime, retime });
 			const sourceIndex = sourceTime * buffer.sampleRate;
 			if (sourceIndex >= sourceData.length) break;
 

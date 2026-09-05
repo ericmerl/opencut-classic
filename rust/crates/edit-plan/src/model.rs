@@ -1420,6 +1420,8 @@ pub enum EditOperation {
         duration: Option<MediaTime>,
         trim_start: MediaTime,
         trim_end: MediaTime,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        time_map_range: Option<time::TimeMapTrimRange>,
         ripple: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolved_allocations: Option<Vec<ObjectIdAllocation>>,

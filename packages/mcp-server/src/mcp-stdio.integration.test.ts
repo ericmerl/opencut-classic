@@ -43,6 +43,14 @@ const AUDIO_BOUNDARY_WINDOW_SECONDS = 0.5;
 const MEDIA_TICKS_PER_SECOND = 120_000;
 const PARITY_AUDIO_SAMPLE_RATE = 44_100;
 const PARITY_AUDIO_CHANNELS = 2;
+// The fixture audio is a 440 Hz sine. With maintainPitch the fundamental must
+// stay at 440 Hz through a 0.5x-1.5x ramp and a 0.5x reverse; without pitch
+// preservation the same windows would read about 352 Hz, 528 Hz, and 220 Hz.
+// 35 Hz (8%) absorbs WSOLA grain seams inside a 100 ms window while rejecting
+// every one of those unpreserved readings by a wide margin.
+const FIXTURE_TONE_HZ = 440;
+const PITCH_PRESERVED_TOLERANCE_HZ = 35;
+const FIXTURE_TONE_CALIBRATION_TOLERANCE_HZ = 2;
 
 let directory: string;
 const processes: McpStdioHarness[] = [];
@@ -4036,11 +4044,12 @@ integrationTest(
 				duration: 180_000,
 				trimStart: 0,
 				trimEnd: 0,
+				timeMapRange: { start: 30_000, end: 210_000 },
 				ripple: false,
 			},
 		];
 		const trimDescription =
-			"Reposition a time-mapped clip and crop only its right timeline edge";
+			"Slice both clip-local edges of a time-mapped main-track clip";
 		const trimPreflight = await first.callTool("opencut_preflight_edit_plan", {
 			contractVersion: 2,
 			...affinity(identity),
@@ -4118,12 +4127,15 @@ integrationTest(
 			)[0],
 		).toMatchObject({
 			elementId,
+			// The main track packs from zero, so the requested startTime does not
+			// move this clip; the readback proves the two-edge slice was rebased.
+			startTime: 0,
 			duration: 180_000,
 			sourceTimeReadback: [
-				{ clipTime: 0, sourceTime: 0 },
-				{ clipTime: 60_000, sourceTime: 60_000 },
-				{ clipTime: 120_000, sourceTime: 60_000 },
-				{ clipTime: 180_000, sourceTime: 30_000 },
+				{ clipTime: 0, timelineTime: 0, sourceTime: 22_500 },
+				{ clipTime: 30_000, timelineTime: 30_000, sourceTime: 60_000 },
+				{ clipTime: 90_000, timelineTime: 90_000, sourceTime: 60_000 },
+				{ clipTime: 180_000, timelineTime: 180_000, sourceTime: 15_000 },
 			],
 		});
 		const trimUndone = await first.callTool("opencut_undo", {
@@ -4284,6 +4296,18 @@ integrationTest(
 		const holdRms = pcmRms({ startSeconds: 0.65, endSeconds: 0.9 });
 		expect(rampRms).toBeGreaterThan(100);
 		expect(holdRms).toBeLessThan(rampRms * 0.1);
+		const sourcePcm = await extractPcmI16(sourcePath);
+		assertMetricAtMost({
+			label: "fixture tone estimator calibration error (Hz)",
+			actual: Math.abs(
+				estimateFundamentalHz({
+					pcm: sourcePcm,
+					startSeconds: 0.1,
+					endSeconds: 0.4,
+				}) - FIXTURE_TONE_HZ,
+			),
+			maximum: FIXTURE_TONE_CALIBRATION_TOLERANCE_HZ,
+		});
 
 		const previewAudioRange = await restarted.callTool(
 			"opencut_render_preview_range",
@@ -4330,6 +4354,25 @@ integrationTest(
 			actual: audioParity.meanAbsoluteError,
 			maximum: PREVIEW_EXPORT_PCM_MAE_TOLERANCE,
 		});
+		for (const [source, pcm] of [
+			["export", exportedPcm],
+			["preview", previewPcm],
+		] as const) {
+			for (const [window, startSeconds, endSeconds] of [
+				["early ramp", 0.1, 0.2],
+				["late ramp", 0.3, 0.4],
+				["reverse", 1.25, 1.75],
+			] as const) {
+				assertMetricAtMost({
+					label: `time-map ${source} ${window} pitch-preserved fundamental error (Hz)`,
+					actual: Math.abs(
+						estimateFundamentalHz({ pcm, startSeconds, endSeconds }) -
+							FIXTURE_TONE_HZ,
+					),
+					maximum: PITCH_PRESERVED_TOLERANCE_HZ,
+				});
+			}
+		}
 
 		for (const [label, ticks] of [
 			["ramp", 28_000],
@@ -4888,6 +4931,59 @@ function assertMetricAtLeast({
 	if (actual < minimum) {
 		throw new Error(`${label} ${actual} is below tolerance ${minimum}`);
 	}
+}
+
+function estimateFundamentalHz({
+	pcm,
+	startSeconds,
+	endSeconds,
+}: {
+	pcm: Int16Array;
+	startSeconds: number;
+	endSeconds: number;
+}): number {
+	// Positive-going zero crossings of the left channel, gated by a Schmitt
+	// trigger at 10% of the window peak so codec noise near zero cannot count
+	// twice. Each crossing is linearly interpolated between the two samples, and
+	// the fundamental is the crossing count over the span they cover.
+	const channels = PARITY_AUDIO_CHANNELS;
+	const startFrame = Math.round(startSeconds * PARITY_AUDIO_SAMPLE_RATE);
+	const endFrame = Math.min(
+		Math.round(endSeconds * PARITY_AUDIO_SAMPLE_RATE),
+		Math.floor(pcm.length / channels),
+	);
+	let peak = 0;
+	for (let frame = startFrame; frame < endFrame; frame += 1) {
+		peak = Math.max(peak, Math.abs(pcm[frame * channels]!));
+	}
+	const threshold = peak * 0.1;
+	if (threshold <= 0) throw new Error("fundamental window is silent");
+	let armed = false;
+	let crossings = 0;
+	let firstCrossing: number | undefined;
+	let lastCrossing: number | undefined;
+	for (let frame = startFrame + 1; frame < endFrame; frame += 1) {
+		const previous = pcm[(frame - 1) * channels]!;
+		const sample = pcm[frame * channels]!;
+		if (sample <= -threshold) armed = true;
+		if (armed && previous < 0 && sample >= 0) {
+			const position = frame - 1 + -previous / (sample - previous);
+			firstCrossing ??= position;
+			lastCrossing = position;
+			crossings += 1;
+			armed = false;
+		}
+	}
+	if (
+		firstCrossing === undefined ||
+		lastCrossing === undefined ||
+		crossings < 3
+	)
+		throw new Error("fundamental window does not contain a periodic signal");
+	return (
+		((crossings - 1) * PARITY_AUDIO_SAMPLE_RATE) /
+		(lastCrossing - firstCrossing)
+	);
 }
 
 function audioBoundaryWindow({

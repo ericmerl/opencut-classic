@@ -1,5 +1,5 @@
 import type { EditorCore } from "@/core";
-import { TICKS_PER_SECOND } from "@/wasm";
+import { mediaTime, TICKS_PER_SECOND } from "@/wasm";
 import { clampRetimeRate, shouldMaintainPitch } from "@/retime/rate";
 import type { AudioClipSource } from "@/media/audio";
 import { createAudioContext, collectAudioClips } from "@/media/audio";
@@ -10,7 +10,7 @@ import {
 import { createAudioMasteringChain } from "@/media/audio-mastering";
 import {
 	getClipTimeAtSourceTime,
-	getSourceTimeAtClipTime,
+	getSourceTimeAtClipTimeTicks,
 	renderRetimedBuffer,
 } from "@/retime";
 import {
@@ -260,8 +260,8 @@ export class AudioManager {
 		}
 		const sourceStartTime =
 			clip.trimStart +
-			getSourceTimeAtClipTime({
-				clipTime: iteratorStartTime - clip.startTime,
+			getSourceTimeAtClipTimeTicks({
+				clipTime: mediaTime({ ticks: iteratorStartTime - clip.startTime }),
 				retime: clip.retime,
 			});
 

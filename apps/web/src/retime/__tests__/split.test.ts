@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
-	sliceRetimeForTimelineRange,
+	planTimeMapTrim,
 	getSourceSpanAtClipTime,
 	splitRetimeAtClipTime,
 } from "@/retime";
 import type { RetimeConfig } from "@/timeline";
+import { mediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 
 describe("retime split", () => {
 	test("slices a ramp, hold, and reverse map for a timeline trim", () => {
@@ -44,12 +45,20 @@ describe("retime split", () => {
 				],
 			},
 		};
-		const trimmed = sliceRetimeForTimelineRange({
+		const trimmed = planTimeMapTrim({
 			retime,
-			startClipTime: 30,
-			endClipTime: 105,
+			elementStartTime: 0,
+			elementDuration: 120,
+			sourceTrimStart: 0,
+			sourceTrimEnd: 0,
+			requestedStartTime: 500,
+			timeMapRange: { start: 30, end: 105 },
+			requestedTrimStart: 0,
+			requestedTrimEnd: 0,
 		});
-		expect(trimmed?.timeMap?.segments).toEqual([
+		expect(trimmed.startTime).toBe(500);
+		expect(trimmed.duration).toBe(75);
+		expect(trimmed.timeMap.segments).toEqual([
 			{
 				kind: "speed",
 				timelineStart: 0,
@@ -80,12 +89,18 @@ describe("retime split", () => {
 
 	test("measures source span at a clip time", () => {
 		const retime: RetimeConfig = { rate: 2 };
-		expect(getSourceSpanAtClipTime({ clipTime: 5, retime })).toBe(10);
+		expect(
+			getSourceSpanAtClipTime({ clipTime: mediaTime({ ticks: 5 }), retime }),
+		).toBe(mediaTime({ ticks: 10 }));
 	});
 
 	test("returns zero for non-positive clip time", () => {
-		expect(getSourceSpanAtClipTime({ clipTime: 0 })).toBe(0);
-		expect(getSourceSpanAtClipTime({ clipTime: -1 })).toBe(0);
+		expect(getSourceSpanAtClipTime({ clipTime: mediaTime({ ticks: 0 }) })).toBe(
+			ZERO_MEDIA_TIME,
+		);
+		expect(
+			getSourceSpanAtClipTime({ clipTime: mediaTime({ ticks: -1 }) }),
+		).toBe(ZERO_MEDIA_TIME);
 	});
 
 	test("passes the same retime to both halves when splitting", () => {

@@ -3286,6 +3286,7 @@ impl State {
                 duration,
                 trim_start,
                 trim_end,
+                time_map_range,
                 ripple: use_ripple,
                 resolved_allocations,
             } => self.trim(
@@ -3295,6 +3296,7 @@ impl State {
                 *duration,
                 *trim_start,
                 *trim_end,
+                *time_map_range,
                 *use_ripple,
                 resolved_allocations.as_deref().unwrap_or_default(),
                 index,
@@ -5571,6 +5573,7 @@ impl State {
         duration: Option<MediaTime>,
         trim_start: MediaTime,
         trim_end: MediaTime,
+        time_map_range: Option<time::TimeMapTrimRange>,
         _use_ripple: bool,
         resolved_allocations: &[ObjectIdAllocation],
         index: usize,
@@ -5617,13 +5620,14 @@ impl State {
                     source_trim_end: e.trim_end,
                     requested_start_time: effective_start,
                     requested_duration: duration,
+                    requested_time_map_range: time_map_range,
                     requested_trim_start: trim_start,
                     requested_trim_end: trim_end,
                 })
                 .ok_or_else(|| {
                     invalid_error(
                         index,
-                        "Rust rejected time-map trim: startTime repositions, duration crops the right timeline edge, and source trims remain fixed",
+                        "Rust rejected time-map trim: startTime repositions, timeMapRange selects clip-local boundaries, duration must match that range, and source trims remain fixed",
                     )
                 })?;
                 e.start_time = plan.start_time;

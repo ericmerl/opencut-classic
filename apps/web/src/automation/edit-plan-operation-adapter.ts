@@ -316,6 +316,12 @@ export function toAutomationResolvedOperation(
 				...operation,
 				startTime: optionalMediaTime(operation.startTime),
 				duration: optionalMediaTime(operation.duration),
+				timeMapRange: operation.timeMapRange
+					? {
+							start: mediaTime({ ticks: operation.timeMapRange.start }),
+							end: mediaTime({ ticks: operation.timeMapRange.end }),
+						}
+					: undefined,
 				trimStart: mediaTime({ ticks: operation.trimStart }),
 				trimEnd: mediaTime({ ticks: operation.trimEnd }),
 				resolvedAllocations: optional(operation.resolvedAllocations),

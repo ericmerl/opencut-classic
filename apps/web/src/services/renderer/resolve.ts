@@ -1,4 +1,4 @@
-import { mediaTimeToSeconds, roundMediaTime } from "@/wasm";
+import { mediaTime, mediaTimeToSeconds, roundMediaTime } from "@/wasm";
 import { getElementLocalTime } from "@/animation";
 import { resolveEffectParamsAtTime } from "@/animation/effect-param-channel";
 import {
@@ -7,7 +7,7 @@ import {
 } from "@/effects/definitions/blur";
 import { effectsRegistry, resolveEffectPasses } from "@/effects";
 import type { Effect, EffectPass } from "@/effects/types";
-import { getSourceTimeAtClipTime } from "@/retime";
+import { getSourceTimeAtClipTimeTicks } from "@/retime";
 import {
 	DEFAULT_GRAPHIC_SOURCE_SIZE,
 	resolveGraphicElementParamsAtTime,
@@ -308,8 +308,8 @@ async function resolveVideoNode({
 
 	const sourceTimeTicks =
 		node.params.trimStart +
-		getSourceTimeAtClipTime({
-			clipTime: sampleClipTime,
+		getSourceTimeAtClipTimeTicks({
+			clipTime: mediaTime({ ticks: sampleClipTime }),
 			retime: node.params.retime,
 		});
 	const cache = context.renderer.videoCache ?? videoCache;
@@ -580,8 +580,8 @@ async function resolveBackdropSource({
 	if (node.params.mediaType === "video") {
 		const sourceTimeTicks =
 			node.params.trimStart +
-			getSourceTimeAtClipTime({
-				clipTime,
+			getSourceTimeAtClipTimeTicks({
+				clipTime: mediaTime({ ticks: clipTime }),
 				retime: node.params.retime,
 			});
 		const frame = await cache.getFrameAt({

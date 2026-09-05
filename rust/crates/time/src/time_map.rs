@@ -270,13 +270,46 @@ pub struct TimeMapBoundaryReadback {
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TimeMapTrimPolicy {
+    SliceTimeMap,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TimeMapSplitPolicy {
+    SliceAndRebaseTimeMap,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TimeMapTimelineAnchoredConsumer {
+    Keyframe,
+    Transition,
+    Caption,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TimeMapSourceMappedConsumer {
+    Tracker,
+    Matte,
+    VideoDecoder,
+    Audio,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TimeMapMappingPolicy {
-    pub trim: String,
-    pub split: String,
-    pub timeline_anchored: Vec<String>,
-    pub source_mapped: Vec<String>,
+    pub trim: TimeMapTrimPolicy,
+    pub split: TimeMapSplitPolicy,
+    pub timeline_anchored: Vec<TimeMapTimelineAnchoredConsumer>,
+    pub source_mapped: Vec<TimeMapSourceMappedConsumer>,
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -300,8 +333,17 @@ pub struct PlanTimeMapTrimOptions {
     pub source_trim_end: MediaTime,
     pub requested_start_time: Option<MediaTime>,
     pub requested_duration: Option<MediaTime>,
+    pub requested_time_map_range: Option<TimeMapTrimRange>,
     pub requested_trim_start: MediaTime,
     pub requested_trim_end: MediaTime,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapTrimRange {
+    pub start: MediaTime,
+    pub end: MediaTime,
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -872,14 +914,18 @@ pub fn describe_time_map(
     Some(TimeMapDescription {
         source_time_readback,
         mapping_policy: TimeMapMappingPolicy {
-            trim: "slice-time-map".into(),
-            split: "slice-and-rebase-time-map".into(),
-            timeline_anchored: vec!["keyframe".into(), "transition".into(), "caption".into()],
+            trim: TimeMapTrimPolicy::SliceTimeMap,
+            split: TimeMapSplitPolicy::SliceAndRebaseTimeMap,
+            timeline_anchored: vec![
+                TimeMapTimelineAnchoredConsumer::Keyframe,
+                TimeMapTimelineAnchoredConsumer::Transition,
+                TimeMapTimelineAnchoredConsumer::Caption,
+            ],
             source_mapped: vec![
-                "tracker".into(),
-                "matte".into(),
-                "video-decoder".into(),
-                "audio".into(),
+                TimeMapSourceMappedConsumer::Tracker,
+                TimeMapSourceMappedConsumer::Matte,
+                TimeMapSourceMappedConsumer::VideoDecoder,
+                TimeMapSourceMappedConsumer::Audio,
             ],
         },
     })
@@ -895,6 +941,7 @@ pub fn plan_time_map_trim(
         source_trim_end,
         requested_start_time,
         requested_duration,
+        requested_time_map_range,
         requested_trim_start,
         requested_trim_end,
     }: PlanTimeMapTrimOptions,
@@ -907,14 +954,25 @@ pub fn plan_time_map_trim(
         return None;
     }
     let start_time = requested_start_time.unwrap_or(element_start_time);
-    let duration = requested_duration.unwrap_or(element_duration);
-    if start_time < MediaTime::ZERO || duration <= MediaTime::ZERO || duration > element_duration {
+    let (range_start, range_end) = requested_time_map_range
+        .map(|range| (range.start, range.end))
+        .unwrap_or((
+            MediaTime::ZERO,
+            requested_duration.unwrap_or(element_duration),
+        ));
+    if range_start < MediaTime::ZERO || range_end <= range_start || range_end > element_duration {
         return None;
     }
-    let planned_time_map = if duration == element_duration {
+    let duration = MediaTime::from_ticks(range_end.as_ticks().checked_sub(range_start.as_ticks())?);
+    if start_time < MediaTime::ZERO
+        || requested_duration.is_some_and(|requested| requested != duration)
+    {
+        return None;
+    }
+    let planned_time_map = if range_start == MediaTime::ZERO && range_end == element_duration {
         time_map
     } else {
-        time_map.slice(MediaTime::ZERO, duration).ok()?
+        time_map.slice(range_start, range_end).ok()?
     };
     Some(TimeMapTrimPlan {
         start_time,
@@ -1110,7 +1168,10 @@ mod tests {
                 absolute_source_time: MediaTime::from_ticks(140_000),
             }
         );
-        assert_eq!(description.mapping_policy.trim, "slice-time-map");
+        assert_eq!(
+            description.mapping_policy.trim,
+            TimeMapTrimPolicy::SliceTimeMap
+        );
     }
 
     #[test]
@@ -1123,12 +1184,43 @@ mod tests {
             source_trim_end: MediaTime::from_ticks(7_000),
             requested_start_time: Some(MediaTime::from_ticks(30_000)),
             requested_duration: None,
+            requested_time_map_range: None,
             requested_trim_start: MediaTime::from_ticks(5_000),
             requested_trim_end: MediaTime::from_ticks(7_000),
         })
         .unwrap();
         assert_eq!(plan.start_time, MediaTime::from_ticks(30_000));
         assert_eq!(plan.time_map, sample_map());
+    }
+
+    #[test]
+    fn trimming_a_time_mapped_clip_slices_any_timeline_boundary() {
+        let plan = plan_time_map_trim(PlanTimeMapTrimOptions {
+            time_map: sample_map(),
+            element_start_time: MediaTime::from_ticks(10_000),
+            element_duration: MediaTime::from_ticks(180_000),
+            source_trim_start: MediaTime::from_ticks(5_000),
+            source_trim_end: MediaTime::from_ticks(7_000),
+            requested_start_time: Some(MediaTime::from_ticks(40_000)),
+            requested_duration: None,
+            requested_time_map_range: Some(TimeMapTrimRange {
+                start: MediaTime::from_ticks(60_000),
+                end: MediaTime::from_ticks(180_000),
+            }),
+            requested_trim_start: MediaTime::from_ticks(5_000),
+            requested_trim_end: MediaTime::from_ticks(7_000),
+        })
+        .unwrap();
+        assert_eq!(plan.start_time, MediaTime::from_ticks(40_000));
+        assert_eq!(plan.duration, MediaTime::from_ticks(120_000));
+        assert_eq!(plan.time_map.duration(), MediaTime::from_ticks(120_000));
+        assert_eq!(
+            plan.time_map
+                .source_time_at(MediaTime::ZERO)
+                .unwrap()
+                .source_time,
+            MediaTime::from_ticks(45_000),
+        );
     }
 
     #[test]

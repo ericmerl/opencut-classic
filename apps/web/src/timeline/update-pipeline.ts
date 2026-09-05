@@ -6,7 +6,7 @@ import {
 } from "@/retime";
 import type { RetimeConfig, SceneTracks, TimelineElement } from "@/timeline";
 import { isRetimableElement } from "@/timeline";
-import { ZERO_MEDIA_TIME, roundMediaTime } from "@/wasm";
+import { ZERO_MEDIA_TIME, mediaTime, roundMediaTime } from "@/wasm";
 
 type ElementUpdateField = keyof TimelineElement | string;
 
@@ -92,10 +92,8 @@ const enforceRules: ElementUpdateRule[] = [
 				animations: clampAnimationsToDuration({
 					animations: element.animations,
 					duration: element.duration,
-					resolveLeftBoundaryId:
-						context.resolveDurationClampLeftBoundaryId,
-					resolveRightBoundaryId:
-						context.resolveDurationClampRightBoundaryId,
+					resolveLeftBoundaryId: context.resolveDurationClampLeftBoundaryId,
+					resolveRightBoundaryId: context.resolveDurationClampRightBoundaryId,
 				}),
 			},
 		}),
@@ -155,9 +153,7 @@ export function applyElementUpdate({
 			...(patch.params ?? {}),
 		},
 	} as TimelineElement;
-	const changedFields = new Set(
-		Object.keys(patch) as ElementUpdateField[],
-	);
+	const changedFields = new Set(Object.keys(patch) as ElementUpdateField[]);
 
 	for (const rule of deriveRules) {
 		if (!shouldApplyRule({ rule, changedFields })) {
@@ -222,7 +218,7 @@ function getSourceDuration({
 	return (
 		trimStart +
 		getSourceSpanAtClipTime({
-			clipTime: duration,
+			clipTime: mediaTime({ ticks: duration }),
 			retime,
 		}) +
 		trimEnd

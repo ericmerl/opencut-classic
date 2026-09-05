@@ -1,18 +1,25 @@
 import type { RetimeConfig } from "@/timeline";
 import { clampRetimeRate } from "@/retime/rate";
 import * as opencutWasm from "opencut-wasm";
+import {
+	mediaTime,
+	mediaTimeFromSeconds,
+	mediaTimeToSeconds,
+	roundMediaTime,
+	type MediaTime,
+} from "@/wasm";
 
 function getSafeRate({ rate }: { rate: number }): number {
 	return clampRetimeRate({ rate });
 }
 
-export function getSourceTimeAtClipTime({
+export function getSourceTimeAtClipTimeTicks({
 	clipTime,
 	retime,
 }: {
-	clipTime: number;
+	clipTime: MediaTime;
 	retime?: RetimeConfig;
-}): number {
+}): MediaTime {
 	if (retime?.timeMap) {
 		const sourceTime = opencutWasm.resolveTimeMapSourceTime({
 			timeMap: retime.timeMap,
@@ -21,9 +28,29 @@ export function getSourceTimeAtClipTime({
 		if (sourceTime === undefined) {
 			throw new Error("Rust rejected the time-map source lookup");
 		}
-		return sourceTime;
+		return mediaTime({ ticks: sourceTime });
 	}
-	return clipTime * getSafeRate({ rate: retime?.rate ?? 1 });
+	return roundMediaTime({
+		time: clipTime * getSafeRate({ rate: retime?.rate ?? 1 }),
+	});
+}
+
+export function getSourceTimeAtClipTimeSeconds({
+	clipTimeSeconds,
+	retime,
+}: {
+	clipTimeSeconds: number;
+	retime?: RetimeConfig;
+}): number {
+	if (!retime?.timeMap) {
+		return clipTimeSeconds * getSafeRate({ rate: retime?.rate ?? 1 });
+	}
+	return mediaTimeToSeconds({
+		time: getSourceTimeAtClipTimeTicks({
+			clipTime: mediaTimeFromSeconds({ seconds: clipTimeSeconds }),
+			retime,
+		}),
+	});
 }
 
 export function getClipTimeAtSourceTime({
@@ -45,7 +72,7 @@ export function getEffectiveRateAt({
 	clipTime,
 	retime,
 }: {
-	clipTime?: number;
+	clipTime?: MediaTime;
 	retime?: RetimeConfig;
 }): number {
 	if (retime?.timeMap) {

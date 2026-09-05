@@ -1458,6 +1458,7 @@ fn all_62_operation_variants_have_valid_and_invalid_evaluator_coverage() {
                 duration: Some(t(119_120)),
                 trim_start: t(1_000),
                 trim_end: t(0),
+                time_map_range: None,
                 ripple: false,
                 resolved_allocations: None,
             }],
@@ -1717,7 +1718,7 @@ fn time_map_is_canonical_and_split_rebases_hold_and_reverse_segments() {
 }
 
 #[test]
-fn time_map_trim_repositions_without_cropping_and_duration_crops_the_right_edge() {
+fn time_map_trim_repositions_and_slices_any_requested_timeline_range() {
     let result = evaluate(options_with_before(
         full_snapshot(),
         vec![
@@ -1734,6 +1735,10 @@ fn time_map_trim_repositions_without_cropping_and_duration_crops_the_right_edge(
                 duration: Some(MediaTime::from_ticks(90_000)),
                 trim_start: MediaTime::ZERO,
                 trim_end: MediaTime::ZERO,
+                time_map_range: Some(time::TimeMapTrimRange {
+                    start: MediaTime::from_ticks(30_000),
+                    end: MediaTime::from_ticks(120_000),
+                }),
                 ripple: false,
                 resolved_allocations: None,
             },
@@ -1756,9 +1761,7 @@ fn time_map_trim_repositions_without_cropping_and_duration_crops_the_right_edge(
     let time_map =
         serde_json::from_value::<time::TimeMap>(serde_json::to_value(&retime["timeMap"]).unwrap())
             .unwrap();
-    for (clip_time, expected_source_time) in
-        [(0, 0), (15_000, 22_500), (45_000, 60_000), (90_000, 30_000)]
-    {
+    for (clip_time, expected_source_time) in [(0, 60_000), (30_000, 60_000), (90_000, 0)] {
         assert_eq!(
             time_map
                 .source_time_at(MediaTime::from_ticks(clip_time))
@@ -1982,6 +1985,7 @@ fn trim_pins_and_applies_deterministic_animation_boundaries() {
             duration: Some(MediaTime::from_ticks(60_060)),
             trim_start: MediaTime::ZERO,
             trim_end: MediaTime::from_ticks(60_060),
+            time_map_range: None,
             ripple: false,
             resolved_allocations: None,
         }],

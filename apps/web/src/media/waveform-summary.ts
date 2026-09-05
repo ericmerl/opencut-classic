@@ -1,6 +1,6 @@
 "use client";
 
-import { getSourceTimeAtClipTime } from "@/retime";
+import { getSourceTimeAtClipTimeSeconds } from "@/retime";
 import type { RetimeConfig } from "@/timeline";
 
 const RMS_ANALYSIS_WINDOW_SECONDS = 0.02;
@@ -121,14 +121,14 @@ export function buildWaveformSampleBuckets({
 		);
 		const sourceBucketStartSec =
 			sourceStartSec +
-			getSourceTimeAtClipTime({
-				clipTime: clipStartSec,
+			getSourceTimeAtClipTimeSeconds({
+				clipTimeSeconds: clipStartSec,
 				retime,
 			});
 		const sourceBucketEndSec =
 			sourceStartSec +
-			getSourceTimeAtClipTime({
-				clipTime: clipEndSec,
+			getSourceTimeAtClipTimeSeconds({
+				clipTimeSeconds: clipEndSec,
 				retime,
 			});
 

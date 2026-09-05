@@ -1051,6 +1051,7 @@ export type AutomationEditOperation =
 			elementId: string;
 			startTime?: MediaTime | undefined;
 			duration?: MediaTime | undefined;
+			timeMapRange?: { start: MediaTime; end: MediaTime } | undefined;
 			trimStart: MediaTime;
 			trimEnd: MediaTime;
 			ripple?: boolean | undefined;

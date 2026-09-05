@@ -2,25 +2,31 @@ import { describe, expect, test } from "bun:test";
 import {
 	getClipTimeAtSourceTime,
 	getEffectiveRateAt,
-	getSourceTimeAtClipTime,
+	getSourceTimeAtClipTimeSeconds,
+	getSourceTimeAtClipTimeTicks,
 	getTimelineDurationForSourceSpan,
 } from "@/retime";
 import type { RetimeConfig } from "@/timeline";
+import { mediaTime } from "@/wasm";
 
 const twoX: RetimeConfig = { rate: 2 };
 const halfX: RetimeConfig = { rate: 0.5 };
 
 describe("retime resolve", () => {
 	test("maps clip time to source time at 2x speed", () => {
-		expect(getSourceTimeAtClipTime({ clipTime: 5, retime: twoX })).toBe(10);
+		expect(
+			getSourceTimeAtClipTimeSeconds({ clipTimeSeconds: 5, retime: twoX }),
+		).toBe(10);
 	});
 
 	test("maps clip time to source time at 0.5x speed", () => {
-		expect(getSourceTimeAtClipTime({ clipTime: 4, retime: halfX })).toBe(2);
+		expect(
+			getSourceTimeAtClipTimeSeconds({ clipTimeSeconds: 4, retime: halfX }),
+		).toBe(2);
 	});
 
 	test("returns clip time unchanged when no retime", () => {
-		expect(getSourceTimeAtClipTime({ clipTime: 7 })).toBe(7);
+		expect(getSourceTimeAtClipTimeSeconds({ clipTimeSeconds: 7 })).toBe(7);
 	});
 
 	test("inverts source time back to clip time at 2x speed", () => {
@@ -42,17 +48,26 @@ describe("retime resolve", () => {
 	});
 
 	test("clamps invalid rates to 1", () => {
-		expect(getSourceTimeAtClipTime({ clipTime: 5, retime: { rate: 0 } })).toBe(
-			5,
-		);
-		expect(getSourceTimeAtClipTime({ clipTime: 5, retime: { rate: -1 } })).toBe(
-			5,
-		);
+		expect(
+			getSourceTimeAtClipTimeSeconds({
+				clipTimeSeconds: 5,
+				retime: { rate: 0 },
+			}),
+		).toBe(5);
+		expect(
+			getSourceTimeAtClipTimeSeconds({
+				clipTimeSeconds: 5,
+				retime: { rate: -1 },
+			}),
+		).toBe(5);
 	});
 
 	test("caps retime rates above 5x", () => {
 		expect(
-			getSourceTimeAtClipTime({ clipTime: 5, retime: { rate: 100 } }),
+			getSourceTimeAtClipTimeSeconds({
+				clipTimeSeconds: 5,
+				retime: { rate: 100 },
+			}),
 		).toBe(25);
 		expect(
 			getTimelineDurationForSourceSpan({
@@ -84,7 +99,10 @@ describe("retime resolve", () => {
 			},
 		};
 		expect(() =>
-			getSourceTimeAtClipTime({ clipTime: 120_001, retime }),
+			getSourceTimeAtClipTimeTicks({
+				clipTime: mediaTime({ ticks: 120_001 }),
+				retime,
+			}),
 		).toThrow("Rust rejected");
 	});
 });

@@ -3611,6 +3611,7 @@ export class EditorAutomation {
 				sourceTrimEnd: element.trimEnd,
 				requestedStartTime: operation.startTime,
 				requestedDuration: operation.duration,
+				timeMapRange: operation.timeMapRange,
 				requestedTrimStart: operation.trimStart,
 				requestedTrimEnd: operation.trimEnd,
 			});

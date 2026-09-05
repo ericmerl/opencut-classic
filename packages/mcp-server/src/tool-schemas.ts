@@ -5,8 +5,12 @@ import { QC_CHECK_IDS } from "./export-qc";
 import { BOOTSTRAP_PROJECT_ID } from "./managed-editor-worker";
 import { operationIdSchema } from "./operation-tool-schemas";
 
-const timeMapTickSchema = z.number().int().nonnegative();
-const timeMapRateSchema = z.number().min(0.01).max(5);
+// This schema owns the JSON transport shape only: the wire-format version tag
+// and field layout that MCP clients see in the published tool schema. Rust
+// validates all canonical time-map semantics, including tick integrality/range,
+// rates, fallback policy, continuity, and non-empty identities/segments.
+const timeMapTickSchema = z.number();
+const timeMapRateSchema = z.number();
 
 const timeMapSpeedSegmentSchema = z.object({
 	kind: z.literal("speed"),
@@ -23,27 +27,25 @@ const timeMapHoldSegmentSchema = z.object({
 	timelineStart: timeMapTickSchema,
 	timelineEnd: timeMapTickSchema,
 	sourceTime: timeMapTickSchema,
-	frameIdentity: z.string().trim().min(1),
+	frameIdentity: z.string(),
 });
 
 export const timeMapSchema = z.object({
 	schemaVersion: z.literal("opencut.time-map.v1"),
 	frameInterpolation: z.object({
 		requested: z.enum(["nearest", "frame-blend", "optical-flow"]),
-		fallback: z.literal("nearest"),
+		fallback: z.enum(["nearest", "frame-blend", "optical-flow"]),
 	}),
 	audioPolicy: z.object({
 		maintainPitch: z.boolean(),
 		hold: z.enum(["mute", "hold-sample"]),
 	}),
-	segments: z
-		.array(
-			z.discriminatedUnion("kind", [
-				timeMapSpeedSegmentSchema,
-				timeMapHoldSegmentSchema,
-			]),
-		)
-		.min(1),
+	segments: z.array(
+		z.discriminatedUnion("kind", [
+			timeMapSpeedSegmentSchema,
+			timeMapHoldSegmentSchema,
+		]),
+	),
 });
 
 export const evaluateTimeMapInputSchema = z.object({
@@ -1515,15 +1517,21 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 			.int()
 			.nonnegative()
 			.describe(
-				"Amount removed from the beginning of the source, in ticks. For a time-mapped clip this must equal the current trimStart because reverse and hold mappings make source-side trimming ambiguous.",
+				"Amount removed from the beginning of the source, in ticks. For a time-mapped clip this must equal the current trimStart; use timeMapRange for unambiguous clip-local trimming.",
 			),
 		trimEnd: z
 			.number()
 			.int()
 			.nonnegative()
 			.describe(
-				"Amount removed from the end of the source, in ticks. For a time-mapped clip this must equal the current trimEnd because reverse and hold mappings make source-side trimming ambiguous.",
+				"Amount removed from the end of the source, in ticks. For a time-mapped clip this must equal the current trimEnd; use timeMapRange for unambiguous clip-local trimming.",
 			),
+		timeMapRange: z
+			.object({ start: z.number(), end: z.number() })
+			.describe(
+				"Optional [start,end] range in the current time map's clip-local ticks. Rust slices and rebases this exact range, including reverse and hold boundaries. If duration is supplied, it must equal end-start.",
+			)
+			.optional(),
 		ripple: z.boolean().default(false),
 		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
@@ -1631,6 +1639,7 @@ const resolvedSkipFields = new Map<string, Set<string>>(
 				? ["autoTrackId"]
 				: []),
 			...(kind === "create_compound" ? ["emptyMainTrackId"] : []),
+			...(kind === "trim" ? ["timeMapRange"] : []),
 		]),
 	]),
 );
@@ -1651,8 +1660,8 @@ const resolvedCaptionSchema = z
 
 /**
  * Rust emits a JSON-only resolved DTO. Non-skipped Option fields are required
- * and explicit null, while the small allocation plumbing set retains its
- * declared optional transport shape.
+ * and explicit null, while fields Rust omits when absent (allocation plumbing
+ * and the optional trim timeMapRange) retain their declared optional shape.
  */
 export const resolvedEditOperationSchema = z.discriminatedUnion(
 	"kind",

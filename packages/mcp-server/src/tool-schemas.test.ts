@@ -37,6 +37,7 @@ import {
 	startEditorWorkerInputSchema,
 	stopEditorWorkerInputSchema,
 	timelineQueryInputSchema,
+	timeMapSchema,
 	syncAudioInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
@@ -44,6 +45,32 @@ import {
 	withProjectMutationSafety,
 	undoInputSchema,
 } from "./tool-schemas";
+
+describe("time-map transport schema", () => {
+	test("leaves semantic time-map validation to Rust", () => {
+		expect(
+			timeMapSchema.safeParse({
+				schemaVersion: "opencut.time-map.v1",
+				frameInterpolation: {
+					requested: "optical-flow",
+					fallback: "frame-blend",
+				},
+				audioPolicy: { maintainPitch: true, hold: "mute" },
+				segments: [
+					{
+						kind: "speed",
+						timelineStart: -1,
+						timelineEnd: 0.5,
+						sourceStart: -1,
+						startRate: 100,
+						endRate: 100,
+						direction: "forward",
+					},
+				],
+			}),
+		).toMatchObject({ success: true });
+	});
+});
 
 describe("OpenCut QC and delivery package contracts", () => {
 	test("accepts an explicit versioned QC policy and a complete package", () => {

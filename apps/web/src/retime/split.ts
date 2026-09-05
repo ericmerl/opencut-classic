@@ -1,5 +1,6 @@
 import type { RetimeConfig } from "@/timeline";
-import { getSourceTimeAtClipTime } from "./resolve";
+import { getSourceTimeAtClipTimeTicks } from "./resolve";
+import { type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 import * as opencutWasm from "opencut-wasm";
 import type { TimeMapSplitPlan, TimeMapTrimPlan } from "opencut-wasm";
 
@@ -7,10 +8,11 @@ export function getSourceSpanAtClipTime({
 	clipTime,
 	retime,
 }: {
-	clipTime: number;
+	clipTime: MediaTime;
 	retime?: RetimeConfig;
-}): number {
-	return Math.max(0, getSourceTimeAtClipTime({ clipTime, retime }));
+}): MediaTime {
+	if (clipTime <= ZERO_MEDIA_TIME) return ZERO_MEDIA_TIME;
+	return getSourceTimeAtClipTimeTicks({ clipTime, retime });
 }
 
 export function splitRetimeAtClipTime({
@@ -55,6 +57,7 @@ export function planTimeMapTrim({
 	sourceTrimEnd,
 	requestedStartTime,
 	requestedDuration,
+	timeMapRange,
 	requestedTrimStart,
 	requestedTrimEnd,
 }: {
@@ -65,6 +68,7 @@ export function planTimeMapTrim({
 	sourceTrimEnd: number;
 	requestedStartTime?: number;
 	requestedDuration?: number;
+	timeMapRange?: { start: number; end: number };
 	requestedTrimStart: number;
 	requestedTrimEnd: number;
 }): TimeMapTrimPlan {
@@ -77,44 +81,14 @@ export function planTimeMapTrim({
 		sourceTrimEnd,
 		requestedStartTime,
 		requestedDuration,
+		requestedTimeMapRange: timeMapRange,
 		requestedTrimStart,
 		requestedTrimEnd,
 	});
 	if (!plan) {
 		throw new Error(
-			"Rust rejected the time-map trim: startTime repositions, duration crops the right timeline edge, and source trims remain fixed",
+			"Rust rejected the time-map trim: startTime repositions, timeMapRange selects clip-local boundaries, duration must match that range, and source trims remain fixed",
 		);
 	}
 	return plan;
-}
-
-export function sliceRetimeForTimelineRange({
-	retime,
-	startClipTime,
-	endClipTime,
-}: {
-	retime?: RetimeConfig;
-	startClipTime: number;
-	endClipTime: number;
-}): RetimeConfig | undefined {
-	if (!retime?.timeMap) return retime;
-	const timeMap = opencutWasm.sliceTimeMap({
-		timeMap: retime.timeMap,
-		timelineStart: startClipTime,
-		timelineEnd: endClipTime,
-	});
-	if (!timeMap) {
-		throw new Error("Rust rejected a trim of the canonical time map");
-	}
-	return { ...retime, timeMap };
-}
-
-export function adjustRetimeForTrimChange({
-	retime,
-}: {
-	retime?: RetimeConfig;
-	clipTrimTime: number;
-	side: "start" | "end";
-}): RetimeConfig | undefined {
-	return retime;
 }
