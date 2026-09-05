@@ -255,10 +255,9 @@ export interface CapabilitySnapshotServiceOptions {
 		workflowScriptPath: string | null;
 	}>;
 	mediaCapabilityCatalog?: () => Record<string, unknown>;
-	mediaProviderReadiness?: () => {
-		audioCleanup: Record<string, unknown>;
-		subjectTracking: Record<string, unknown>;
-	};
+	mediaProviderReadiness?: () =>
+		| Record<string, Record<string, unknown>>
+		| Promise<Record<string, Record<string, unknown>>>;
 }
 
 export class CapabilitySnapshotService {
@@ -611,14 +610,15 @@ export class CapabilitySnapshotService {
 	}
 
 	private async readProviderReadiness() {
-		const mediaProviderReadiness = this.options.mediaProviderReadiness?.() ?? {
-			audioCleanup: unavailableMediaProviderReadiness(
-				"Rust audio cleanup readiness is unavailable.",
-			),
-			subjectTracking: unavailableMediaProviderReadiness(
-				"Rust subject tracking readiness is unavailable.",
-			),
-		};
+		const mediaProviderReadiness =
+			(await this.options.mediaProviderReadiness?.()) ?? {
+				audioCleanup: unavailableMediaProviderReadiness(
+					"Rust audio cleanup readiness is unavailable.",
+				),
+				subjectTracking: unavailableMediaProviderReadiness(
+					"Rust subject tracking readiness is unavailable.",
+				),
+			};
 		const entries = [
 			[
 				"matteGeneration",
@@ -674,9 +674,8 @@ export class CapabilitySnapshotService {
 			}),
 		);
 		return {
-			audioCleanup: mediaProviderReadiness.audioCleanup,
+			...mediaProviderReadiness,
 			...Object.fromEntries(results),
-			subjectTracking: mediaProviderReadiness.subjectTracking,
 		};
 	}
 

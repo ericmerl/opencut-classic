@@ -24,6 +24,7 @@ import { JobService, JobServiceError } from "./job-service";
 import { JobStore } from "./job-store";
 import { stableSerialize } from "./matte-generation-data";
 import { DurableProviderSupervisor } from "./provider-supervisor";
+import { ApprovedModelCache } from "./approved-model-cache";
 import { ExportJobQueue } from "./export-jobs";
 import { ExportProjectService } from "./export-project";
 import { ExportReceiptStore } from "./export-receipts";
@@ -381,18 +382,28 @@ await inlineJobs.reconcileInterrupted(async (record) => {
 	}
 });
 await exportJobs.reconcileInterrupted();
+const approvedModelCache = new ApprovedModelCache(
+	process.env.OPENCUT_MODEL_CACHE_DIRECTORY ??
+		join(exportReceipts.directory, "models", "approved"),
+);
 capabilitySnapshots = new CapabilitySnapshotService({
 	bridge,
 	worker: editorWorker,
 	stateDirectory: exportReceipts.directory,
 	parakeetReadiness: readParakeetReadiness,
 	mediaCapabilityCatalog: () => getMediaCapabilityCatalog({}),
-	mediaProviderReadiness: () => ({
-		audioCleanup: getMediaProviderReadiness(
+	mediaProviderReadiness: async () => ({
+		audioCleanup: await approvedModelCache.readiness(
 			"opencut.task.audio-cleanup.v1",
 		),
-		subjectTracking: getMediaProviderReadiness(
+		stemSeparation: await approvedModelCache.readiness(
+			"opencut.task.stem-separation.v1",
+		),
+		subjectTracking: await approvedModelCache.readiness(
 			"opencut.task.subject-tracking.v1",
+		),
+		voiceActivityDetection: await approvedModelCache.readiness(
+			"opencut.task.voice-activity-detection.v1",
 		),
 	}),
 	queueState: async () => {

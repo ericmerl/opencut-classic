@@ -65,12 +65,9 @@ test("discovers the Rust-owned model capability catalog without provider executi
 				deterministicCacheRequired: true,
 				cpuFallbackRequired: true,
 			},
-			readiness: {
-				status: "model-selection-required",
-				canExecute: false,
-			},
+			readiness: { status: "acquisition-required", canExecute: false },
 			modelRequirement: {
-				ownerApprovalRequired: true,
+				ownerApprovalRequired: false,
 				requiredIdentity: ["modelId", "version", "sha256", "source", "license"],
 			},
 		});
@@ -81,6 +78,15 @@ test("discovers the Rust-owned model capability catalog without provider executi
 			record(task.requirements).requestKind,
 		);
 	}
+	expect(record(tasks[0]!.modelRequirement).selectedModel).toMatchObject({
+		modelId: "facebook/sam2.1-hiera-small",
+		modelVersion: "ee5bba1d82bb8749febdf90f45e84b687142ba03",
+		artifact: {
+			sha256:
+				"0a4067b11ce1e23d5229203f11c718a823060d15a4b23fa2372a7d4b77cbbc60",
+		},
+		license: { spdx: "Apache-2.0" },
+	});
 	const capabilities = await harness.call("opencut_capabilities", {});
 	expect(capabilities.mediaFoundation).toMatchObject({
 		schemaVersion: "opencut.media-capability-catalog.v1",
@@ -88,30 +94,34 @@ test("discovers the Rust-owned model capability catalog without provider executi
 		tasks: tasks.map((task) => ({
 			taskId: task.taskId,
 			readiness: {
-				status: "model-selection-required",
+				status: "acquisition-required",
 				canExecute: false,
 			},
 		})),
 	});
 	expect(capabilities.providers).toMatchObject({
 		audioCleanup: {
-			status: "model-selection-required",
+			status: "unavailable",
 			canExecute: false,
-			reason: record(
-				tasks.find(
-					(task) => task.taskId === "opencut.task.audio-cleanup.v1",
-				)!.readiness,
-			).reason,
+			artifact: {
+				status: "missing",
+				sha256:
+					"147bfb866bac8264603546e035bf283370e716ed2f4b7412d308d2bcee88304f",
+			},
+			model: { modelId: "speechbrain/metricgan-plus-voicebank" },
 		},
 		subjectTracking: {
-			status: "model-selection-required",
+			status: "unavailable",
 			canExecute: false,
-			reason: record(
-				tasks.find(
-					(task) => task.taskId === "opencut.task.subject-tracking.v1",
-				)!.readiness,
-			).reason,
+			artifact: {
+				status: "missing",
+				sha256:
+					"0a4067b11ce1e23d5229203f11c718a823060d15a4b23fa2372a7d4b77cbbc60",
+			},
+			model: { modelId: "facebook/sam2.1-hiera-small" },
 		},
+		stemSeparation: { status: "unavailable", canExecute: false },
+		voiceActivityDetection: { status: "unavailable", canExecute: false },
 	});
 	const blockedCleanup = await harness.call("opencut_clean_audio", {
 		...mutation("media-foundation:block-cleanup"),

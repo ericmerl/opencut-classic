@@ -4,8 +4,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod approved_models;
+pub use approved_models::*;
+
 pub const MEDIA_CAPABILITY_CATALOG_SCHEMA: &str = "opencut.media-capability-catalog.v1";
 const MODEL_SELECTION_REQUIRED_REASON: &str = "Owner approval of an exact model ID, immutable version, canonical source, license, and SHA-256 is required before provider execution.";
+const MODEL_ACQUISITION_REQUIRED_REASON: &str = "The owner-approved model must be hash-verified in the managed cache and pass its runtime/device conformance policy before provider execution.";
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
@@ -303,14 +307,17 @@ fn tasks() -> Vec<MediaCapabilityTask> {
                 cpu_fallback_required: true,
             },
             readiness: CatalogReadiness {
-                status: "model-selection-required",
+                status: "acquisition-required",
                 can_execute: false,
-                reason: MODEL_SELECTION_REQUIRED_REASON,
+                reason: MODEL_ACQUISITION_REQUIRED_REASON,
             },
             model_requirement: ModelRequirement {
-                owner_approval_required: true,
+                owner_approval_required: false,
                 required_identity: &["modelId", "version", "sha256", "source", "license"],
-                selected_model: serde_json::Value::Null,
+                selected_model: serde_json::to_value(
+                    model_for_task(task_id).expect("every media task has an approved model"),
+                )
+                .expect("approved model catalog serializes"),
             },
         },
     )
@@ -2205,7 +2212,7 @@ mod tests {
     };
 
     #[test]
-    fn catalog_never_claims_unapproved_models_are_ready() {
+    fn catalog_exposes_approved_models_without_claiming_runtime_readiness() {
         let MediaCapabilityCatalogResponse::Catalog(catalog) =
             media_capability_catalog(MediaCapabilityCatalogInput::default())
         else {
@@ -2213,9 +2220,10 @@ mod tests {
         };
         assert_eq!(catalog.tasks.len(), 4);
         assert!(catalog.tasks.iter().all(|task| {
-            task.readiness.status == "model-selection-required"
+            task.readiness.status == "acquisition-required"
                 && !task.readiness.can_execute
-                && task.model_requirement.selected_model.is_null()
+                && !task.model_requirement.owner_approval_required
+                && !task.model_requirement.selected_model.is_null()
         }));
     }
 }

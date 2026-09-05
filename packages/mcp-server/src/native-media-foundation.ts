@@ -2,6 +2,12 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const wasm = require("../../../rust/wasm/pkg-node/opencut_wasm.js") as {
+	approvedModelCatalog(): ApprovedModelCatalog;
+	validateApprovedModelReadiness(
+		input: ApprovedModelReadinessInput,
+	):
+		| { status: "readiness"; readiness: ApprovedModelReadiness }
+		| { status: "rejected"; code: string; reason: string };
 	mediaCapabilityCatalog(input: {
 		taskIds?: string[];
 	}):
@@ -34,6 +40,83 @@ const wasm = require("../../../rust/wasm/pkg-node/opencut_wasm.js") as {
 		  }
 		| { status: "rejected"; code: string; reason: string };
 };
+
+export interface ApprovedModelCatalog {
+	schemaVersion: "opencut.approved-models.v1";
+	models: ApprovedModel[];
+}
+
+export interface ApprovedModel {
+	taskId: string;
+	providerId: string;
+	modelId: string;
+	modelVersion: string;
+	artifact: {
+		filename: string;
+		sourceUrl: string;
+		sha256: string;
+		bytes: number;
+		cacheKey: string;
+	};
+	code: { repository: string; revision: string } | null;
+	runtime: {
+		runtimeId: string;
+		repository: string;
+		revision: string | null;
+		release: string | null;
+	};
+	license: {
+		spdx: "Apache-2.0" | "MIT";
+		modelNotice: string;
+		bundledLicensePath: string;
+		bundledNoticePath: string;
+	};
+	executionPolicy: {
+		canonicalDevice: "cpu";
+		canonicalThreads: number | null;
+		cpuFallback: string;
+		cuda: string;
+		windowsCuda: string;
+		conformanceRequired: true;
+	};
+	outputPolicy: string;
+}
+
+export interface ApprovedRuntimeProbeInput {
+	runtimeId: string;
+	runtimeVersion: string;
+	device: "cpu" | "cuda";
+	hostOs: string;
+	environment: "native" | "wsl2-ubuntu";
+	threads?: number;
+	deterministicConformance: boolean;
+}
+
+export interface ApprovedModelReadinessInput {
+	taskId: string;
+	artifact?: { sha256: string; bytes: number };
+	runtime?: ApprovedRuntimeProbeInput;
+}
+
+export interface ApprovedModelReadiness {
+	status: "ready" | "degraded" | "unavailable";
+	canExecute: boolean;
+	reason: string;
+	artifactStatus: "ready" | "missing";
+	device: string | null;
+}
+
+export function getApprovedModelCatalog(): ApprovedModelCatalog {
+	return plainJson(wasm.approvedModelCatalog()) as ApprovedModelCatalog;
+}
+
+export function validateApprovedModelReadiness(
+	input: ApprovedModelReadinessInput,
+) {
+	return plainJson(wasm.validateApprovedModelReadiness(input)) as
+		| { status: "readiness"; readiness: ApprovedModelReadiness }
+		| { status: "rejected"; code: string; reason: string };
+}
 
 export type MediaAnalysisValidation =
 	| { status: "validated"; analysis: Record<string, unknown> }
