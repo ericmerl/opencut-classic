@@ -28,5 +28,9 @@ fn js_adapter_projection_is_canonical_and_has_stable_digest() {
 }
 
 fn fixture_bytes(value: &'static str) -> &'static [u8] {
-    value.strip_suffix('\n').unwrap_or(value).as_bytes()
+    value
+        .strip_suffix("\r\n")
+        .or_else(|| value.strip_suffix('\n'))
+        .unwrap_or(value)
+        .as_bytes()
 }
