@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,12 +20,13 @@ import {
 	EditPlanPreflightService,
 } from "./edit-plan-preflight-service";
 import { EditPlanPreflightStore } from "./edit-plan-preflight-store";
+import { removeTestDirectory } from "./test-filesystem";
 
 const directories: string[] = [];
 
 afterEach(async () => {
 	for (const directory of directories.splice(0)) {
-		await rm(directory, { recursive: true, force: true });
+		await removeTestDirectory(directory);
 	}
 });
 

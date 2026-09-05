@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import type * as z from "zod/v4";
 import {
 	MUTATING_TOOL_MANIFEST,
@@ -81,6 +82,8 @@ const identity = {
 	connectionGeneration: 1,
 };
 const hash = "a".repeat(64);
+const fixturePath = (...segments: string[]) =>
+	resolve(import.meta.dir, "fixtures", ...segments);
 
 type SchemaCase = {
 	name: MutatingToolName;
@@ -282,7 +285,7 @@ const cases: SchemaCase[] = [
 	{
 		name: "opencut_import_media_asset",
 		schema: withLifecycleProjectMutationSafety(importMediaAssetInputSchema),
-		input: project({ path: "C:/clip.mp4" }),
+		input: project({ path: fixturePath("clip.mp4") }),
 	},
 	{
 		name: "opencut_rename_media_asset",
@@ -292,7 +295,7 @@ const cases: SchemaCase[] = [
 	{
 		name: "opencut_relink_media_asset",
 		schema: withLifecycleProjectMutationSafety(relinkMediaAssetInputSchema),
-		input: project({ assetId: "asset-1", path: "C:/clip-v2.mp4" }),
+		input: project({ assetId: "asset-1", path: fixturePath("clip-v2.mp4") }),
 	},
 	{
 		name: "opencut_remove_media_asset",
@@ -328,7 +331,7 @@ const cases: SchemaCase[] = [
 		input: project({
 			trackId: "a",
 			elementId: "a",
-			path: "C:/clean.wav",
+			path: fixturePath("clean.wav"),
 			modelId: "cleaner",
 			modelVersion: "1",
 		}),
@@ -373,12 +376,12 @@ const cases: SchemaCase[] = [
 	{
 		name: "opencut_import_media",
 		schema: withProjectMutationSafety(importMediaInputSchema),
-		input: project({ path: "C:/clip.mp4", startTime: 0 }),
+		input: project({ path: fixturePath("clip.mp4"), startTime: 0 }),
 	},
 	{
 		name: "opencut_import_subtitles",
 		schema: withProjectMutationSafety(importSubtitlesInputSchema),
-		input: project({ path: "C:/captions.srt" }),
+		input: project({ path: fixturePath("captions.srt") }),
 	},
 	{
 		name: "opencut_transcribe_timeline",
@@ -388,7 +391,7 @@ const cases: SchemaCase[] = [
 	{
 		name: "opencut_export_subtitles",
 		schema: withProjectMutationSafety(exportSubtitlesInputSchema),
-		input: project({ outputPath: "C:/captions.vtt", format: "vtt" }),
+		input: project({ outputPath: fixturePath("captions.vtt"), format: "vtt" }),
 	},
 	{
 		name: "opencut_attach_matte",
@@ -396,7 +399,7 @@ const cases: SchemaCase[] = [
 		input: project({
 			trackId: "a",
 			elementId: "a",
-			path: "C:/matte.webm",
+			path: fixturePath("matte.webm"),
 			modelId: "matte",
 			modelVersion: "1",
 		}),
@@ -414,7 +417,7 @@ const cases: SchemaCase[] = [
 	{
 		name: "opencut_export_project",
 		schema: withProjectMutationSafety(exportProjectInputSchema),
-		input: project({ outputPath: "C:/video.mp4", format: "mp4" }),
+		input: project({ outputPath: fixturePath("video.mp4"), format: "mp4" }),
 	},
 	{
 		name: "opencut_evaluate_export_qc",
@@ -426,7 +429,7 @@ const cases: SchemaCase[] = [
 		schema: withMutationOperationId(createDeliveryPackageInputSchema),
 		input: {
 			packageName: "Delivery",
-			outputDirectory: "C:/deliveries",
+			outputDirectory: fixturePath("deliveries"),
 			master: { exportOperationId: "master", qcOperationId: "qc-master" },
 			variants: [
 				{
@@ -442,7 +445,7 @@ const cases: SchemaCase[] = [
 					qcOperationId: "qc-burned",
 				},
 			],
-			sidecars: [{ name: "captions", sourcePath: "C:/captions.vtt" }],
+			sidecars: [{ name: "captions", sourcePath: fixturePath("captions.vtt") }],
 		},
 	},
 	{
@@ -450,7 +453,7 @@ const cases: SchemaCase[] = [
 		schema: withProjectMutationSafety(queueExportInputSchema),
 		input: project({
 			jobId: "job-1",
-			outputPath: "C:/video.mp4",
+			outputPath: fixturePath("video.mp4"),
 			format: "mp4",
 		}),
 	},
@@ -460,7 +463,11 @@ const cases: SchemaCase[] = [
 		input: project({
 			batchId: "batch-1",
 			variants: [
-				{ variantId: "v1", preset: "tiktok_9_16", outputPath: "C:/v1.mp4" },
+				{
+					variantId: "v1",
+					preset: "tiktok_9_16",
+					outputPath: fixturePath("v1.mp4"),
+				},
 			],
 		}),
 	},
@@ -674,13 +681,13 @@ const cases: SchemaCase[] = [
 		schema: withMutationOperationId(exportEditorialDecisionInputSchema),
 		input: {
 			decisionId: "decision-1",
-			outputPath: "C:/decisions/decision-1.json",
+			outputPath: fixturePath("decisions", "decision-1.json"),
 		},
 	},
 	{
 		name: "opencut_import_editorial_decision_json",
 		schema: withMutationOperationId(importEditorialDecisionInputSchema),
-		input: { path: "C:/decisions/decision-1.json" },
+		input: { path: fixturePath("decisions", "decision-1.json") },
 	},
 ];
 

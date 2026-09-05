@@ -167,9 +167,9 @@ Working on `apps/desktop`? See [`apps/desktop/README.md`](../apps/desktop/README
 1. Create a new branch: `git checkout -b feature/your-feature-name`
 2. Make your changes
 3. Run the relevant checks for the area you touched:
-
    - Web changes: from `apps/web`, run `bun run lint` and `bun run format`
    - Desktop changes: run `./apps/desktop/script/setup` if your environment isn't set up yet
+   - CI changes: follow [`docs/ci.md`](../docs/ci.md) to reproduce the affected hosted-runner jobs exactly
 
 4. Commit your changes with a descriptive message
 5. Push to your fork and create a pull request
