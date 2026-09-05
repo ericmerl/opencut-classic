@@ -63,14 +63,7 @@ type ResolvedTreatmentRender = Extract<
 >;
 
 type ResolvedTreatmentEffects = {
-	motion: {
-		scaleX: number;
-		scaleY: number;
-		positionX: number;
-		positionY: number;
-		rotationDegrees: number;
-		opacityMultiplier: number;
-	};
+	motion: ResolvedTreatmentRender["motion"];
 	sourceProgress?: number;
 	rendersByEffectId: Map<string, ResolvedTreatmentRender>;
 };
@@ -256,16 +249,16 @@ function resolveEffectPassGroups({
 	return (effects ?? [])
 		.filter((effect) => effect.enabled)
 		.map((effect) => {
+			const treatment = treatmentEffects.rendersByEffectId.get(effect.id);
+			if (treatment) {
+				return treatment.passes;
+			}
 			const resolvedParams = resolveEffectParamsAtTime({
 				effectId: effect.id,
 				params: effect.params,
 				animations,
 				localTime,
 			});
-			const treatment = treatmentEffects.rendersByEffectId.get(effect.id);
-			if (treatment) {
-				return treatment.passes;
-			}
 			const definition = effectsRegistry.get(effect.type);
 			return resolveEffectPasses({
 				definition,
