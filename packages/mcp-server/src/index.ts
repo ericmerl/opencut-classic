@@ -69,7 +69,6 @@ import {
 import { SpeechAnalysisService } from "./speech-analysis";
 import {
 	getMediaCapabilityCatalog,
-	getMediaExecutionBlocker,
 	getMediaProviderReadiness,
 	planAudioPost,
 } from "./native-media-foundation";
@@ -1583,7 +1582,7 @@ function createServer(): McpServer {
 		"opencut_clean_audio",
 		{
 			description:
-				"Reserved cleanup execution surface. Returns MODEL_SELECTION_REQUIRED without provider execution until the owner approves an exact model identity, source, license, and artifact hash; attach precomputed audio with opencut_attach_clean_audio.",
+				"Reserved cleanup execution surface. Fails closed without provider execution until the exact approved MetricGAN+ artifact and runtime have deterministic conformance; attach precomputed audio with opencut_attach_clean_audio.",
 			inputSchema: withProjectMutationSafety(cleanAudioInputSchema),
 		},
 		async (input) =>
@@ -1591,8 +1590,8 @@ function createServer(): McpServer {
 				await ledgerBoundary.execute(
 					"opencut_clean_audio",
 					input,
-					async () => modelSelectionRequired("opencut.task.audio-cleanup.v1"),
-					async () => modelSelectionRequired("opencut.task.audio-cleanup.v1"),
+					async () => approvedModelNotReady("opencut.task.audio-cleanup.v1"),
+					async () => approvedModelNotReady("opencut.task.audio-cleanup.v1"),
 				),
 			),
 	);
@@ -3121,9 +3120,16 @@ function toolResult(value: unknown) {
 	};
 }
 
-function modelSelectionRequired(taskId: string) {
+async function approvedModelNotReady(taskId: string) {
+	const readiness = await approvedModelCache.readiness(taskId);
 	return {
-		...getMediaExecutionBlocker(taskId),
+		status: "rejected" as const,
+		code: "APPROVED_MODEL_NOT_READY",
+		reason:
+			readiness.reason ??
+			"The approved model runtime has not passed deterministic conformance.",
+		taskId,
+		providerExecution: "forbidden" as const,
 		affectedObjects: [] as [],
 	};
 }

@@ -133,7 +133,7 @@ test("discovers the Rust-owned model capability catalog without provider executi
 	});
 	expect(blockedCleanup).toMatchObject({
 		status: "rejected",
-		code: "MODEL_SELECTION_REQUIRED",
+		code: "APPROVED_MODEL_NOT_READY",
 		providerExecution: "forbidden",
 	});
 	const blockedTracking = await harness.call("opencut_track_subject", {
@@ -146,7 +146,7 @@ test("discovers the Rust-owned model capability catalog without provider executi
 	});
 	expect(blockedTracking).toMatchObject({
 		status: "rejected",
-		code: "MODEL_SELECTION_REQUIRED",
+		code: "SUBJECT_TRACKER_NOT_READY",
 		providerExecution: "forbidden",
 	});
 });
