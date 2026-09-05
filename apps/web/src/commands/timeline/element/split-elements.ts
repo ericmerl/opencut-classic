@@ -16,7 +16,8 @@ import {
 	subMediaTime,
 } from "@/wasm";
 import { cloneCompoundTracks } from "./duplicate-elements";
-import { resolveSplitTransition, type ObjectIdAllocation } from "opencut-wasm";
+import type { ObjectIdAllocation } from "opencut-wasm";
+import * as OpenCutWasm from "opencut-wasm";
 import { ResolvedObjectIds } from "@/automation/resolved-object-ids";
 
 export class SplitElementsCommand extends Command {
@@ -164,7 +165,7 @@ export class SplitElementsCommand extends Command {
 					trackId: track.id,
 					elementId: element.id,
 				});
-				const transitionResolution = resolveSplitTransition({
+				const transitionResolution = OpenCutWasm.resolveSplitTransition({
 					retainSide: this.retainSide,
 					sourceElementId: element.id,
 					rightElementId,

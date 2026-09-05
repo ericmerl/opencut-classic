@@ -8,6 +8,7 @@ import { buildDefaultParamValues } from "@/params/registry";
 import {
 	isVisualElement,
 	type TimelineElement,
+	type TimelineTrack,
 	type VisualElement,
 } from "@/timeline";
 import type {
@@ -65,7 +66,7 @@ function buildUpsertPatch({
 	operation,
 }: {
 	element: TimelineElement;
-	trackType: string;
+	trackType: TimelineTrack["type"];
 	operation: Extract<EffectOperation, { kind: "upsert_effect" }>;
 }): Partial<VisualElement> {
 	if (!isVisualElement(element)) {
@@ -182,7 +183,7 @@ export function buildEffectControlCommand({
 	operation,
 }: {
 	element: TimelineElement;
-	trackType: string;
+	trackType: TimelineTrack["type"];
 	operation: EffectOperation;
 }): Command {
 	const patch = buildEffectControlPatch({ element, trackType, operation });
@@ -203,7 +204,7 @@ export function buildEffectControlPatch({
 	operation,
 }: {
 	element: TimelineElement;
-	trackType: string;
+	trackType: TimelineTrack["type"];
 	operation: EffectOperation;
 }): Partial<VisualElement> {
 	return operation.kind === "upsert_effect"
