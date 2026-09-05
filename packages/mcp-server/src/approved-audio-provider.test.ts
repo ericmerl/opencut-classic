@@ -35,7 +35,7 @@ describe("approved audio provider protocol", () => {
 reply({task:"audio-cleanup", model:${JSON.stringify(METRICGAN_MODEL)}, runtime:${JSON.stringify(METRICGAN_RUNTIME)}, device:{kind:"cpu",runtime:"torch",canonical:true}, artifacts:{original:{path:job.source.path,role:"before",sampleRate:16000,channels:1,sampleCount:320},cleaned:{path:"cleaned.wav",role:"after",sampleRate:16000,channels:1,sampleCount:320}}});`,
 		);
 
-		const result = await provider.run(request(source, output, "audio-cleanup"), 10_000);
+		const result = await provider.run(await request(source, output, "audio-cleanup"), 10_000);
 
 		expect(result).toMatchObject({
 			task: "audio-cleanup",
@@ -61,7 +61,7 @@ await Bun.write(job.outputDirectory + "/accompaniment.wav", bytes);
 reply({task:"stem-separation", model:${JSON.stringify(OPEN_UNMIX_MODEL)}, runtime:${JSON.stringify(OPEN_UNMIX_RUNTIME)}, device:{kind:"cpu",runtime:"torch",canonical:true}, residualPolicy:"sample-wise-source-minus-vocals-f32-v1", artifacts:{vocals:{path:"vocals.wav",role:"vocals",sampleRate:44100,channels:2,sampleCount:441},accompaniment:{path:"accompaniment.wav",role:"accompaniment-residual",sampleRate:44100,channels:2,sampleCount:441}}});`,
 		);
 
-		const result = await provider.run(request(source, output, "stem-separation"), 10_000);
+		const result = await provider.run(await request(source, output, "stem-separation"), 10_000);
 
 		expect(result).toMatchObject({
 			task: "stem-separation",
@@ -87,7 +87,7 @@ reply({task:"stem-separation", model:${JSON.stringify(OPEN_UNMIX_MODEL)}, runtim
 			`reply({task:"voice-activity-detection", model:${JSON.stringify(SILERO_MODEL)}, runtime:{id:"onnxruntime",version:"1.23.2"}, device:{kind:"cpu",runtime:"onnxruntime",canonical:true,executionProvider:"CPUExecutionProvider",intraOpThreads:1,interOpThreads:1}, sampleRate:16000, sampleCount:1600, ranges:[{startSample:160,endSampleExclusive:800,confidence:0.75}]});`,
 		);
 
-		const result = await provider.run(request(source, output, "voice-activity-detection"), 10_000);
+		const result = await provider.run(await request(source, output, "voice-activity-detection"), 10_000);
 
 		expect(result).toMatchObject({
 			task: "voice-activity-detection",
@@ -108,7 +108,7 @@ reply({task:"stem-separation", model:${JSON.stringify(OPEN_UNMIX_MODEL)}, runtim
 		const provider = await fixtureProvider(directory, `throw new Error("must not execute");`);
 
 		await expect(
-			provider.run(request(source, join(directory, "output"), "audio-cleanup"), 10_000),
+			provider.run(await request(source, join(directory, "output"), "audio-cleanup"), 10_000),
 		).rejects.toThrow("MetricGAN+ VoiceBank requires 16 kHz mono PCM WAV speech");
 	});
 
@@ -122,8 +122,21 @@ reply({task:"stem-separation", model:${JSON.stringify(OPEN_UNMIX_MODEL)}, runtim
 reply({task:"audio-cleanup", model:{...${JSON.stringify(METRICGAN_MODEL)},revision:"latest"}, runtime:${JSON.stringify(METRICGAN_RUNTIME)}, device:{kind:"cpu",runtime:"torch",canonical:true}, artifacts:{original:{path:job.source.path,role:"before",sampleRate:16000,channels:1,sampleCount:320},cleaned:{path:"cleaned.wav",role:"after",sampleRate:16000,channels:1,sampleCount:320}}});`,
 		);
 
-		await expect(provider.run(request(source, output, "audio-cleanup"), 10_000)).rejects.toThrow(
+		await expect(provider.run(await request(source, output, "audio-cleanup"), 10_000)).rejects.toThrow(
 			"approved model identity",
+		);
+	});
+
+	test("rejects source bytes replaced after the request was created", async () => {
+		const source = join(directory, "source.wav");
+		const output = join(directory, "output");
+		await Bun.write(source, pcm16Wave(16_000, 1, 320));
+		const input = await request(source, output, "audio-cleanup");
+		await Bun.write(source, pcm16Wave(16_000, 1, 321));
+		const provider = await fixtureProvider(directory, `throw new Error("must not execute");`);
+
+		await expect(provider.run(input, 10_000)).rejects.toThrow(
+			"source SHA-256 does not match",
 		);
 	});
 
@@ -142,7 +155,7 @@ console.log(JSON.stringify({protocol:"opencut.approved-audio-provider.v1",status
 		process.env.OPENCUT_APPROVED_AUDIO_PROVIDER_ARGS = JSON.stringify([script]);
 		const cleaner = commandAudioCleanerFromEnvironment();
 
-		const result = await cleaner.clean(legacyCleanupJob(source, output), 10_000);
+		const result = await cleaner.clean(await legacyCleanupJob(source, output), 10_000);
 
 		expect(result).toEqual({
 			artifactPath: join(output, "cleaned.wav"),
@@ -191,16 +204,19 @@ ${body}`,
 	return new CommandApprovedAudioProvider({ command: process.execPath, args: [script] });
 }
 
-function request(
+async function request(
 	path: string,
 	outputDirectory: string,
 	task: ApprovedAudioProviderRequest["task"],
-): ApprovedAudioProviderRequest {
+): Promise<ApprovedAudioProviderRequest> {
+	const contentSha256 = new Bun.CryptoHasher("sha256")
+		.update(await Bun.file(path).arrayBuffer())
+		.digest("hex");
 	return {
 		protocol: "opencut.approved-audio-provider.v1",
 		operationId: `operation-${task}`,
 		task,
-		source: { path, contentSha256: "0".repeat(64) },
+		source: { path, contentSha256 },
 		outputDirectory,
 		devicePolicy: { kind: "cpu", canonical: true },
 		options:
@@ -229,7 +245,10 @@ function pcm16Wave(sampleRate: number, channels: number, sampleCount: number): U
 	return bytes;
 }
 
-function legacyCleanupJob(source: string, outputDirectory: string): AudioCleanerJob {
+async function legacyCleanupJob(source: string, outputDirectory: string): Promise<AudioCleanerJob> {
+	const contentHash = new Bun.CryptoHasher("sha256")
+		.update(await Bun.file(source).arrayBuffer())
+		.digest("hex");
 	return {
 		protocolVersion: 1,
 		operationId: "legacy-cleanup-operation",
@@ -238,7 +257,7 @@ function legacyCleanupJob(source: string, outputDirectory: string): AudioCleaner
 			path: source,
 			name: "source.wav",
 			mimeType: "audio/wav",
-			contentHash: "0".repeat(64),
+			contentHash,
 			sourceFingerprint: "fixture",
 			durationSeconds: 0.02,
 		},

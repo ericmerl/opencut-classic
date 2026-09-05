@@ -171,6 +171,10 @@ export class CommandApprovedAudioProvider {
 		timeoutMs: number,
 	): Promise<ApprovedAudioProviderResult> {
 		validateRequest(request, timeoutMs);
+		const sourceSha256 = await hashFile(request.source.path);
+		if (sourceSha256 !== request.source.contentSha256) {
+			throw new Error("source SHA-256 does not match the approved provider request");
+		}
 		const sourceWave = await inspectWave(request.source.path);
 		validateSourceDomain(request.task, sourceWave);
 		await mkdir(request.outputDirectory, { recursive: true });
