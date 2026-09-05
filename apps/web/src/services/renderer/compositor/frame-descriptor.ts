@@ -118,7 +118,7 @@ async function collectNode({
 			});
 		}
 		for (const item of compoundItems) {
-			multiplyFrameItemOpacity(item, node.resolved.opacity);
+			multiplyFrameItemOpacity({ item, multiplier: node.resolved.opacity });
 		}
 		items.push(...compoundItems);
 		return;
@@ -251,16 +251,21 @@ async function collectNode({
 	}
 }
 
-function multiplyFrameItemOpacity(
-	item: FrameItemDescriptor,
-	multiplier: number,
-): void {
+function multiplyFrameItemOpacity({
+	item,
+	multiplier,
+}: {
+	item: FrameItemDescriptor;
+	multiplier: number;
+}): void {
 	if (item.type === "layer") {
 		item.opacity *= multiplier;
 		return;
 	}
 	if (item.type === "track") {
-		for (const child of item.items) multiplyFrameItemOpacity(child, multiplier);
+		for (const child of item.items) {
+			multiplyFrameItemOpacity({ item: child, multiplier });
+		}
 	}
 }
 

@@ -329,7 +329,7 @@ pub struct EvaluateTransitionOptions {
     rename_all_fields = "camelCase"
 )]
 pub enum EvaluateTransitionResponse {
-    Validated,
+    Validated { transition_type: TransitionType },
     Rejected { reason: String, path: String },
 }
 
@@ -371,12 +371,41 @@ enum TreatmentParameterProfile {
 
 #[derive(Clone, Copy)]
 enum TreatmentRenderKind {
-    Shader(f64),
+    Shader(TreatmentShaderMode),
     Pendulum,
     PullIn,
     PullOut,
     SwipeLeft,
     MontageCurve,
+}
+
+#[derive(Clone, Copy)]
+enum TreatmentShaderMode {
+    FilmFrame,
+    TechnicolorFlash,
+    ScannerBar,
+    Glitch,
+    Chromatic,
+    DarkNight,
+    Mirror,
+    BodyTreatment,
+    MemeTreatment,
+}
+
+impl TreatmentShaderMode {
+    const fn uniform_value(self) -> f64 {
+        match self {
+            Self::FilmFrame => 0.0,
+            Self::TechnicolorFlash => 1.0,
+            Self::ScannerBar => 2.0,
+            Self::Glitch => 3.0,
+            Self::Chromatic => 4.0,
+            Self::DarkNight => 5.0,
+            Self::Mirror => 6.0,
+            Self::BodyTreatment => 7.0,
+            Self::MemeTreatment => 8.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -446,7 +475,7 @@ const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
         behavior: "Adds a dark film gate, vignette, deterministic grain, and a time-varying vertical scratch.",
         element_types: VIDEO_IMAGE_ELEMENT_TYPES,
         parameters: TreatmentParameterProfile::Mix,
-        render: TreatmentRenderKind::Shader(0.0),
+        render: TreatmentRenderKind::Shader(TreatmentShaderMode::FilmFrame),
     },
     MediaTreatmentDescriptor {
         id: "simple-media.play-pendulum",
@@ -464,7 +493,7 @@ const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
         behavior: "Adds a time-varying three-channel exposure flash with alternating red, green, and blue emphasis.",
         element_types: VISUAL_ELEMENT_TYPES,
         parameters: TreatmentParameterProfile::Mix,
-        render: TreatmentRenderKind::Shader(1.0),
+        render: TreatmentRenderKind::Shader(TreatmentShaderMode::TechnicolorFlash),
     },
     MediaTreatmentDescriptor {
         id: "simple-media.scanner-bar",
@@ -473,7 +502,7 @@ const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
         behavior: "Moves a narrow cyan-white luminance bar from top to bottom while slightly cooling the underlying image.",
         element_types: VISUAL_ELEMENT_TYPES,
         parameters: TreatmentParameterProfile::Mix,
-        render: TreatmentRenderKind::Shader(2.0),
+        render: TreatmentRenderKind::Shader(TreatmentShaderMode::ScannerBar),
     },
     MediaTreatmentDescriptor {
         id: "simple-media.glitch",
@@ -482,7 +511,7 @@ const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
         behavior: "Applies deterministic horizontal scan-band displacement, RGB separation, and intermittent luminance blocks.",
         element_types: VISUAL_ELEMENT_TYPES,
         parameters: TreatmentParameterProfile::Mix,
-        render: TreatmentRenderKind::Shader(3.0),
+        render: TreatmentRenderKind::Shader(TreatmentShaderMode::Glitch),
     },
     MediaTreatmentDescriptor {
         id: "simple-media.chromatic",
@@ -491,7 +520,7 @@ const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
         behavior: "Separates red and blue channels horizontally while preserving the green channel.",
         element_types: VISUAL_ELEMENT_TYPES,
         parameters: TreatmentParameterProfile::Mix,
-        render: TreatmentRenderKind::Shader(4.0),
+        render: TreatmentRenderKind::Shader(TreatmentShaderMode::Chromatic),
     },
     MediaTreatmentDescriptor {
         id: "simple-media.dark-night",
@@ -500,7 +529,7 @@ const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
         behavior: "Applies a low-exposure blue night grade with center-weighted illumination.",
         element_types: VISUAL_ELEMENT_TYPES,
         parameters: TreatmentParameterProfile::Mix,
-        render: TreatmentRenderKind::Shader(5.0),
+        render: TreatmentRenderKind::Shader(TreatmentShaderMode::DarkNight),
     },
     MediaTreatmentDescriptor {
         id: "simple-media.mirror",
@@ -509,7 +538,7 @@ const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
         behavior: "Reflects the left half of the frame across the vertical center line.",
         element_types: VISUAL_ELEMENT_TYPES,
         parameters: TreatmentParameterProfile::Mix,
-        render: TreatmentRenderKind::Shader(6.0),
+        render: TreatmentRenderKind::Shader(TreatmentShaderMode::Mirror),
     },
     MediaTreatmentDescriptor {
         id: "simple-media.body-treatment",
@@ -518,7 +547,7 @@ const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
         behavior: "Applies a warm center spotlight, increased contrast, and edge falloff intended for a centered subject.",
         element_types: VISUAL_ELEMENT_TYPES,
         parameters: TreatmentParameterProfile::Mix,
-        render: TreatmentRenderKind::Shader(7.0),
+        render: TreatmentRenderKind::Shader(TreatmentShaderMode::BodyTreatment),
     },
     MediaTreatmentDescriptor {
         id: "simple-media.meme-treatment",
@@ -527,7 +556,7 @@ const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
         behavior: "Applies high contrast, boosted saturation, a bright center, and a dark caption-safe frame.",
         element_types: VISUAL_ELEMENT_TYPES,
         parameters: TreatmentParameterProfile::Mix,
-        render: TreatmentRenderKind::Shader(8.0),
+        render: TreatmentRenderKind::Shader(TreatmentShaderMode::MemeTreatment),
     },
     MediaTreatmentDescriptor {
         id: "simple-media.pull-in",
@@ -745,7 +774,7 @@ pub fn resolve_media_treatment_render(
     let mut motion = TreatmentMotion::default();
     let mut source_progress = None;
     let visual_mode = match descriptor.render {
-        TreatmentRenderKind::Shader(mode) => Some(mode),
+        TreatmentRenderKind::Shader(mode) => Some(mode.uniform_value()),
         TreatmentRenderKind::Pendulum => {
             motion.rotation_degrees = (timed_progress * std::f64::consts::TAU).sin() * 12.0 * mix;
             None
@@ -865,6 +894,12 @@ pub fn transition_definition(id: &str) -> Option<TransitionDefinition> {
     transition_definitions()
         .into_iter()
         .find(|definition| definition.id == id)
+}
+
+fn transition_type(id: &str) -> Option<TransitionType> {
+    TransitionType::ALL
+        .into_iter()
+        .find(|transition_type| transition_type.as_str() == id)
 }
 
 pub fn validate_transition_request(
@@ -1005,7 +1040,10 @@ fn validate_transition(
 #[export]
 pub fn evaluate_transition(options: EvaluateTransitionOptions) -> EvaluateTransitionResponse {
     match validate_transition_request(&options) {
-        Ok(()) => EvaluateTransitionResponse::Validated,
+        Ok(()) => EvaluateTransitionResponse::Validated {
+            transition_type: transition_type(&options.transition_type)
+                .expect("validated transition type"),
+        },
         Err(error) => EvaluateTransitionResponse::Rejected {
             reason: error.reason,
             path: error.path,
@@ -1018,7 +1056,10 @@ pub fn evaluate_stored_transition(
     options: EvaluateTransitionOptions,
 ) -> EvaluateTransitionResponse {
     match validate_stored_transition(&options) {
-        Ok(()) => EvaluateTransitionResponse::Validated,
+        Ok(()) => EvaluateTransitionResponse::Validated {
+            transition_type: transition_type(&options.transition_type)
+                .expect("validated transition type"),
+        },
         Err(error) => EvaluateTransitionResponse::Rejected {
             reason: error.reason,
             path: error.path,

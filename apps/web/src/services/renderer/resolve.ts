@@ -22,7 +22,11 @@ import {
 	resolveReframeAtTime,
 	resolveTransformAtTime,
 } from "@/rendering/animation-values";
-import { computeReframeGeometry, DEFAULT_REFRAME } from "@/rendering";
+import {
+	computeReframeGeometry,
+	DEFAULT_REFRAME,
+	type Transform,
+} from "@/rendering";
 import { videoCache, type VideoCache } from "@/services/video-cache/service";
 import type { CanvasRenderer } from "./canvas-renderer";
 import type { AnyBaseNode } from "./nodes/base-node";
@@ -67,6 +71,29 @@ type ResolvedTreatmentEffects = {
 	sourceProgress?: number;
 	rendersByEffectId: Map<string, ResolvedTreatmentRender>;
 };
+
+function applyTreatmentMotion({
+	transform,
+	opacity,
+	motion,
+}: {
+	transform: Transform;
+	opacity: number;
+	motion: ResolvedTreatmentEffects["motion"];
+}): { transform: Transform; opacity: number } {
+	return {
+		transform: {
+			position: {
+				x: transform.position.x + motion.positionX,
+				y: transform.position.y + motion.positionY,
+			},
+			scaleX: transform.scaleX * motion.scaleX,
+			scaleY: transform.scaleY * motion.scaleY,
+			rotate: transform.rotate + motion.rotationDegrees,
+		},
+		opacity: opacity * motion.opacityMultiplier,
+	};
+}
 
 function resolveTreatmentEffects({
 	effects,
@@ -376,16 +403,11 @@ function resolveVisualState({
 			canvasWidth: context.renderer.width,
 			canvasHeight: context.renderer.height,
 		});
-	transform = {
-		position: {
-			x: transform.position.x + treatmentEffects.motion.positionX,
-			y: transform.position.y + treatmentEffects.motion.positionY,
-		},
-		scaleX: transform.scaleX * treatmentEffects.motion.scaleX,
-		scaleY: transform.scaleY * treatmentEffects.motion.scaleY,
-		rotate: transform.rotate + treatmentEffects.motion.rotationDegrees,
-	};
-	opacity *= treatmentEffects.motion.opacityMultiplier;
+	({ transform, opacity } = applyTreatmentMotion({
+		transform,
+		opacity,
+		motion: treatmentEffects.motion,
+	}));
 	const reframe = resolveReframeAtTime({
 		baseReframe: params.reframe ?? DEFAULT_REFRAME,
 		animations: params.animations,
@@ -655,22 +677,19 @@ function resolveTextNode({
 		localTime,
 	});
 
+	const treatmentMotion = applyTreatmentMotion({
+		transform: baseTransform,
+		opacity: resolveOpacityAtTime({
+			baseOpacity: node.params.opacity,
+			animations: node.params.animations,
+			localTime,
+		}),
+		motion: treatmentEffects.motion,
+	});
+
 	return {
-		transform: {
-			position: {
-				x: baseTransform.position.x + treatmentEffects.motion.positionX,
-				y: baseTransform.position.y + treatmentEffects.motion.positionY,
-			},
-			scaleX: baseTransform.scaleX * treatmentEffects.motion.scaleX,
-			scaleY: baseTransform.scaleY * treatmentEffects.motion.scaleY,
-			rotate: baseTransform.rotate + treatmentEffects.motion.rotationDegrees,
-		},
-		opacity:
-			resolveOpacityAtTime({
-				baseOpacity: node.params.opacity,
-				animations: node.params.animations,
-				localTime,
-			}) * treatmentEffects.motion.opacityMultiplier,
+		transform: treatmentMotion.transform,
+		opacity: treatmentMotion.opacity,
 		textColor: resolveColorAtTime({
 			baseColor:
 				typeof node.params.params.color === "string"

@@ -403,30 +403,17 @@ function decodeTrack({
 	assertOrdered({ values: track.elements, name: "element" });
 	assertOrdered({ values: track.transitions, name: "transition" });
 	const transitions = new Map<string, ClipTransition>();
+	const elementsWithoutTransitions = track.elements.map((element) =>
+		decodeElement({ element, providerAudioMediaIds }),
+	);
 	for (const transition of track.transitions) {
 		if (transitions.has(transition.toElementId)) {
 			throw new Error("retained transition is invalid");
 		}
-		transitions.set(transition.toElementId, {
-			id: transition.id,
-			type: transition.type as ClipTransition["type"],
-			duration: mediaTime({ ticks: transition.duration }),
-			fromElementId: transition.fromElementId,
-		});
-	}
-	const elements = track.elements.map((element) => {
-		const transitionIn = transitions.get(element.id);
-		if (transitionIn) transitions.delete(element.id);
-		return decodeElement({ element, transitionIn, providerAudioMediaIds });
-	});
-	if (transitions.size > 0) {
-		throw new Error("retained transition target is missing");
-	}
-	for (const transition of track.transitions) {
-		const fromElement = elements.find(
+		const fromElement = elementsWithoutTransitions.find(
 			(element) => element.id === transition.fromElementId,
 		);
-		const toElement = elements.find(
+		const toElement = elementsWithoutTransitions.find(
 			(element) => element.id === transition.toElementId,
 		);
 		if (!fromElement || !toElement) {
@@ -438,13 +425,27 @@ function decodeTrack({
 			trackType: track.type,
 			fromElementId: fromElement.id,
 			toElementId: toElement.id,
-			trackElements: elements.map(toTransitionBoundary),
+			trackElements: elementsWithoutTransitions.map(toTransitionBoundary),
 			duration: transition.duration,
 			existingIncomingTransitionId: transition.id,
 		});
 		if (validation.status === "rejected") {
 			throw new Error(`retained transition is invalid: ${validation.reason}`);
 		}
+		transitions.set(transition.toElementId, {
+			id: transition.id,
+			type: validation.transitionType,
+			duration: mediaTime({ ticks: transition.duration }),
+			fromElementId: transition.fromElementId,
+		});
+	}
+	const elements = track.elements.map((element) => {
+		const transitionIn = transitions.get(element.id);
+		if (transitionIn) transitions.delete(element.id);
+		return decodeElement({ element, transitionIn, providerAudioMediaIds });
+	});
+	if (transitions.size > 0) {
+		throw new Error("retained transition target is missing");
 	}
 	const common = { id: track.id, name: track.name, type: track.type, elements };
 	switch (track.type) {

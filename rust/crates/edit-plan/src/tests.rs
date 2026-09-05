@@ -3700,7 +3700,9 @@ fn transition_validation_fails_closed_for_every_catalog_constraint() {
     };
     assert_eq!(
         evaluate_transition(base.clone()),
-        EvaluateTransitionResponse::Validated
+        EvaluateTransitionResponse::Validated {
+            transition_type: TransitionType::Crossfade,
+        }
     );
 
     let rejected = |options| {
