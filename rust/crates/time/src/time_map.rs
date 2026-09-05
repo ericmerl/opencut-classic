@@ -347,6 +347,77 @@ pub struct TimeMapTrimRange {
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TimeMapRetimeMode {
+    TimeMap,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapRetimeConfigOptions {
+    pub time_map: TimeMap,
+}
+
+/// The element retime configuration a canonical time map implies. Rust owns
+/// this derivation so the canonical projection and the editor never disagree.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapRetimeConfig {
+    pub mode: TimeMapRetimeMode,
+    pub rate: f64,
+    pub maintain_pitch: bool,
+    pub time_map: TimeMap,
+}
+
+/// Split planning for any retimed clip: a constant rate, or a canonical time
+/// map that takes precedence over the rate.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanRetimeSplitOptions {
+    pub rate: f64,
+    pub time_map: Option<TimeMap>,
+    pub clip_duration: MediaTime,
+    pub split_clip_time: MediaTime,
+    pub source_trim_start: MediaTime,
+    pub source_trim_end: MediaTime,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetimeSplitPlan {
+    pub left_time_map: Option<TimeMap>,
+    pub right_time_map: Option<TimeMap>,
+    pub left_trim_start: MediaTime,
+    pub left_trim_end: MediaTime,
+    pub right_trim_start: MediaTime,
+    pub right_trim_end: MediaTime,
+}
+
+/// Tracking-sample mapping for any retimed clip: a constant rate keeps the
+/// tracker's own sample times, a canonical time map resamples on the interval.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MapRetimeTrackingSamplesOptions {
+    pub rate: f64,
+    pub time_map: Option<TimeMap>,
+    pub clip_duration: MediaTime,
+    pub source_trim_start: MediaTime,
+    pub sample_interval: MediaTime,
+    pub samples: Vec<TimeMapTrackingSample>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1006,6 +1077,137 @@ pub fn plan_time_map_split(
     })
 }
 
+pub fn retime_config_for_time_map(time_map: &TimeMap) -> TimeMapRetimeConfig {
+    TimeMapRetimeConfig {
+        mode: TimeMapRetimeMode::TimeMap,
+        rate: 1.0,
+        maintain_pitch: time_map.audio_policy.maintain_pitch,
+        time_map: time_map.clone(),
+    }
+}
+
+#[export]
+pub fn time_map_retime_config(
+    TimeMapRetimeConfigOptions { time_map }: TimeMapRetimeConfigOptions,
+) -> Option<TimeMapRetimeConfig> {
+    time_map.validate().ok()?;
+    Some(retime_config_for_time_map(&time_map))
+}
+
+fn constant_rate_source_span(clip_time: MediaTime, rate: f64) -> Option<MediaTime> {
+    if !rate.is_finite() || rate <= 0.0 {
+        return None;
+    }
+    let ticks = (clip_time.as_ticks() as f64) * rate;
+    if !ticks.is_finite() || ticks < i64::MIN as f64 || ticks > i64::MAX as f64 {
+        return None;
+    }
+    Some(MediaTime::from_ticks(ticks.round() as i64))
+}
+
+#[export]
+pub fn plan_retime_split(
+    PlanRetimeSplitOptions {
+        rate,
+        time_map,
+        clip_duration,
+        split_clip_time,
+        source_trim_start,
+        source_trim_end,
+    }: PlanRetimeSplitOptions,
+) -> Option<RetimeSplitPlan> {
+    if let Some(time_map) = time_map {
+        let plan = plan_time_map_split(PlanTimeMapSplitOptions {
+            time_map,
+            split_clip_time,
+            source_trim_start,
+            source_trim_end,
+        })?;
+        return Some(RetimeSplitPlan {
+            left_time_map: Some(plan.left_time_map),
+            right_time_map: Some(plan.right_time_map),
+            left_trim_start: plan.left_trim_start,
+            left_trim_end: plan.left_trim_end,
+            right_trim_start: plan.right_trim_start,
+            right_trim_end: plan.right_trim_end,
+        });
+    }
+    if split_clip_time <= MediaTime::ZERO || split_clip_time >= clip_duration {
+        return None;
+    }
+    // Snap the source-side split point once and derive the right span from the
+    // total so `left + right == total` even when rounding is involved.
+    let left_source_span = constant_rate_source_span(split_clip_time, rate)?;
+    let total_source_span = constant_rate_source_span(clip_duration, rate)?;
+    let right_source_span = MediaTime::from_ticks(
+        total_source_span
+            .as_ticks()
+            .checked_sub(left_source_span.as_ticks())?,
+    );
+    Some(RetimeSplitPlan {
+        left_time_map: None,
+        right_time_map: None,
+        left_trim_start: source_trim_start,
+        left_trim_end: MediaTime::from_ticks(
+            source_trim_end
+                .as_ticks()
+                .checked_add(right_source_span.as_ticks())?,
+        ),
+        right_trim_start: MediaTime::from_ticks(
+            source_trim_start
+                .as_ticks()
+                .checked_add(left_source_span.as_ticks())?,
+        ),
+        right_trim_end: source_trim_end,
+    })
+}
+
+#[export]
+pub fn map_retime_tracking_samples(
+    MapRetimeTrackingSamplesOptions {
+        rate,
+        time_map,
+        clip_duration,
+        source_trim_start,
+        sample_interval,
+        samples,
+    }: MapRetimeTrackingSamplesOptions,
+) -> Option<TimeMapTrackingPlan> {
+    if let Some(time_map) = time_map {
+        return map_time_map_tracking_samples(MapTimeMapTrackingSamplesOptions {
+            time_map,
+            clip_duration,
+            source_trim_start,
+            sample_interval,
+            samples,
+        });
+    }
+    if !rate.is_finite() || rate <= 0.0 || clip_duration < MediaTime::ZERO {
+        return None;
+    }
+    let visible_source_end = source_trim_start
+        .as_ticks()
+        .checked_add(constant_rate_source_span(clip_duration, rate)?.as_ticks())?;
+    let mapped_samples = samples
+        .into_iter()
+        .filter(|sample| {
+            sample.source_time >= source_trim_start
+                && sample.source_time.as_ticks() <= visible_source_end
+        })
+        .map(|sample| {
+            let offset = (sample.source_time.as_ticks() - source_trim_start.as_ticks()) as f64;
+            let ticks = (offset / rate).round() as i64;
+            MappedTimeMapTrackingSample {
+                time: MediaTime::from_ticks(ticks.clamp(0, clip_duration.as_ticks())),
+                box_value: sample.box_value,
+            }
+        })
+        .collect::<Vec<_>>();
+    Some(TimeMapTrackingPlan {
+        samples: mapped_samples,
+    })
+}
+
 #[export]
 pub fn map_time_map_tracking_samples(
     MapTimeMapTrackingSamplesOptions {
@@ -1255,5 +1457,154 @@ mod tests {
         assert_eq!(mapped.samples.len(), 3);
         assert_eq!(mapped.samples[1].time, MediaTime::from_ticks(60_000));
         assert_eq!(mapped.samples[1].box_value.x, 0.375);
+    }
+}
+
+#[cfg(test)]
+mod retime_planner_tests {
+    use super::*;
+
+    fn forward_map() -> TimeMap {
+        TimeMap {
+            schema_version: TIME_MAP_SCHEMA_VERSION.into(),
+            frame_interpolation: FrameInterpolationPolicy {
+                requested: FrameInterpolation::Nearest,
+                fallback: FrameInterpolation::Nearest,
+            },
+            audio_policy: AudioTimeMapPolicy {
+                maintain_pitch: true,
+                hold: AudioHoldPolicy::Mute,
+            },
+            segments: vec![TimeMapSegment::Speed {
+                timeline_start: MediaTime::ZERO,
+                timeline_end: MediaTime::from_ticks(100),
+                source_start: MediaTime::ZERO,
+                start_rate: 2.0,
+                end_rate: 2.0,
+                direction: TimeMapDirection::Forward,
+            }],
+        }
+    }
+
+    fn tracking_box(x: f64) -> TimeMapTrackingBox {
+        TimeMapTrackingBox {
+            x,
+            y: 0.0,
+            width: 0.5,
+            height: 0.5,
+        }
+    }
+
+    #[test]
+    fn rust_derives_the_retime_config_a_time_map_implies() {
+        let config = time_map_retime_config(TimeMapRetimeConfigOptions {
+            time_map: forward_map(),
+        })
+        .unwrap();
+        assert_eq!(config.mode, TimeMapRetimeMode::TimeMap);
+        assert_eq!(config.rate, 1.0);
+        assert!(config.maintain_pitch);
+        assert_eq!(config.time_map, forward_map());
+        assert_eq!(
+            serde_json::to_value(&config).unwrap()["mode"],
+            serde_json::json!("time-map")
+        );
+        let mut invalid = forward_map();
+        invalid.segments.clear();
+        assert!(time_map_retime_config(TimeMapRetimeConfigOptions { time_map: invalid }).is_none());
+    }
+
+    #[test]
+    fn constant_rate_split_snaps_the_source_boundary_once() {
+        let plan = plan_retime_split(PlanRetimeSplitOptions {
+            rate: 2.0,
+            time_map: None,
+            clip_duration: MediaTime::from_ticks(100),
+            split_clip_time: MediaTime::from_ticks(30),
+            source_trim_start: MediaTime::from_ticks(5),
+            source_trim_end: MediaTime::from_ticks(7),
+        })
+        .unwrap();
+        assert_eq!(plan.left_time_map, None);
+        assert_eq!(plan.right_time_map, None);
+        assert_eq!(plan.left_trim_start, MediaTime::from_ticks(5));
+        assert_eq!(plan.left_trim_end, MediaTime::from_ticks(147));
+        assert_eq!(plan.right_trim_start, MediaTime::from_ticks(65));
+        assert_eq!(plan.right_trim_end, MediaTime::from_ticks(7));
+        assert!(
+            plan_retime_split(PlanRetimeSplitOptions {
+                rate: 0.0,
+                time_map: None,
+                clip_duration: MediaTime::from_ticks(100),
+                split_clip_time: MediaTime::from_ticks(30),
+                source_trim_start: MediaTime::ZERO,
+                source_trim_end: MediaTime::ZERO,
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn time_map_split_takes_precedence_over_the_rate() {
+        let plan = plan_retime_split(PlanRetimeSplitOptions {
+            rate: 3.0,
+            time_map: Some(forward_map()),
+            clip_duration: MediaTime::from_ticks(100),
+            split_clip_time: MediaTime::from_ticks(40),
+            source_trim_start: MediaTime::from_ticks(5),
+            source_trim_end: MediaTime::from_ticks(7),
+        })
+        .unwrap();
+        assert_eq!(
+            plan.left_time_map.unwrap().duration(),
+            MediaTime::from_ticks(40)
+        );
+        assert_eq!(
+            plan.right_time_map.unwrap().duration(),
+            MediaTime::from_ticks(60)
+        );
+        assert_eq!(plan.left_trim_end, MediaTime::from_ticks(7));
+        assert_eq!(plan.right_trim_start, MediaTime::from_ticks(5));
+    }
+
+    #[test]
+    fn constant_rate_tracking_keeps_visible_sample_times() {
+        let plan = map_retime_tracking_samples(MapRetimeTrackingSamplesOptions {
+            rate: 2.0,
+            time_map: None,
+            clip_duration: MediaTime::from_ticks(100),
+            source_trim_start: MediaTime::from_ticks(10),
+            sample_interval: MediaTime::from_ticks(10),
+            samples: vec![
+                TimeMapTrackingSample {
+                    source_time: MediaTime::from_ticks(4),
+                    box_value: tracking_box(0.1),
+                },
+                TimeMapTrackingSample {
+                    source_time: MediaTime::from_ticks(10),
+                    box_value: tracking_box(0.2),
+                },
+                TimeMapTrackingSample {
+                    source_time: MediaTime::from_ticks(111),
+                    box_value: tracking_box(0.3),
+                },
+                TimeMapTrackingSample {
+                    source_time: MediaTime::from_ticks(210),
+                    box_value: tracking_box(0.4),
+                },
+                TimeMapTrackingSample {
+                    source_time: MediaTime::from_ticks(300),
+                    box_value: tracking_box(0.5),
+                },
+            ],
+        })
+        .unwrap();
+        assert_eq!(
+            plan.samples
+                .iter()
+                .map(|sample| (sample.time.as_ticks(), sample.box_value.x))
+                .collect::<Vec<_>>(),
+            vec![(0, 0.2), (51, 0.3), (100, 0.4)]
+        );
     }
 }

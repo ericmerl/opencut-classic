@@ -1,3 +1,4 @@
+import { getSourceTimeAtClipTimeSeconds } from "@/retime";
 import type { RetimeConfig } from "@/timeline";
 
 export interface AudioBufferView {
@@ -34,19 +35,26 @@ export function buildAudioEnvelope({
 	const duration = Math.max(0, Math.min(clipDuration, maxDuration));
 	const count = Math.max(1, Math.floor(duration * analysisSampleRate));
 	const envelope = new Float32Array(count);
-	const rate = Math.max(0.01, Math.min(5, retime?.rate ?? 1));
 	for (let index = 0; index < count; index++) {
 		const localStart = index / analysisSampleRate;
-		const localEnd = (index + 1) / analysisSampleRate;
+		const localEnd = Math.min(duration, (index + 1) / analysisSampleRate);
+		// Rust maps both constant rates and time maps; a reverse segment yields a
+		// descending source span, so order the bounds before sampling.
+		const mappedStart =
+			trimStart +
+			getSourceTimeAtClipTimeSeconds({ clipTimeSeconds: localStart, retime });
+		const mappedEnd =
+			trimStart +
+			getSourceTimeAtClipTimeSeconds({ clipTimeSeconds: localEnd, retime });
 		const sourceStart = Math.max(
 			0,
-			Math.floor((trimStart + localStart * rate) * buffer.sampleRate),
+			Math.floor(Math.min(mappedStart, mappedEnd) * buffer.sampleRate),
 		);
 		const sourceEnd = Math.min(
 			buffer.length,
 			Math.max(
 				sourceStart + 1,
-				Math.ceil((trimStart + localEnd * rate) * buffer.sampleRate),
+				Math.ceil(Math.max(mappedStart, mappedEnd) * buffer.sampleRate),
 			),
 		);
 		let sumSquares = 0;

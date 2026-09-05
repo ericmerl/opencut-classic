@@ -20,7 +20,7 @@ import type { BridgeConnectionIdentity } from "./editor-bridge";
 import type { CompositeOperationObserver } from "./composite-operation-observer";
 import {
 	evaluateTimeMap,
-	mapTimeMapTrackingSamples as mapNativeTimeMapTrackingSamples,
+	mapRetimeTrackingSamples as mapNativeRetimeTrackingSamples,
 } from "./native-time-map";
 import type { TimeMap } from "opencut-wasm";
 
@@ -463,31 +463,11 @@ export function buildTrackingEditOperations({
 				sample.confidence >= input.minConfidence,
 		)
 		.sort((left, right) => left.sourceTime - right.sourceTime);
-	const visibleSourceEnd = clip.trimStart + clip.duration * clip.retimeRate;
-	const visible = clip.timeMap
-		? mapTimeMapTrackingSamples({
-				clip,
-				samples: confidentSamples,
-				sampleIntervalTicks: input.sampleIntervalTicks,
-			})
-		: confidentSamples
-				.filter(
-					(sample) =>
-						sample.sourceTime >= clip.trimStart &&
-						sample.sourceTime <= visibleSourceEnd,
-				)
-				.map((sample) => ({
-					time: Math.max(
-						0,
-						Math.min(
-							clip.duration,
-							Math.round(
-								(sample.sourceTime - clip.trimStart) / clip.retimeRate,
-							),
-						),
-					),
-					box: sample.box,
-				}));
+	const visible = mapTrackingSamplesThroughRust({
+		clip,
+		samples: confidentSamples,
+		sampleIntervalTicks: input.sampleIntervalTicks,
+	});
 	const deduplicated = deduplicateTimes(
 		smoothSamples(visible, input.smoothing),
 	);
@@ -521,17 +501,21 @@ export function buildTrackingEditOperations({
 	return operations;
 }
 
-function mapTimeMapTrackingSamples({
+/**
+ * Rust owns the source-to-clip mapping for constant rates and time maps alike.
+ */
+function mapTrackingSamplesThroughRust({
 	clip,
 	samples,
 	sampleIntervalTicks,
 }: {
-	clip: Pick<TrackingClip, "duration" | "trimStart" | "timeMap">;
+	clip: Pick<TrackingClip, "duration" | "trimStart" | "retimeRate" | "timeMap">;
 	samples: SubjectTrackingSample[];
 	sampleIntervalTicks: number;
 }): Array<{ time: number; box: NormalizedTrackingBox }> {
-	if (!clip.timeMap || samples.length === 0) return [];
-	const result = mapNativeTimeMapTrackingSamples({
+	if (samples.length === 0) return [];
+	const result = mapNativeRetimeTrackingSamples({
+		rate: clip.retimeRate,
 		timeMap: clip.timeMap,
 		clipDuration: clip.duration,
 		sourceTrimStart: clip.trimStart,
@@ -541,7 +525,7 @@ function mapTimeMapTrackingSamples({
 			box: sample.box,
 		})),
 	});
-	if (!result) throw new Error("Rust rejected tracker time map");
+	if (!result) throw new Error("Rust rejected the tracker retime mapping");
 	return result.samples.map((sample) => ({
 		time: sample.time,
 		box: sample.box as unknown as NormalizedTrackingBox,

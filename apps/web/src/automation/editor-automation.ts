@@ -25,6 +25,7 @@ import {
 	UpdateBookmarkByIdCommand,
 } from "@/commands/scene";
 import type { EditorCore } from "@/core";
+import * as opencutWasm from "opencut-wasm";
 import { processMediaAssets } from "@/media/processing";
 import {
 	collectAudioElements,
@@ -3548,6 +3549,14 @@ export class EditorAutomation {
 			if (!isRetimableElement(element)) {
 				throw new Error("only video and audio elements can be retimed");
 			}
+			// Rust derives the retime configuration a time map implies; the same
+			// derivation writes the canonical projection, so they cannot drift.
+			const retime = opencutWasm.timeMapRetimeConfig({
+				timeMap: operation.timeMap,
+			});
+			if (!retime) {
+				throw new Error("Rust rejected the time-map retime configuration");
+			}
 			return new UpdateElementsCommand({
 				updates: [
 					{
@@ -3556,14 +3565,7 @@ export class EditorAutomation {
 						durationClampBoundaryIds: buildDurationClampBoundaryIds({
 							resolvedAllocations: operation.resolvedAllocations,
 						}),
-						patch: {
-							retime: {
-								rate: 1,
-								maintainPitch: operation.timeMap.audioPolicy.maintainPitch,
-								mode: "time-map",
-								timeMap: operation.timeMap,
-							},
-						},
+						patch: { retime },
 					},
 				],
 			});

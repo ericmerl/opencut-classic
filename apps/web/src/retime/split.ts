@@ -2,7 +2,7 @@ import type { RetimeConfig } from "@/timeline";
 import { getSourceTimeAtClipTimeTicks } from "./resolve";
 import { type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 import * as opencutWasm from "opencut-wasm";
-import type { TimeMapSplitPlan, TimeMapTrimPlan } from "opencut-wasm";
+import type { RetimeSplitPlan, TimeMapTrimPlan } from "opencut-wasm";
 
 export function getSourceSpanAtClipTime({
 	clipTime,
@@ -15,38 +15,49 @@ export function getSourceSpanAtClipTime({
 	return getSourceTimeAtClipTimeTicks({ clipTime, retime });
 }
 
+/**
+ * Rust plans every split: a constant rate snaps the source boundary once, a
+ * canonical time map is sliced and rebased into both halves.
+ */
 export function splitRetimeAtClipTime({
 	retime,
+	clipDuration,
 	splitClipTime,
 	sourceTrimStart = 0,
 	sourceTrimEnd = 0,
 }: {
 	retime?: RetimeConfig;
+	clipDuration: number;
 	splitClipTime: number;
 	sourceTrimStart?: number;
 	sourceTrimEnd?: number;
 }): {
 	left: RetimeConfig | undefined;
 	right: RetimeConfig | undefined;
-	timeMapPlan?: TimeMapSplitPlan;
+	plan: RetimeSplitPlan;
 } {
-	if (retime?.timeMap) {
-		const plan = opencutWasm.planTimeMapSplit({
-			timeMap: retime.timeMap,
-			splitClipTime,
-			sourceTrimStart,
-			sourceTrimEnd,
-		});
-		if (!plan) {
-			throw new Error("Rust rejected a split of the canonical time map");
-		}
-		return {
-			left: { ...retime, timeMap: plan.leftTimeMap },
-			right: { ...retime, timeMap: plan.rightTimeMap },
-			timeMapPlan: plan,
-		};
+	const plan = opencutWasm.planRetimeSplit({
+		rate: retime?.rate ?? 1,
+		timeMap: retime?.timeMap,
+		clipDuration,
+		splitClipTime,
+		sourceTrimStart,
+		sourceTrimEnd,
+	});
+	if (!plan) {
+		throw new Error("Rust rejected the retime split");
 	}
-	return { left: retime, right: retime };
+	return {
+		left:
+			retime && plan.leftTimeMap
+				? { ...retime, timeMap: plan.leftTimeMap }
+				: retime,
+		right:
+			retime && plan.rightTimeMap
+				? { ...retime, timeMap: plan.rightTimeMap }
+				: retime,
+		plan,
+	};
 }
 
 export function planTimeMapTrim({

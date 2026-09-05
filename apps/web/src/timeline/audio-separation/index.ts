@@ -96,12 +96,9 @@ export function buildSeparatedAudioElement({
 					: DEFAULTS.element.volume,
 			muted: sourceElement.params.muted === true,
 		},
-		retime: sourceElement.retime
-			? {
-					rate: sourceElement.retime.rate,
-					maintainPitch: sourceElement.retime.maintainPitch,
-				}
-			: undefined,
+		// The separated track must follow the same retime as the video, including
+		// a canonical time map; copying only rate would play ramps at 1x.
+		retime: sourceElement.retime ? { ...sourceElement.retime } : undefined,
 		audioReplacement: sourceElement.audioReplacement
 			? { ...sourceElement.audioReplacement }
 			: undefined,

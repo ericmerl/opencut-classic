@@ -116,22 +116,25 @@ function buildResampledBuffer({
 async function buildPitchPreservedBuffer({
 	sourceBuffer,
 	trimStart,
+	sourceDuration,
 	clipDuration,
 	rate,
-	endRate = rate,
+	tempoAt = () => rate,
 	reverse = false,
 	targetSampleRate,
 }: {
 	sourceBuffer: AudioBuffer;
 	trimStart: number;
+	// Source span in seconds, resolved by the retime owner (Rust for time
+	// maps); this function only adapts it to SoundTouch.
+	sourceDuration: number;
 	clipDuration: number;
 	rate: number;
-	endRate?: number;
+	tempoAt?: (position: number) => number;
 	reverse?: boolean;
 	targetSampleRate: number;
 }): Promise<AudioBuffer> {
 	const nativeSampleRate = sourceBuffer.sampleRate;
-	const sourceDuration = clipDuration * ((rate + endRate) / 2);
 	const startSample = Math.max(0, Math.floor(trimStart * nativeSampleRate));
 	const numSourceSamples = Math.max(
 		1,
@@ -200,7 +203,7 @@ async function buildPitchPreservedBuffer({
 	shifter.on("play", () => {
 		renderedFrames += analysisBlockSize;
 		const position = Math.min(1, renderedFrames / outputSamples);
-		shifter.tempo = rate + (endRate - rate) * position;
+		shifter.tempo = tempoAt(position);
 	});
 	shifter.connect(stretchCtx.destination);
 	return stretchCtx.startRendering();
@@ -260,14 +263,33 @@ async function buildPitchPreservedTimeMapBuffer({
 			(chunk.timelineEnd - chunk.timelineStart) / TICKS_PER_SECOND;
 		if (chunk.startRate < RATE_EPSILON || chunk.endRate < RATE_EPSILON)
 			continue;
+		// Rust already resolved the chunk: its source span runs from sourceStart
+		// to sourceEnd (descending when reversed) and its effective rate curve is
+		// read back from Rust per SoundTouch block instead of re-derived here.
 		const reverse = chunk.direction === "reverse";
-		const sourceStartTicks = Math.min(chunk.sourceStart, chunk.sourceEnd);
+		const sourceSpanStartTicks = reverse ? chunk.sourceEnd : chunk.sourceStart;
+		const sourceSpanTicks = Math.abs(chunk.sourceEnd - chunk.sourceStart);
+		const chunkTicks = chunk.timelineEnd - chunk.timelineStart;
 		const rendered = await buildPitchPreservedBuffer({
 			sourceBuffer,
-			trimStart: trimStart + sourceStartTicks / TICKS_PER_SECOND,
+			trimStart: trimStart + sourceSpanStartTicks / TICKS_PER_SECOND,
+			sourceDuration: sourceSpanTicks / TICKS_PER_SECOND,
 			clipDuration: clipSeconds,
 			rate: chunk.startRate,
-			endRate: chunk.endRate,
+			tempoAt: (position) => {
+				const clipTime = Math.min(
+					chunk.timelineEnd - 1,
+					Math.round(chunk.timelineStart + position * chunkTicks),
+				);
+				const effectiveRate = opencutWasm.resolveTimeMapRate({
+					timeMap,
+					clipTime,
+				});
+				if (effectiveRate === undefined) {
+					throw new Error("Rust rejected the time-map rate lookup");
+				}
+				return effectiveRate;
+			},
 			reverse,
 			targetSampleRate,
 		});
@@ -322,6 +344,10 @@ export async function renderRetimedBuffer({
 		return buildPitchPreservedBuffer({
 			sourceBuffer,
 			trimStart,
+			sourceDuration: getSourceTimeAtClipTimeSeconds({
+				clipTimeSeconds: clipDuration,
+				retime,
+			}),
 			clipDuration,
 			rate,
 			targetSampleRate,

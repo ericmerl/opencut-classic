@@ -460,7 +460,7 @@ export class AudioManager {
 		clip: AudioClipSource;
 	}): boolean {
 		return (
-			this.hasCurveRetime({ clip }) ||
+			this.hasTimeMapRetime({ clip }) ||
 			hasAnimatedVolume({ element: clip.timelineElement }) ||
 			shouldMaintainPitch({
 				rate: clip.retime?.rate ?? 1,
@@ -469,9 +469,8 @@ export class AudioManager {
 		);
 	}
 
-	private hasCurveRetime({ clip }: { clip: AudioClipSource }): boolean {
-		const mode = (clip.retime as { mode?: unknown } | undefined)?.mode;
-		return mode === "curve" || mode === "time-map";
+	private hasTimeMapRetime({ clip }: { clip: AudioClipSource }): boolean {
+		return clip.retime?.timeMap !== undefined;
 	}
 
 	private scheduleClipGainAutomation({

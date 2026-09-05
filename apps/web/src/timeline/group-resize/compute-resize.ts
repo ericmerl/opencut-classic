@@ -32,6 +32,12 @@ export function computeGroupResize({
 	if (members.length === 0) {
 		return { deltaTime: ZERO_MEDIA_TIME, updates: [] };
 	}
+	// A time-mapped clip keeps duration == map duration. Native drag-resize has
+	// no Rust trim plan behind it, so refuse rather than leave the clip in a state
+	// that every later Rust lookup rejects; MCP trim with timeMapRange owns it.
+	if (members.some((member) => member.retime?.timeMap !== undefined)) {
+		return { deltaTime: ZERO_MEDIA_TIME, updates: [] };
+	}
 
 	const minDuration = mediaTime({
 		ticks: Math.round((TICKS_PER_SECOND * fps.denominator) / fps.numerator),

@@ -21,11 +21,12 @@ import { mediaSupportsAudio } from "@/media/media-utils";
 import {
 	getSourceTimeAtClipTimeSeconds,
 	getSourceTimeAtClipTimeTicks,
+	planTimeMapTrim,
 	renderRetimedBuffer,
 } from "@/retime";
 import { Input, ALL_FORMATS, BlobSource, AudioBufferSink } from "mediabunny";
 import { TICKS_PER_SECOND } from "@/wasm";
-import { mediaTime } from "@/wasm";
+import { mediaTime, type MediaTime } from "@/wasm";
 import { computeRmsBuckets, type SampleBucket } from "@/media/waveform-summary";
 
 const MAX_AUDIO_CHANNELS = 2;
@@ -157,36 +158,87 @@ function flattenAudioWindow({
 			if (!canElementHaveAudio(element)) continue;
 			const localTimeOffset = visibleStart - element.startTime;
 			const visibleDuration = visibleEnd - visibleStart;
-			const sourceAtStart = getSourceTimeAtClipTimeTicks({
-				clipTime: mediaTime({ ticks: localTimeOffset }),
-				retime: element.retime,
-			});
-			const sourceAtEnd = getSourceTimeAtClipTimeTicks({
-				clipTime: mediaTime({ ticks: localTimeOffset + visibleDuration }),
-				retime: element.retime,
-			});
-			const sourceAtElementEnd = getSourceTimeAtClipTimeTicks({
-				clipTime: element.duration,
-				retime: element.retime,
-			});
 			entries.push({
-				element: {
-					...element,
-					startTime: mediaTime({ ticks: absoluteStart }),
-					duration: mediaTime({ ticks: visibleDuration }),
-					trimStart: mediaTime({
-						ticks: element.trimStart + sourceAtStart,
-					}),
-					trimEnd: mediaTime({
-						ticks: element.trimEnd + sourceAtElementEnd - sourceAtEnd,
-					}),
-				},
+				element: windowRetimedElement({
+					element,
+					localTimeOffset,
+					visibleDuration,
+					absoluteStart,
+				}),
 				trackMuted,
 				localTimeOffset,
 			});
 		}
 	}
 	return entries;
+}
+
+/**
+ * Restrict an audio-capable element to the visible window. A time-mapped
+ * element keeps its source trims and gets the Rust-sliced map for exactly that
+ * window; a rate-based element shifts its source trims instead.
+ */
+function windowRetimedElement<
+	T extends {
+		startTime: MediaTime;
+		duration: MediaTime;
+		trimStart: MediaTime;
+		trimEnd: MediaTime;
+		retime?: RetimeConfig;
+	},
+>({
+	element,
+	localTimeOffset,
+	visibleDuration,
+	absoluteStart,
+}: {
+	element: T;
+	localTimeOffset: number;
+	visibleDuration: number;
+	absoluteStart: number;
+}): T {
+	if (element.retime?.timeMap) {
+		const plan = planTimeMapTrim({
+			retime: element.retime,
+			elementStartTime: element.startTime,
+			elementDuration: element.duration,
+			sourceTrimStart: element.trimStart,
+			sourceTrimEnd: element.trimEnd,
+			timeMapRange: {
+				start: localTimeOffset,
+				end: localTimeOffset + visibleDuration,
+			},
+			requestedTrimStart: element.trimStart,
+			requestedTrimEnd: element.trimEnd,
+		});
+		return {
+			...element,
+			startTime: mediaTime({ ticks: absoluteStart }),
+			duration: mediaTime({ ticks: plan.duration }),
+			retime: { ...element.retime, timeMap: plan.timeMap },
+		};
+	}
+	const sourceAtStart = getSourceTimeAtClipTimeTicks({
+		clipTime: mediaTime({ ticks: localTimeOffset }),
+		retime: element.retime,
+	});
+	const sourceAtEnd = getSourceTimeAtClipTimeTicks({
+		clipTime: mediaTime({ ticks: localTimeOffset + visibleDuration }),
+		retime: element.retime,
+	});
+	const sourceAtElementEnd = getSourceTimeAtClipTimeTicks({
+		clipTime: element.duration,
+		retime: element.retime,
+	});
+	return {
+		...element,
+		startTime: mediaTime({ ticks: absoluteStart }),
+		duration: mediaTime({ ticks: visibleDuration }),
+		trimStart: mediaTime({ ticks: element.trimStart + sourceAtStart }),
+		trimEnd: mediaTime({
+			ticks: element.trimEnd + sourceAtElementEnd - sourceAtEnd,
+		}),
+	};
 }
 
 export function resolveElementAudioAsset({

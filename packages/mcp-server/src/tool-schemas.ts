@@ -1527,7 +1527,10 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 				"Amount removed from the end of the source, in ticks. For a time-mapped clip this must equal the current trimEnd; use timeMapRange for unambiguous clip-local trimming.",
 			),
 		timeMapRange: z
-			.object({ start: z.number(), end: z.number() })
+			.object({
+				start: z.number().int().nonnegative(),
+				end: z.number().int().nonnegative(),
+			})
 			.describe(
 				"Optional [start,end] range in the current time map's clip-local ticks. Rust slices and rebases this exact range, including reverse and hold boundaries. If duration is supplied, it must equal end-start.",
 			)

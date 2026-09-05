@@ -103,16 +103,42 @@ describe("retime split", () => {
 		).toBe(ZERO_MEDIA_TIME);
 	});
 
-	test("passes the same retime to both halves when splitting", () => {
+	test("plans a constant-rate split in Rust and keeps the retime on both halves", () => {
 		const retime: RetimeConfig = { rate: 1.5 };
-		const result = splitRetimeAtClipTime({ retime, splitClipTime: 3 });
+		const result = splitRetimeAtClipTime({
+			retime,
+			clipDuration: 100,
+			splitClipTime: 30,
+			sourceTrimStart: 5,
+			sourceTrimEnd: 7,
+		});
 		expect(result.left).toBe(retime);
 		expect(result.right).toBe(retime);
+		// 30 clip ticks at 1.5x consume 45 source ticks of the 150-tick total.
+		expect(result.plan).toEqual({
+			leftTimeMap: undefined,
+			rightTimeMap: undefined,
+			leftTrimStart: 5,
+			leftTrimEnd: 112,
+			rightTrimStart: 50,
+			rightTrimEnd: 7,
+		});
 	});
 
 	test("returns undefined on both sides when no retime", () => {
-		const result = splitRetimeAtClipTime({ splitClipTime: 3 });
+		const result = splitRetimeAtClipTime({
+			clipDuration: 10,
+			splitClipTime: 3,
+		});
 		expect(result.left).toBeUndefined();
 		expect(result.right).toBeUndefined();
+		expect(result.plan.rightTrimStart).toBe(3);
+		expect(result.plan.leftTrimEnd).toBe(7);
+	});
+
+	test("fails closed when Rust rejects the split point", () => {
+		expect(() =>
+			splitRetimeAtClipTime({ clipDuration: 10, splitClipTime: 10 }),
+		).toThrow("Rust rejected");
 	});
 });

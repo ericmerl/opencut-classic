@@ -1435,22 +1435,16 @@ fn write_retime(mut value: CanonicalValue, element: &Element) -> CanonicalValue 
         if !matches!(value, CanonicalValue::Object(_)) {
             value = CanonicalValue::Object(BTreeMap::new());
         }
-        set_object_field(
-            &mut value,
-            "mode",
-            CanonicalValue::String("time-map".into()),
-        );
-        set_object_field(&mut value, "rate", CanonicalValue::Number(1.0));
-        set_object_field(
-            &mut value,
-            "maintainPitch",
-            CanonicalValue::Boolean(time_map.audio_policy.maintain_pitch),
-        );
-        let canonical_time_map = serde_json::to_value(time_map)
+        let config = serde_json::to_value(time::retime_config_for_time_map(time_map))
             .ok()
-            .and_then(|value| serde_json::from_value(value).ok())
-            .expect("validated time map is canonical JSON");
-        set_object_field(&mut value, "timeMap", canonical_time_map);
+            .and_then(|value| serde_json::from_value::<CanonicalValue>(value).ok())
+            .expect("validated time map retime config is canonical JSON");
+        let CanonicalValue::Object(fields) = config else {
+            unreachable!("retime config serializes as an object");
+        };
+        for (key, entry) in fields {
+            set_object_field(&mut value, &key, entry);
+        }
         return value;
     }
     let Some(rate) = element.retime_rate else {

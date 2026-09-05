@@ -51,6 +51,7 @@ const PARITY_AUDIO_CHANNELS = 2;
 const FIXTURE_TONE_HZ = 440;
 const PITCH_PRESERVED_TOLERANCE_HZ = 35;
 const FIXTURE_TONE_CALIBRATION_TOLERANCE_HZ = 2;
+const FUNDAMENTAL_HYSTERESIS_RATIO = 0.1;
 
 let directory: string;
 const processes: McpStdioHarness[] = [];
@@ -4943,8 +4944,8 @@ function estimateFundamentalHz({
 	endSeconds: number;
 }): number {
 	// Positive-going zero crossings of the left channel, gated by a Schmitt
-	// trigger at 10% of the window peak so codec noise near zero cannot count
-	// twice. Each crossing is linearly interpolated between the two samples, and
+	// trigger at FUNDAMENTAL_HYSTERESIS_RATIO of the window peak so codec noise
+	// near zero cannot count twice. Each crossing is linearly interpolated between the two samples, and
 	// the fundamental is the crossing count over the span they cover.
 	const channels = PARITY_AUDIO_CHANNELS;
 	const startFrame = Math.round(startSeconds * PARITY_AUDIO_SAMPLE_RATE);
@@ -4956,7 +4957,7 @@ function estimateFundamentalHz({
 	for (let frame = startFrame; frame < endFrame; frame += 1) {
 		peak = Math.max(peak, Math.abs(pcm[frame * channels]!));
 	}
-	const threshold = peak * 0.1;
+	const threshold = peak * FUNDAMENTAL_HYSTERESIS_RATIO;
 	if (threshold <= 0) throw new Error("fundamental window is silent");
 	let armed = false;
 	let crossings = 0;

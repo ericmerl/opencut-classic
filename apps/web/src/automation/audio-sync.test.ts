@@ -56,6 +56,47 @@ describe("audio synchronization", () => {
 		expect(Array.from(envelope.slice(1))).toEqual([0, 0]);
 	});
 
+	test("maps envelope bins through a reversed time map", () => {
+		// Source: silence for 0.5 s, full scale for 0.5 s, half scale, silence.
+		const samples = Float32Array.from([0, 0, 1, 1, 0.5, 0.5, 0, 0]);
+		const envelope = buildAudioEnvelope({
+			buffer: {
+				sampleRate: 4,
+				numberOfChannels: 1,
+				length: samples.length,
+				getChannelData: () => samples,
+			},
+			trimStart: 0,
+			clipDuration: 1,
+			retime: {
+				rate: 1,
+				mode: "time-map",
+				timeMap: {
+					schemaVersion: "opencut.time-map.v1",
+					frameInterpolation: { requested: "nearest", fallback: "nearest" },
+					audioPolicy: { maintainPitch: false, hold: "mute" },
+					segments: [
+						{
+							kind: "speed",
+							timelineStart: 0,
+							timelineEnd: 120_000,
+							sourceStart: 120_000,
+							startRate: 1,
+							endRate: 1,
+							direction: "reverse",
+						},
+					],
+				},
+			},
+			analysisSampleRate: 2,
+			maxDuration: 10,
+		});
+
+		// Playing source 1.0 s -> 0 s backwards, the first bin covers the
+		// full-scale span and the second bin the leading silence.
+		expect(Array.from(envelope)).toEqual([1, 0]);
+	});
+
 	test("rejects silent envelopes without a valid correlation", () => {
 		expect(() =>
 			findBestAudioLag({

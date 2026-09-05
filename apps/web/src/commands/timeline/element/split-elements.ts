@@ -8,14 +8,8 @@ import { generateUUID } from "@/utils/id";
 import { EditorCore } from "@/core";
 import { isRetimableElement } from "@/timeline";
 import { splitAnimationsAtTime } from "@/animation";
-import { getSourceSpanAtClipTime, splitRetimeAtClipTime } from "@/retime";
-import {
-	addMediaTime,
-	mediaTime,
-	type MediaTime,
-	roundMediaTime,
-	subMediaTime,
-} from "@/wasm";
+import { splitRetimeAtClipTime } from "@/retime";
+import { mediaTime, type MediaTime, subMediaTime } from "@/wasm";
 import { cloneCompoundTracks } from "./duplicate-elements";
 import type { ObjectIdAllocation } from "opencut-wasm";
 import { ResolvedObjectIds } from "@/automation/resolved-object-ids";
@@ -112,39 +106,15 @@ export class SplitElementsCommand extends Command {
 				const retimeRef = isRetimableElement(element)
 					? element.retime
 					: undefined;
+				// Rust plans both halves for constant rates and time maps, snapping the
+				// source-side split point once so left + right spans stay consistent.
 				const splitRetime = splitRetimeAtClipTime({
 					retime: retimeRef,
+					clipDuration: element.duration,
 					splitClipTime: relativeTime,
 					sourceTrimStart: element.trimStart,
 					sourceTrimEnd: element.trimEnd,
 				});
-				// Snap the source-side split point exactly once and derive the right
-				// half from it. Independently rounding both spans (left and total)
-				// would let a 1-tick rounding error desynchronise them, breaking the
-				// invariant `leftSourceSpan + rightSourceSpan == totalSourceSpan`.
-				// See the same discipline in `compute-resize.ts` (snap-once comment).
-				const leftSourceSpan = splitRetime.timeMapPlan
-					? mediaTime({ ticks: 0 })
-					: roundMediaTime({
-							time: getSourceSpanAtClipTime({
-								clipTime: leftVisibleDuration,
-								retime: retimeRef,
-							}),
-						});
-				const totalSourceSpan = splitRetime.timeMapPlan
-					? mediaTime({ ticks: 0 })
-					: roundMediaTime({
-							time: getSourceSpanAtClipTime({
-								clipTime: element.duration,
-								retime: retimeRef,
-							}),
-						});
-				const rightSourceSpan = splitRetime.timeMapPlan
-					? mediaTime({ ticks: 0 })
-					: subMediaTime({
-							a: totalSourceSpan,
-							b: leftSourceSpan,
-						});
 				const { leftAnimations, rightAnimations } = splitAnimationsAtTime({
 					animations: element.animations,
 					splitTime: relativeTime,
@@ -164,18 +134,10 @@ export class SplitElementsCommand extends Command {
 				});
 				let splitResult: TimelineElement[];
 
-				const leftTrimEnd = splitRetime.timeMapPlan
-					? mediaTime({ ticks: splitRetime.timeMapPlan.leftTrimEnd })
-					: addMediaTime({
-							a: element.trimEnd,
-							b: rightSourceSpan,
-						});
-				const rightTrimStart = splitRetime.timeMapPlan
-					? mediaTime({ ticks: splitRetime.timeMapPlan.rightTrimStart })
-					: addMediaTime({
-							a: element.trimStart,
-							b: leftSourceSpan,
-						});
+				const leftTrimEnd = mediaTime({ ticks: splitRetime.plan.leftTrimEnd });
+				const rightTrimStart = mediaTime({
+					ticks: splitRetime.plan.rightTrimStart,
+				});
 
 				if (this.retainSide === "left") {
 					splitResult = [
