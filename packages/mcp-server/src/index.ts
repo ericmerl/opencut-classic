@@ -67,6 +67,7 @@ import { SpeechAnalysisService } from "./speech-analysis";
 import {
 	getMediaCapabilityCatalog,
 	getMediaExecutionBlocker,
+	getMediaProviderReadiness,
 	planAudioPost,
 } from "./native-media-foundation";
 import { MediaAnalysisStore } from "./media-analysis-store";
@@ -386,6 +387,14 @@ capabilitySnapshots = new CapabilitySnapshotService({
 	stateDirectory: exportReceipts.directory,
 	parakeetReadiness: readParakeetReadiness,
 	mediaCapabilityCatalog: () => getMediaCapabilityCatalog({}),
+	mediaProviderReadiness: () => ({
+		audioCleanup: getMediaProviderReadiness(
+			"opencut.task.audio-cleanup.v1",
+		),
+		subjectTracking: getMediaProviderReadiness(
+			"opencut.task.subject-tracking.v1",
+		),
+	}),
 	queueState: async () => {
 		await exportJobs.store.initialize();
 		const summary = exportJobs.store.jobs.summary();

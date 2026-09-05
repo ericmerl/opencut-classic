@@ -65,6 +65,28 @@ export function getMediaExecutionBlocker(taskId: string) {
 	};
 }
 
+export function getMediaProviderReadiness(taskId: string) {
+	const blocker = getMediaExecutionBlocker(taskId);
+	return {
+		status:
+			blocker.code === "MODEL_SELECTION_REQUIRED"
+				? "model-selection-required"
+				: "unavailable",
+		canExecute: false,
+		reason: blocker.reason,
+		command: null,
+		version: null,
+		model: {
+			status:
+				blocker.code === "MODEL_SELECTION_REQUIRED"
+					? "model-selection-required"
+					: "unavailable",
+			id: null,
+			version: null,
+		},
+	};
+}
+
 export function validateMediaAnalysis(input: {
 	operationId: string;
 	createdAt: string;

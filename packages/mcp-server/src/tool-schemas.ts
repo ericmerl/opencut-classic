@@ -1910,7 +1910,13 @@ const mediaAnalysisProvenanceSchema = z
 					.object({
 						sequence: z.number().int().positive(),
 						attempt: z.number().int().positive(),
-						kind: z.enum(["submitted", "started", "retried", "completed"]),
+						kind: z.enum([
+							"submitted",
+							"started",
+							"progress",
+							"retried",
+							"completed",
+						]),
 						occurredAt: z.string().trim().min(1).max(4_096),
 					})
 					.strict(),
