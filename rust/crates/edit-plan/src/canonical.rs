@@ -177,20 +177,8 @@ pub(crate) fn merge_active(
                 })
                 .collect();
             elements.sort_by_key(|element| element.common().order);
-            let transitions = active
-                .transitions
-                .iter()
-                .filter(|transition| transition.track_id == track.track_id)
-                .enumerate()
-                .map(|(order, transition)| CanonicalTransition {
-                    order,
-                    id: transition.transition_id.clone(),
-                    from_element_id: transition.from_element_id.clone(),
-                    to_element_id: transition.to_element_id.clone(),
-                    transition_type: transition.transition_type.clone(),
-                    duration: transition.duration,
-                })
-                .collect();
+            let transitions =
+                canonical_transitions(&track.track_id, &active.elements, &active.transitions);
             CanonicalTrack {
                 role: track.role.clone(),
                 order: role_order(track, track_order),
@@ -1327,19 +1315,7 @@ fn compound_tracks(
                         })
                         .unwrap_or("video")
                 });
-            let canonical_transitions = transitions
-                .iter()
-                .filter(|transition| transition.track_id == id)
-                .enumerate()
-                .map(|(transition_order, transition)| CanonicalTransition {
-                    order: transition_order,
-                    id: transition.transition_id.clone(),
-                    from_element_id: transition.from_element_id.clone(),
-                    to_element_id: transition.to_element_id.clone(),
-                    transition_type: transition.transition_type.clone(),
-                    duration: transition.duration,
-                })
-                .collect();
+            let canonical_transitions = canonical_transitions(&id, members, transitions);
             CanonicalTrack {
                 role: existing.map(|track| track.role.clone()).unwrap_or_else(|| {
                     if order == 0 && kind == "video" {
@@ -1385,6 +1361,43 @@ fn compound_tracks(
     }
     normalize_track_orders(&mut tracks);
     tracks
+}
+
+fn canonical_transitions(
+    track_id: &str,
+    elements: &[Element],
+    transitions: &[Transition],
+) -> Vec<CanonicalTransition> {
+    let element_orders: BTreeMap<_, _> = elements
+        .iter()
+        .filter(|element| element.track_id == track_id)
+        .enumerate()
+        .map(|(order, element)| (element.element_id.as_str(), order))
+        .collect();
+    let mut transitions: Vec<_> = transitions
+        .iter()
+        .filter(|transition| transition.track_id == track_id)
+        .collect();
+    // The browser stores an incoming transition on its destination element, so
+    // canonical transition order follows destination element storage order.
+    transitions.sort_by_key(|transition| {
+        element_orders
+            .get(transition.to_element_id.as_str())
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    transitions
+        .into_iter()
+        .enumerate()
+        .map(|(order, transition)| CanonicalTransition {
+            order,
+            id: transition.transition_id.clone(),
+            from_element_id: transition.from_element_id.clone(),
+            to_element_id: transition.to_element_id.clone(),
+            transition_type: transition.transition_type.clone(),
+            duration: transition.duration,
+        })
+        .collect()
 }
 
 fn normalize_track_orders(tracks: &mut [CanonicalTrack]) {

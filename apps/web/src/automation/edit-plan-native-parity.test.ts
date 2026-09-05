@@ -831,6 +831,19 @@ const optionalParityCases: NativeParityCase[] = [
 		},
 	},
 	{
+		name: "upsert_transition creates an edge from a compound source",
+		state: compoundTransitionSourceState,
+		operation: {
+			kind: "upsert_transition",
+			trackId: "scene-target-main",
+			transitionId: "transition-compound-outgoing",
+			fromElementId: "compound-existing",
+			toElementId: "video-after-compound",
+			transitionType: "crossfade",
+			duration: mediaTime({ ticks: 60_000 }),
+		},
+	},
+	{
 		name: "upsert_transition changes an existing edge type",
 		state: richState,
 		operation: {
@@ -1879,6 +1892,44 @@ function compoundState(): NativeState {
 		...target.tracks,
 		main: { ...target.tracks.main, elements: [compound] },
 	};
+	return state;
+}
+
+function compoundTransitionSourceState(): NativeState {
+	const state = compoundState();
+	const target = state.project.scenes.find(
+		(scene) => scene.id === "scene-target",
+	);
+	const asset = state.mediaAssets.find(
+		(candidate) => candidate.type === "video",
+	);
+	if (!target || !asset) throw new Error("compound transition fixture missing");
+	const compound = target.tracks.main.elements[0];
+	if (!compound || compound.type !== "compound") {
+		throw new Error("compound transition source missing");
+	}
+	const beforeCompound = videoElement({
+		id: "video-before-compound",
+		asset,
+		startTime: 0,
+	});
+	compound.startTime = mediaTime({ ticks: 240_000 });
+	compound.duration = mediaTime({ ticks: 240_000 });
+	compound.sourceDuration = mediaTime({ ticks: 240_000 });
+	compound.transitionIn = {
+		id: "transition-compound-incoming",
+		type: "crossfade",
+		duration: mediaTime({ ticks: 60_000 }),
+		fromElementId: beforeCompound.id,
+	};
+	const afterCompound = videoElement({
+		id: "video-after-compound",
+		asset,
+		startTime: 480_000,
+	});
+	// Compound creation appends the compound after surviving track elements. Keep
+	// that storage order here even though the timeline order is different.
+	target.tracks.main.elements = [beforeCompound, afterCompound, compound];
 	return state;
 }
 
