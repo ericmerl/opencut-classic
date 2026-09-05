@@ -1,16 +1,22 @@
 import { createRequire } from "node:module";
+import type {
+	MediaTreatmentCatalog,
+	MediaTreatmentLookupResponse,
+	TransitionCatalog,
+	TransitionLookupResponse,
+} from "../../../rust/wasm/pkg-node/opencut_wasm.js";
 
 const require = createRequire(import.meta.url);
 
 interface NativeCatalogModule {
-	mediaTreatmentCatalog(): Record<string, unknown>;
-	transitionCatalog(): Record<string, unknown>;
-	findMediaTreatment(treatmentId: string): NativeCatalogLookup;
-	findTransition(transitionId: string): NativeCatalogLookup;
+	mediaTreatmentCatalog(): MediaTreatmentCatalog;
+	transitionCatalog(): TransitionCatalog;
+	findMediaTreatment(treatmentId: string): MediaTreatmentLookupResponse;
+	findTransition(transitionId: string): TransitionLookupResponse;
 }
 
-type NativeCatalogLookup =
-	| { status: "found"; catalog: Record<string, unknown> }
+type NativeCatalogLookup<Catalog> =
+	| { status: "found"; catalog: Catalog }
 	| { status: "unknown"; reason: string };
 
 let native: NativeCatalogModule | undefined;
@@ -23,7 +29,7 @@ function nativeCatalogModule(): NativeCatalogModule {
 
 export function readMediaTreatmentCatalog(
 	treatmentId?: string,
-): Record<string, unknown> {
+): MediaTreatmentCatalog {
 	if (treatmentId === undefined)
 		return nativeCatalogModule().mediaTreatmentCatalog();
 	return requireFound(nativeCatalogModule().findMediaTreatment(treatmentId));
@@ -31,13 +37,13 @@ export function readMediaTreatmentCatalog(
 
 export function readTransitionCatalog(
 	transitionId?: string,
-): Record<string, unknown> {
+): TransitionCatalog {
 	if (transitionId === undefined)
 		return nativeCatalogModule().transitionCatalog();
 	return requireFound(nativeCatalogModule().findTransition(transitionId));
 }
 
-function requireFound(lookup: NativeCatalogLookup): Record<string, unknown> {
+function requireFound<Catalog>(lookup: NativeCatalogLookup<Catalog>): Catalog {
 	if (lookup.status === "unknown") throw new Error(lookup.reason);
 	return lookup.catalog;
 }

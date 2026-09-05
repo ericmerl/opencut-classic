@@ -1138,6 +1138,7 @@ integrationTest(
 		const bridgePort = await availablePort();
 		const profileDirectory = join(directory, "named-treatment-profile");
 		const receiptDirectory = join(directory, "named-treatment-receipts");
+		const treatmentOutputPath = join(directory, "treatment-parity.webm");
 		const outputPath = join(directory, "transition-parity.webm");
 		const treatmentIds = [
 			"simple-media.film-frame",
@@ -1381,29 +1382,27 @@ integrationTest(
 				ticks: 748_000,
 			},
 		] as const;
-		const operations = [
-			...treatmentOperations,
-			{
-				kind: "upsert_transition",
+		const operations = treatmentOperations;
+		const innerTransitionOperation = {
+			kind: "upsert_transition",
+			trackId,
+			transitionId: "inner-crossfade",
+			fromElementId: elementIds[1],
+			toElementId: elementIds[2],
+			transitionType: "crossfade",
+			duration: 60_000,
+		};
+		const createCompoundOperation = {
+			kind: "create_compound",
+			compoundId: "transition-compound",
+			name: "Transition compound",
+			elements: elementIds.slice(1, 3).map((elementId) => ({
 				trackId,
-				transitionId: "inner-crossfade",
-				fromElementId: elementIds[1],
-				toElementId: elementIds[2],
-				transitionType: "crossfade",
-				duration: 60_000,
-			},
-			{
-				kind: "create_compound",
-				compoundId: "transition-compound",
-				name: "Transition compound",
-				elements: elementIds.slice(1, 3).map((elementId) => ({
-					trackId,
-					elementId,
-				})),
-				relationshipScope: "element",
-				targetTrackId: trackId,
-			},
-		];
+				elementId,
+			})),
+			relationshipScope: "element",
+			targetTrackId: trackId,
+		};
 		const preflight = await first.callTool("opencut_preflight_edit_plan", {
 			...preflightBase,
 			preflightId: "named-treatment-valid-preflight",
@@ -1490,7 +1489,342 @@ integrationTest(
 			expectedRevision: requireNumber(reloaded.revision, "revision"),
 			expectedContentHash: requireProjectContentHash(reloaded),
 		});
+		const treatmentPreviewBase = {
+			...affinity(identity),
+			contractVersion: 2,
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(reloaded.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(reloaded),
+			expectedWriteVersion: requireNumber(
+				boundarySave.writeVersion,
+				"treatment writeVersion",
+			),
+			saveReceiptOperationId: "named-treatment-foundation-save",
+			expectedSaveReceiptId: requireString(
+				boundarySave.receiptId,
+				"treatment save receiptId",
+			),
+			canvasSize: { width: 320, height: 240 },
+			format: "png",
+		};
+		const treatmentExported = await restarted.callTool(
+			"opencut_export_project",
+			{
+				...affinity(identity),
+				projectId,
+				operationId: "named-treatment-only-export",
+				expectedRevision: treatmentPreviewBase.expectedRevision,
+				expectedProjectContentHash:
+					treatmentPreviewBase.expectedProjectContentHash,
+				outputPath: treatmentOutputPath,
+				format: "webm",
+				quality: "very_high",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: false,
+				canvasSize: { width: 320, height: 240 },
+			},
+			5 * 60_000,
+		);
+		expect(treatmentExported).toMatchObject({ status: "exported" });
+		for (const [index, treatmentId] of treatmentIds.entries()) {
+			const treatmentTicks = (index + 3) * 240_000 + 12_000;
+			const treatmentPreview = await restarted.callTool(
+				"opencut_render_preview_frame",
+				{
+					...treatmentPreviewBase,
+					operationId: `named-treatment-${index}-preview`,
+					time: {
+						kind: "media-time",
+						ticks: treatmentTicks,
+						rounding: "exact",
+					},
+				},
+				5 * 60_000,
+			);
+			expect(treatmentPreview).toMatchObject({ status: "rendered" });
+			const treatmentRgba = await extractRgba(
+				requireString(treatmentPreview.outputPath, "treatment outputPath"),
+			);
+			const untreatedRgba = untreatedTreatmentRgba.get(treatmentId);
+			if (!untreatedRgba) throw new Error(`missing control for ${treatmentId}`);
+			expect(
+				rgbaComparisonMetrics(treatmentRgba, untreatedRgba).meanAbsoluteError,
+			).toBeGreaterThan(0.5);
+			const treatmentParity = rgbaComparisonMetrics(
+				treatmentRgba,
+				await extractRgba(
+					treatmentOutputPath,
+					treatmentTicks / MEDIA_TICKS_PER_SECOND,
+				),
+			);
+			assertMetricAtMost({
+				label: `${treatmentId} preview/export RGBA MAE`,
+				actual: treatmentParity.meanAbsoluteError,
+				maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+			});
+			assertMetricAtLeast({
+				label: `${treatmentId} preview/export PSNR`,
+				actual: treatmentParity.psnrDb,
+				minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
+			});
+		}
+		const listedProjects = await restarted.callTool(
+			"opencut_list_projects",
+			affinity(identity),
+		);
+		const sourcePersistence = requireRecord(
+			requireRecords(listedProjects.projects, "projects").find(
+				(candidate) => candidate.projectId === projectId,
+			)?.persistence,
+			"source project persistence",
+		);
+		const duplicateControlRequest = {
+			projectId,
+			name: "Named treatment nested transition control",
+			expectedTargetContentHash: requireString(
+				sourcePersistence.contentHash,
+				"source persistence contentHash",
+			),
+			expectedTargetWriteVersion: requireNumber(
+				sourcePersistence.writeVersion,
+				"source persistence writeVersion",
+			),
+		};
+		const duplicateControlPreflight = await restarted.callTool(
+			"opencut_preflight_lifecycle_mutation",
+			{
+				...affinity(identity),
+				method: "duplicate_project",
+				request: duplicateControlRequest,
+			},
+		);
+		expect(duplicateControlPreflight).toMatchObject({ status: "validated" });
+		const duplicatedControl = await restarted.callTool(
+			"opencut_duplicate_project",
+			{
+				...affinity(identity),
+				...duplicateControlRequest,
+				operationId: "named-treatment-duplicate-control",
+				preflightFingerprint: requireString(
+					duplicateControlPreflight.preflightFingerprint,
+					"duplicate control preflight fingerprint",
+				),
+			},
+		);
+		expect(duplicatedControl).toMatchObject({ status: "duplicated" });
+		const controlProjectId = requireString(
+			duplicatedControl.duplicateProjectId,
+			"duplicate control projectId",
+		);
+		const openedControl = await restarted.callTool("opencut_open_project", {
+			...affinity(identity),
+			operationId: "named-treatment-open-duplicate-control",
+			projectId: controlProjectId,
+		});
+		expect(openedControl).toMatchObject({ status: "opened" });
+		const controlState = await restarted.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		const controlSceneId = requireString(
+			controlState.sceneId,
+			"control sceneId",
+		);
+		const controlElements = requireRecords(
+			controlState.elements,
+			"control elements",
+		);
+		const controlMembers = [240_000, 480_000].map((startTime) => {
+			const element = controlElements.find(
+				(candidate) => candidate.startTime === startTime,
+			);
+			return {
+				trackId: requireString(element?.trackId, "control member trackId"),
+				elementId: requireString(
+					element?.elementId,
+					"control member elementId",
+				),
+			};
+		});
+		const controlTrackId = requireString(
+			controlMembers[0]?.trackId,
+			"control compound trackId",
+		);
+		expect(controlMembers[1]?.trackId).toBe(controlTrackId);
+		const controlFoundationSave = await restarted.callTool(
+			"opencut_save_project",
+			{
+				...affinity(identity),
+				projectId: controlProjectId,
+				sceneId: controlSceneId,
+				operationId: "named-treatment-duplicate-control-foundation-save",
+				expectedRevision: requireNumber(
+					controlState.revision,
+					"control revision",
+				),
+				expectedContentHash: requireProjectContentHash(controlState),
+			},
+		);
+		const controlCreateCompound = {
+			kind: "create_compound",
+			compoundId: "transition-free-control-compound",
+			name: "Transition-free control compound",
+			elements: controlMembers,
+			relationshipScope: "element",
+			targetTrackId: controlTrackId,
+		};
+		const nestedControlPreflight = await restarted.callTool(
+			"opencut_preflight_edit_plan",
+			{
+				contractVersion: 2,
+				...affinity(identity),
+				projectId: controlProjectId,
+				sceneId: controlSceneId,
+				expectedRevision: requireNumber(
+					controlState.revision,
+					"control revision",
+				),
+				expectedProjectContentHash: requireProjectContentHash(controlState),
+				expectedWriteVersion: requireNumber(
+					controlFoundationSave.writeVersion,
+					"control foundation writeVersion",
+				),
+				saveReceiptOperationId:
+					"named-treatment-duplicate-control-foundation-save",
+				expectedSaveReceiptId: requireString(
+					controlFoundationSave.receiptId,
+					"control foundation save receiptId",
+				),
+				preflightId: "named-treatment-nested-control-preflight",
+				description: "Create a transition-free compound in the control project",
+				operations: [controlCreateCompound],
+				policy: {
+					warningPolicy: "allow",
+					providerExecution: "forbidden",
+					costPolicy: "require-exact",
+				},
+			},
+		);
+		expect(nestedControlPreflight).toMatchObject({
+			result: { status: "validated" },
+		});
+		const nestedControlEvaluation = requireRecord(
+			requireRecord(nestedControlPreflight.result, "nested control result")
+				.evaluation,
+			"nested control evaluation",
+		);
+		const nestedControlApplied = await restarted.callTool(
+			"opencut_apply_edit_plan",
+			{
+				...affinity(identity),
+				projectId: controlProjectId,
+				sceneId: controlSceneId,
+				operationId: "named-treatment-nested-control-apply",
+				expectedRevision: requireNumber(
+					controlState.revision,
+					"control revision",
+				),
+				expectedProjectContentHash: requireProjectContentHash(controlState),
+				description: "Create a transition-free compound in the control project",
+				operations: [controlCreateCompound],
+				preflight: {
+					receiptId: requireString(
+						nestedControlPreflight.receiptId,
+						"nested control preflight receiptId",
+					),
+					planFingerprint: requireString(
+						nestedControlEvaluation.planFingerprint,
+						"nested control planFingerprint",
+					),
+					preflightFingerprint: requireString(
+						nestedControlEvaluation.preflightFingerprint,
+						"nested control preflightFingerprint",
+					),
+					planDiffHash: requireString(
+						nestedControlEvaluation.planDiffHash,
+						"nested control planDiffHash",
+					),
+				},
+			},
+		);
+		expect(nestedControlApplied).toMatchObject({ status: "applied" });
+		const nestedControlSnapshot = requireRecord(
+			nestedControlApplied.snapshot,
+			"nested control snapshot",
+		);
+		const nestedControlSave = await restarted.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId: controlProjectId,
+			sceneId: controlSceneId,
+			operationId: "named-treatment-nested-control-save",
+			expectedRevision: requireNumber(
+				nestedControlApplied.revision,
+				"nested control revision",
+			),
+			expectedContentHash: requireProjectContentHash(nestedControlSnapshot),
+		});
+		const nestedControl = await restarted.callTool(
+			"opencut_render_preview_frame",
+			{
+				...affinity(identity),
+				contractVersion: 2,
+				projectId: controlProjectId,
+				sceneId: controlSceneId,
+				expectedRevision: requireNumber(
+					nestedControlApplied.revision,
+					"nested control revision",
+				),
+				expectedProjectContentHash: requireProjectContentHash(
+					nestedControlSnapshot,
+				),
+				expectedWriteVersion: requireNumber(
+					nestedControlSave.writeVersion,
+					"nested control writeVersion",
+				),
+				saveReceiptOperationId: "named-treatment-nested-control-save",
+				expectedSaveReceiptId: requireString(
+					nestedControlSave.receiptId,
+					"nested control save receiptId",
+				),
+				operationId: "named-treatment-nested-simple-boundary-control-preview",
+				time: { kind: "media-time", ticks: 508_000, rounding: "exact" },
+				canvasSize: { width: 320, height: 240 },
+				format: "png",
+			},
+			5 * 60_000,
+		);
+		expect(nestedControl).toMatchObject({ status: "rendered" });
+		const nestedTransitionControlRgba = await extractRgba(
+			requireString(nestedControl.outputPath, "nested control outputPath"),
+		);
+		const reopenedSource = await restarted.callTool("opencut_open_project", {
+			...affinity(identity),
+			operationId: "named-treatment-reopen-source-after-control",
+			projectId,
+		});
+		expect(reopenedSource).toMatchObject({ status: "opened", projectId });
+		const sourceAfterControl = await restarted.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		expect(requireProjectContentHash(sourceAfterControl)).toBe(
+			requireProjectContentHash(reloaded),
+		);
+		boundarySave = await restarted.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "named-treatment-source-after-control-save",
+			expectedRevision: requireNumber(
+				sourceAfterControl.revision,
+				"source revision",
+			),
+			expectedContentHash: requireProjectContentHash(sourceAfterControl),
+		});
 		const boundaryOperations = [
+			innerTransitionOperation,
+			createCompoundOperation,
 			...compoundBoundaryCases.map((transition) => ({
 				kind: "upsert_transition",
 				trackId,
@@ -1510,8 +1844,11 @@ integrationTest(
 				duration: 60_000,
 			})),
 		];
-		let boundarySnapshot = reloaded;
-		let boundaryRevision = requireNumber(reloaded.revision, "revision");
+		let boundarySnapshot = sourceAfterControl;
+		let boundaryRevision = requireNumber(
+			sourceAfterControl.revision,
+			"source revision",
+		);
 		for (const [index, operation] of boundaryOperations.entries()) {
 			const boundaryPreflight = await restarted.callTool(
 				"opencut_preflight_edit_plan",
@@ -1529,7 +1866,7 @@ integrationTest(
 					),
 					saveReceiptOperationId:
 						index === 0
-							? "named-treatment-foundation-save"
+							? "named-treatment-source-after-control-save"
 							: `named-treatment-boundary-${index - 1}-save`,
 					expectedSaveReceiptId: requireString(
 						boundarySave.receiptId,
@@ -1648,45 +1985,6 @@ integrationTest(
 			5 * 60_000,
 		);
 		expect(exported).toMatchObject({ status: "exported" });
-		for (const [index, treatmentId] of treatmentIds.entries()) {
-			const treatmentTicks = (index + 3) * 240_000 + 12_000;
-			const treatmentPreview = await restarted.callTool(
-				"opencut_render_preview_frame",
-				{
-					...previewBase,
-					operationId: `named-treatment-${index}-preview`,
-					time: {
-						kind: "media-time",
-						ticks: treatmentTicks,
-						rounding: "exact",
-					},
-				},
-				5 * 60_000,
-			);
-			expect(treatmentPreview).toMatchObject({ status: "rendered" });
-			const treatmentRgba = await extractRgba(
-				requireString(treatmentPreview.outputPath, "treatment outputPath"),
-			);
-			const untreatedRgba = untreatedTreatmentRgba.get(treatmentId);
-			if (!untreatedRgba) throw new Error(`missing control for ${treatmentId}`);
-			expect(
-				rgbaComparisonMetrics(treatmentRgba, untreatedRgba).meanAbsoluteError,
-			).toBeGreaterThan(0.5);
-			const treatmentParity = rgbaComparisonMetrics(
-				treatmentRgba,
-				await extractRgba(outputPath, treatmentTicks / MEDIA_TICKS_PER_SECOND),
-			);
-			assertMetricAtMost({
-				label: `${treatmentId} preview/export RGBA MAE`,
-				actual: treatmentParity.meanAbsoluteError,
-				maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
-			});
-			assertMetricAtLeast({
-				label: `${treatmentId} preview/export PSNR`,
-				actual: treatmentParity.psnrDb,
-				minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
-			});
-		}
 		const initialTransitionCases = [
 			...ordinaryTransitionCases.map(({ label, ticks }) => ({ label, ticks })),
 			...compoundBoundaryCases.map(({ label, ticks }) => ({ label, ticks })),
@@ -1844,6 +2142,15 @@ integrationTest(
 				rgbaComparisonMetrics(transitionedRgba, controlRgba).meanAbsoluteError,
 			).toBeGreaterThan(0.5);
 		}
+		const nestedTransitionRgba = transitionRgbaByLabel.get(
+			"nested-simple-boundary",
+		);
+		if (!nestedTransitionRgba)
+			throw new Error("missing transitioned frame for nested-simple-boundary");
+		expect(
+			rgbaComparisonMetrics(nestedTransitionRgba, nestedTransitionControlRgba)
+				.meanAbsoluteError,
+		).toBeGreaterThan(0.5);
 
 		const fadeOperations = [
 			{

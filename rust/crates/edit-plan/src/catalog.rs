@@ -905,18 +905,17 @@ fn transition_type(id: &str) -> Option<TransitionType> {
 pub fn validate_transition_request(
     options: &EvaluateTransitionOptions,
 ) -> Result<(), TransitionValidationError> {
-    validate_transition(options, true)
+    validate_transition(options)
 }
 
 pub fn validate_stored_transition(
     options: &EvaluateTransitionOptions,
 ) -> Result<(), TransitionValidationError> {
-    validate_transition(options, true)
+    validate_transition(options)
 }
 
 fn validate_transition(
     options: &EvaluateTransitionOptions,
-    require_adjacency: bool,
 ) -> Result<(), TransitionValidationError> {
     let definition = transition_definition(&options.transition_type).ok_or_else(|| {
         TransitionValidationError {
@@ -976,28 +975,25 @@ fn validate_transition(
             path: "duration".to_owned(),
         });
     }
-    if require_adjacency {
-        let mut ordered = options.track_elements.iter().collect::<Vec<_>>();
-        ordered.sort_by(|left, right| {
-            left.start_time
-                .cmp(&right.start_time)
-                .then_with(|| left.id.cmp(&right.id))
+    let mut ordered = options.track_elements.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        left.start_time
+            .cmp(&right.start_time)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let to_index = ordered
+        .iter()
+        .position(|element| element.id == options.to_element_id)
+        .expect("validated destination endpoint");
+    if to_index == 0
+        || ordered[to_index - 1].id != options.from_element_id
+        || from_element.start_time.checked_add(from_element.duration) != Some(to_element.start_time)
+    {
+        return Err(TransitionValidationError {
+            kind: TransitionValidationKind::Invalid,
+            reason: "transition elements must be consecutive and edge-adjacent".to_owned(),
+            path: "fromElementId".to_owned(),
         });
-        let to_index = ordered
-            .iter()
-            .position(|element| element.id == options.to_element_id)
-            .expect("validated destination endpoint");
-        if to_index == 0
-            || ordered[to_index - 1].id != options.from_element_id
-            || from_element.start_time.checked_add(from_element.duration)
-                != Some(to_element.start_time)
-        {
-            return Err(TransitionValidationError {
-                kind: TransitionValidationKind::Invalid,
-                reason: "transition elements must be consecutive and edge-adjacent".to_owned(),
-                path: "fromElementId".to_owned(),
-            });
-        }
     }
     if options
         .existing_incoming_transition_id
