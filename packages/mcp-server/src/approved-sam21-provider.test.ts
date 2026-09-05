@@ -53,4 +53,19 @@ describe("approved SAM 2.1 provider command", () => {
 			},
 		});
 	});
+
+	test("ambient environment variables cannot self-declare golden conformance", () => {
+		const script = [
+			"import importlib.util, os",
+			`spec=importlib.util.spec_from_file_location('provider', ${JSON.stringify(provider)})`,
+			"module=importlib.util.module_from_spec(spec)",
+			"spec.loader.exec_module(module)",
+			"os.environ['OPENCUT_SAM21_CPU_CONFORMANCE']=module.MODEL_SHA256",
+			"print(str(module.deterministic_conformance_verified('cpu')).lower())",
+		].join(";");
+		const result = Bun.spawnSync(["python", "-c", script]);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.toString().trim()).toBe("false");
+	});
 });

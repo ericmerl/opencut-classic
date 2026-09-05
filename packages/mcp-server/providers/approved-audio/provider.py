@@ -119,14 +119,36 @@ def require_cpu(request: dict) -> None:
         raise ValueError("only the canonical CPU device policy is currently approved")
 
 
+def require_git_runtime(distribution_name: str, expected_version: str,
+                        expected_revision: str, label: str) -> None:
+    distribution = importlib.metadata.distribution(distribution_name)
+    if distribution.version != expected_version:
+        raise RuntimeError(
+            f"{label} runtime version is {distribution.version}; expected {expected_version}"
+        )
+    raw_direct_url = distribution.read_text("direct_url.json")
+    try:
+        direct_url = json.loads(raw_direct_url) if raw_direct_url else {}
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{label} runtime source provenance is malformed") from error
+    vcs_info = direct_url.get("vcs_info") if isinstance(direct_url, dict) else None
+    revision = vcs_info.get("commit_id") if isinstance(vcs_info, dict) else None
+    if revision != expected_revision:
+        raise RuntimeError(
+            f"{label} runtime source revision is {revision or 'unverified'}; expected {expected_revision}"
+        )
+
+
 def cleanup(request: dict, source_path: Path, audio: np.ndarray, rate: int) -> dict:
     if rate != 16000 or audio.shape[1] != 1:
         raise ValueError("MetricGAN+ VoiceBank requires 16 kHz mono speech")
     model_dir = Path(os.environ["OPENCUT_METRICGAN_MODEL_DIRECTORY"]).resolve()
     require_file(model_dir / "enhance_model.ckpt", METRICGAN["artifactSha256"],
                  "MetricGAN+ checkpoint")
-    if importlib.metadata.version("speechbrain") != METRICGAN_RUNTIME["version"]:
-        raise RuntimeError("SpeechBrain runtime is not the approved 1.1.1 version")
+    require_git_runtime(
+        "speechbrain", METRICGAN_RUNTIME["version"],
+        METRICGAN_RUNTIME["revision"], "SpeechBrain"
+    )
     import torch
     from speechbrain.inference.enhancement import SpectralMaskEnhancement
 
@@ -164,8 +186,10 @@ def separate(request: dict, _source_path: Path, audio: np.ndarray, rate: int) ->
         Path(os.environ["OPENCUT_OPEN_UNMIX_MODEL_PATH"]).resolve(),
         OPEN_UNMIX["artifactSha256"], "Open-Unmix vocals checkpoint"
     )
-    if importlib.metadata.version("openunmix") != OPEN_UNMIX_RUNTIME["version"]:
-        raise RuntimeError("Open-Unmix runtime is not the approved 1.3.0 version")
+    require_git_runtime(
+        "openunmix", OPEN_UNMIX_RUNTIME["version"],
+        OPEN_UNMIX_RUNTIME["revision"], "Open-Unmix"
+    )
     import torch
     from openunmix import predict
 

@@ -80,11 +80,6 @@ def verify_install(model_path: Path, code_dir: Path, device: str) -> dict[str, A
                 "CUDA_REQUIRES_WSL2",
                 "SAM CUDA execution is allowed only inside WSL2/Ubuntu",
             )
-        if os.environ.get("OPENCUT_SAM21_CUDA_CONFORMANCE") != MODEL_SHA256:
-            raise ProviderError(
-                "CUDA_CONFORMANCE_REQUIRED",
-                "CUDA remains disabled until CPU/CUDA golden conformance is recorded for this model hash",
-            )
     try:
         sys.path.insert(0, str(code_dir))
         import decord  # noqa: F401
@@ -95,8 +90,10 @@ def verify_install(model_path: Path, code_dir: Path, device: str) -> dict[str, A
         raise ProviderError("RUNTIME_DEPENDENCY_MISSING", f"SAM 2 runtime import failed: {error}") from error
     if device == "cuda" and not torch.cuda.is_available():
         raise ProviderError("CUDA_UNAVAILABLE", "PyTorch cannot access CUDA in this WSL2 runtime")
-    conformance_key = f"OPENCUT_SAM21_{device.upper()}_CONFORMANCE"
-    conformance_verified = os.environ.get(conformance_key) == MODEL_SHA256
+    # Conformance is a property of checked-in golden evidence, not an ambient
+    # environment assertion. Until that evidence is reviewed and pinned in the
+    # Rust catalog, every execution device remains fail-closed.
+    conformance_verified = deterministic_conformance_verified(device)
     return {
         "status": "ready" if conformance_verified else "degraded",
         "canExecute": conformance_verified,
@@ -115,6 +112,10 @@ def verify_install(model_path: Path, code_dir: Path, device: str) -> dict[str, A
             "conformanceVerified": conformance_verified,
         },
     }
+
+
+def deterministic_conformance_verified(_device: str) -> bool:
+    return False
 
 
 def model_identity() -> dict[str, str]:
@@ -509,6 +510,11 @@ def main() -> int:
         if args.probe_json:
             print(json.dumps(readiness, sort_keys=True, separators=(",", ":")))
             return 0
+        if not readiness["canExecute"]:
+            raise ProviderError(
+                "DETERMINISTIC_CONFORMANCE_REQUIRED",
+                f"{args.device.upper()} execution remains disabled until reviewed golden conformance is pinned",
+            )
         request = validate_request(json.load(sys.stdin))
         response = run_inference(request, args.model_path.resolve(), args.sam2_code_dir.resolve(), args.device)
         print(json.dumps(response, sort_keys=True, separators=(",", ":")))
