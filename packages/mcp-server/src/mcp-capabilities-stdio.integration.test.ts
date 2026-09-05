@@ -88,6 +88,80 @@ describe("capability snapshot public MCP transport", () => {
 				}),
 			]),
 		);
+
+		const treatments = await harness.callTool("opencut_list_treatments");
+		expect(treatments.schemaVersion).toBe("opencut.media-treatment-catalog.v1");
+		const filmFrame = requireRecords(treatments.treatments).find(
+			(treatment) => treatment.id === "simple-media.film-frame",
+		);
+		expect(filmFrame).toMatchObject({
+			id: "simple-media.film-frame",
+			name: "Film Frame",
+			readiness: {
+				status: "reference-missing",
+				reference: null,
+				tolerance: null,
+			},
+			applicability: {
+				elementTypes: ["video", "image"],
+				trackTypes: ["video"],
+			},
+		});
+		expect(requireRecords(filmFrame?.parameters)[0]).toMatchObject({
+			id: "mix",
+			type: "number",
+			default: 1,
+			minimum: 0,
+			maximum: 1,
+		});
+		expect(
+			(
+				await harness.callTool("opencut_list_treatments", {
+					treatmentId: "simple-media.montage-curve",
+				})
+			).treatments,
+		).toEqual([
+			expect.objectContaining({
+				id: "simple-media.montage-curve",
+				readiness: expect.objectContaining({
+					status: "reference-missing",
+				}),
+			}),
+		]);
+
+		const transitions = await harness.callTool("opencut_list_transitions");
+		expect(transitions.schemaVersion).toBe("opencut.transition-catalog.v1");
+		const transitionEntries = requireRecords(transitions.transitions);
+		expect(
+			transitionEntries.find((transition) => transition.id === "crossfade"),
+		).toMatchObject({
+			id: "crossfade",
+			trackTypes: ["video"],
+			requiresAdjacentElements: true,
+			duration: {
+				unit: "media-ticks",
+				minimum: 1,
+				maximum: "shorter-element",
+			},
+			compoundBoundaryPolicy: "supported",
+		});
+		expect(
+			transitionEntries.find((transition) => transition.id === "wipe"),
+		).toMatchObject({
+			id: "wipe",
+			compoundBoundaryPolicy: "unsupported",
+			maskedIncomingPolicy: "unsupported",
+		});
+		expect(snapshot).toMatchObject({
+			catalogs: {
+				mediaTreatments: {
+					schemaVersion: "opencut.media-treatment-catalog.v1",
+				},
+				transitions: {
+					schemaVersion: "opencut.transition-catalog.v1",
+				},
+			},
+		});
 	});
 });
 
@@ -144,9 +218,12 @@ class CapabilityHarness {
 		);
 	}
 
-	async callTool(name: string): Promise<Record<string, unknown>> {
+	async callTool(
+		name: string,
+		args: Record<string, unknown> = {},
+	): Promise<Record<string, unknown>> {
 		const result = requireRecord(
-			await this.request("tools/call", { name, arguments: {} }),
+			await this.request("tools/call", { name, arguments: args }),
 		);
 		if (result.isError === true) {
 			throw new Error(`${name} failed: ${JSON.stringify(result)}`);
@@ -229,6 +306,13 @@ function reservePort(): number {
 
 function requireRecord(value: unknown): Record<string, unknown> {
 	if (!isRecord(value)) throw new Error("expected an object");
+	return value;
+}
+
+function requireRecords(value: unknown): Record<string, unknown>[] {
+	if (!Array.isArray(value) || !value.every(isRecord)) {
+		throw new Error("expected an array of objects");
+	}
 	return value;
 }
 

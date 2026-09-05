@@ -1,7 +1,9 @@
 //! Typed, deterministic edit-plan simulation shared by native and WASM callers.
 
 mod canonical;
+mod catalog;
 mod model;
+pub use catalog::*;
 pub use model::*;
 
 use bridge::export;
@@ -768,6 +770,17 @@ impl State {
                     return Err(key_error);
                 }
             }
+            for effect in &element.effects {
+                if let Err(mut effect_error) = validate_effect_attachment(
+                    &element.element_type,
+                    &effect.effect_type,
+                    &effect.params,
+                    operation_index.unwrap_or(0),
+                ) {
+                    effect_error.operation_index = operation_index;
+                    return Err(effect_error);
+                }
+            }
         }
         for transition in &self.snapshot.transitions {
             unique(&mut ids, &transition.transition_id, operation_index)?;
@@ -781,7 +794,66 @@ impl State {
                 &transition.to_element_id,
                 operation_index,
             )?;
-            positive(transition.duration, operation_index, "transition.duration")?;
+            let track = self
+                .snapshot
+                .tracks
+                .iter()
+                .find(|track| track.track_id == transition.track_id)
+                .expect("transition track was validated");
+            let from_element = self
+                .snapshot
+                .elements
+                .iter()
+                .find(|element| {
+                    element.track_id == transition.track_id
+                        && element.element_id == transition.from_element_id
+                })
+                .expect("transition source was validated");
+            let to_element = self
+                .snapshot
+                .elements
+                .iter()
+                .find(|element| {
+                    element.track_id == transition.track_id
+                        && element.element_id == transition.to_element_id
+                })
+                .expect("transition destination was validated");
+            if self
+                .snapshot
+                .transitions
+                .iter()
+                .filter(|candidate| {
+                    candidate.track_id == transition.track_id
+                        && candidate.to_element_id == transition.to_element_id
+                })
+                .count()
+                > 1
+            {
+                return Err(error(
+                    ErrorCode::InvalidValue,
+                    "incoming element has more than one transition",
+                    operation_index,
+                    Some("transition.toElementId"),
+                ));
+            }
+            if let Err(transition_error) =
+                validate_stored_transition(&transition_evaluation_options(
+                    &transition.transition_id,
+                    &transition.transition_type,
+                    &track.track_type,
+                    from_element,
+                    to_element,
+                    transition.duration,
+                    Some(&transition.transition_id),
+                ))
+            {
+                let mut mapped = map_transition_error(transition_error, 0);
+                mapped.operation_index = operation_index;
+                if mapped.path.as_deref() == Some("transitionType") {
+                    mapped.path = Some("transition.type".to_owned());
+                }
+                return Err(mapped);
+            }
         }
         for bookmark in &self.snapshot.bookmarks {
             if let Some(bookmark_id) = &bookmark.bookmark_id {
@@ -1939,7 +2011,8 @@ impl State {
                 auto_track_id,
                 resolved_allocations,
             } => {
-                let resolved_params = effect_params(effect_type, None, params.as_ref(), index)?;
+                let resolved_params =
+                    effect_params(effect_type, "effect", None, params.as_ref(), index)?;
                 let resolved_name = name
                     .clone()
                     .unwrap_or_else(|| capitalize_first(effect_type));
@@ -2804,7 +2877,13 @@ impl State {
                 let definition_id = element.definition_id.as_deref();
                 let effect_type = element.effect_type.as_deref();
                 let coerced = if let Some(effect_type) = effect_type {
-                    effect_params(effect_type, Some(&element.params), Some(params), index)?
+                    effect_params(
+                        effect_type,
+                        &element.element_type,
+                        Some(&element.params),
+                        Some(params),
+                        index,
+                    )?
                 } else {
                     params
                         .iter()
@@ -3039,6 +3118,7 @@ impl State {
                 ) {
                     return incompatible(index, "clip effects require a visual timeline element");
                 }
+                validate_treatment_applicability(effect_type, &element.element_type, index)?;
                 if let Some(effect) = element
                     .effects
                     .iter_mut()
@@ -3047,8 +3127,13 @@ impl State {
                     if effect.effect_type != *effect_type {
                         return invalid(index, "effect ID already has a different type");
                     }
-                    effect.params =
-                        effect_params(effect_type, Some(&effect.params), params.as_ref(), index)?;
+                    effect.params = effect_params(
+                        effect_type,
+                        &element.element_type,
+                        Some(&effect.params),
+                        params.as_ref(),
+                        index,
+                    )?;
                     if let Some(enabled) = enabled {
                         effect.enabled = *enabled;
                     }
@@ -3057,7 +3142,13 @@ impl State {
                         effect_id: effect_id.clone(),
                         effect_type: effect_type.clone(),
                         enabled: enabled.unwrap_or(true),
-                        params: effect_params(effect_type, None, params.as_ref(), index)?,
+                        params: effect_params(
+                            effect_type,
+                            &element.element_type,
+                            None,
+                            params.as_ref(),
+                            index,
+                        )?,
                     });
                 }
                 Ok(())
@@ -5428,16 +5519,14 @@ impl State {
         duration: MediaTime,
         index: usize,
     ) -> Result<(), EditPlanError> {
-        positive(duration, Some(index), "duration")?;
         self.require_element(track, from, Some(index))?;
         self.require_element(track, to, Some(index))?;
-        if from == to {
-            return invalid(index, "transition endpoints must differ");
-        }
-        let track_state = self.track_mut(track, index)?;
-        if track_state.track_type != "video" {
-            return incompatible(index, "transitions require a video track");
-        }
+        let track_state = self
+            .snapshot
+            .tracks
+            .iter()
+            .find(|candidate| candidate.track_id == track)
+            .ok_or_else(|| unknown_error(index, "track"))?;
         let from_element = self
             .snapshot
             .elements
@@ -5450,25 +5539,22 @@ impl State {
             .iter()
             .find(|element| element.track_id == track && element.element_id == to)
             .expect("validated transition destination");
-        if from_element.element_type == "compound" || to_element.element_type == "compound" {
-            return incompatible(index, "compound clip transitions are unsupported");
-        }
-        if duration > from_element.duration || duration > to_element.duration {
-            return bounds(index, "duration");
-        }
-        if add(from_element.start_time, from_element.duration, index)? != to_element.start_time {
-            return invalid(index, "transition clips must be edge-adjacent");
-        }
-        if self.snapshot.transitions.iter().any(|transition| {
-            transition.track_id == track
-                && transition.to_element_id == to
-                && transition.transition_id != id
-        }) {
-            return invalid(index, "incoming clip already has another transition");
-        }
-        if kind == "wipe" && !to_element.masks.is_empty() {
-            return incompatible(index, "wipe transitions do not support masked clips");
-        }
+        let existing_incoming = self
+            .snapshot
+            .transitions
+            .iter()
+            .find(|transition| transition.track_id == track && transition.to_element_id == to)
+            .map(|transition| transition.transition_id.as_str());
+        validate_transition_request(&transition_evaluation_options(
+            id,
+            kind,
+            &track_state.track_type,
+            from_element,
+            to_element,
+            duration,
+            existing_incoming,
+        ))
+        .map_err(|failure| map_transition_error(failure, index))?;
         if let Some(t) = self
             .snapshot
             .transitions
@@ -5699,6 +5785,45 @@ impl State {
         }
         Ok(())
     }
+}
+
+fn transition_evaluation_options(
+    transition_id: &str,
+    transition_type: &str,
+    track_type: &str,
+    from_element: &Element,
+    to_element: &Element,
+    duration: MediaTime,
+    existing_incoming_transition_id: Option<&str>,
+) -> EvaluateTransitionOptions {
+    EvaluateTransitionOptions {
+        transition_id: transition_id.to_owned(),
+        transition_type: transition_type.to_owned(),
+        track_type: track_type.to_owned(),
+        from_element: transition_boundary(from_element),
+        to_element: transition_boundary(to_element),
+        duration: duration.as_ticks(),
+        existing_incoming_transition_id: existing_incoming_transition_id.map(str::to_owned),
+    }
+}
+
+fn transition_boundary(element: &Element) -> TransitionBoundaryElement {
+    TransitionBoundaryElement {
+        id: element.element_id.clone(),
+        element_type: element.element_type.clone(),
+        start_time: element.start_time.as_ticks(),
+        duration: element.duration.as_ticks(),
+        has_masks: !element.masks.is_empty(),
+    }
+}
+
+fn map_transition_error(failure: TransitionValidationError, index: usize) -> EditPlanError {
+    let code = match failure.kind {
+        TransitionValidationKind::Invalid => ErrorCode::InvalidValue,
+        TransitionValidationKind::Incompatible => ErrorCode::IncompatibleTrack,
+        TransitionValidationKind::Bounds => ErrorCode::Bounds,
+    };
+    error(code, failure.reason, Some(index), Some(&failure.path))
 }
 
 fn animation_storage_keys(element: &Element) -> Vec<String> {
@@ -6686,10 +6811,14 @@ fn sticker_default_name(sticker_id: &str) -> String {
 
 fn effect_params(
     effect_type: &str,
+    element_type: &str,
     existing: Option<&Params>,
     requested: Option<&Params>,
     index: usize,
 ) -> Result<Params, EditPlanError> {
+    if media_treatment_definition(effect_type).is_some() {
+        return treatment_params(effect_type, element_type, existing, requested, index);
+    }
     let mut params = if let Some(existing) = existing {
         existing.clone()
     } else {
@@ -6709,7 +6838,14 @@ fn effect_params(
                 .into_iter()
                 .map(|key| (key.into(), Scalar::Number(0.0))),
             ),
-            _ => return Err(invalid_error(index, "unknown effect type")),
+            _ => {
+                return Err(error(
+                    ErrorCode::InvalidValue,
+                    "unknown effect type",
+                    Some(index),
+                    Some("effectType"),
+                ));
+            }
         }
     };
     for (key, value) in requested.into_iter().flatten() {
@@ -6742,6 +6878,62 @@ fn effect_params(
         params.insert(key.clone(), value);
     }
     Ok(params)
+}
+
+fn validate_effect_attachment(
+    element_type: &str,
+    effect_type: &str,
+    params: &Params,
+    index: usize,
+) -> Result<(), EditPlanError> {
+    if media_treatment_definition(effect_type).is_none() {
+        if effect_type.starts_with("simple-media.") {
+            return Err(error(
+                ErrorCode::InvalidValue,
+                format!("unknown treatment ID: {effect_type}"),
+                Some(index),
+                Some("effectType"),
+            ));
+        }
+        return Ok(());
+    }
+    validate_treatment_applicability(effect_type, element_type, index)?;
+    effect_params(effect_type, element_type, None, Some(params), index).map(|_| ())
+}
+
+fn validate_treatment_applicability(
+    effect_type: &str,
+    element_type: &str,
+    index: usize,
+) -> Result<(), EditPlanError> {
+    if media_treatment_definition(effect_type).is_none() {
+        return Ok(());
+    }
+    resolve_treatment_parameters(effect_type, element_type, None, None)
+        .map(|_| ())
+        .map_err(|failure| treatment_error(failure, index))
+}
+
+fn treatment_params(
+    treatment_id: &str,
+    element_type: &str,
+    existing: Option<&Params>,
+    requested: Option<&Params>,
+    index: usize,
+) -> Result<Params, EditPlanError> {
+    resolve_treatment_parameters(treatment_id, element_type, existing, requested)
+        .map_err(|failure| treatment_error(failure, index))
+}
+
+fn treatment_error(failure: TreatmentValidationError, index: usize) -> EditPlanError {
+    let code = match failure.kind {
+        TreatmentValidationKind::Inapplicable => ErrorCode::IncompatibleTrack,
+        TreatmentValidationKind::Bounds => ErrorCode::Bounds,
+        TreatmentValidationKind::UnknownId
+        | TreatmentValidationKind::UnknownParameter
+        | TreatmentValidationKind::InvalidType => ErrorCode::InvalidValue,
+    };
+    error(code, failure.reason, Some(index), Some(&failure.path))
 }
 
 fn coerce_element_param(
@@ -7102,6 +7294,7 @@ fn coerce_animation_value(
         let requested = Params::from_iter([(param_key.into(), value.clone())]);
         return effect_params(
             &effect.effect_type,
+            &element.element_type,
             Some(&effect.params),
             Some(&requested),
             index,

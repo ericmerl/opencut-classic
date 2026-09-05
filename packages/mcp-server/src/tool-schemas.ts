@@ -626,14 +626,6 @@ const audioFadeSchema = z
 		"Replace the clip's volume envelope with linear fades. Omitted durations default to zero; setting both to zero clears existing volume keyframes.",
 	);
 
-const transitionTypeSchema = z.enum([
-	"crossfade",
-	"fade-through-black",
-	"slide",
-	"wipe",
-	"zoom",
-]);
-
 const normalizedRectSchema = z
 	.object({
 		x: z.number().min(0).max(1),
@@ -1441,11 +1433,10 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 		transitionId: z.string().trim().min(1),
 		fromElementId: z.string().min(1),
 		toElementId: z.string().min(1),
-		transitionType: transitionTypeSchema,
+		transitionType: z.string().trim().min(1),
 		duration: z
 			.number()
 			.int()
-			.positive()
 			.describe("Transition duration in canonical media ticks."),
 	}),
 	z.object({

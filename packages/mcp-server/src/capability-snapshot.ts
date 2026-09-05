@@ -8,6 +8,10 @@ import { OPERATION_LEDGER_SCHEMA_VERSION } from "./operation-ledger-schema";
 import { CURRENT_PROJECT_CONTENT_PROJECTION_VERSION } from "./project-content-version";
 import { EDIT_PLAN_OPERATION_VARIANTS } from "./tool-schemas";
 import { readPreviewRangeLimits } from "./range-preview-config";
+import {
+	readMediaTreatmentCatalog,
+	readTransitionCatalog,
+} from "./native-catalog";
 
 export const CAPABILITY_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
@@ -105,6 +109,8 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_list_review_annotations",
 	"opencut_list_scenes",
 	"opencut_list_transcripts",
+	"opencut_list_transitions",
+	"opencut_list_treatments",
 	"opencut_list_visual_assets",
 	"opencut_normalize_audio",
 	"opencut_open_project",
@@ -431,6 +437,10 @@ export class CapabilitySnapshotService {
 			tools: {
 				registered: [...REGISTERED_TOOL_NAMES],
 				editPlanOperationVariants: [...EDIT_PLAN_OPERATION_VARIANTS],
+			},
+			catalogs: {
+				mediaTreatments: readMediaTreatmentCatalog(),
+				transitions: readTransitionCatalog(),
 			},
 			editor,
 			renderer: {

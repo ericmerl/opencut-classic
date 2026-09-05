@@ -3,6 +3,7 @@ import type { Effect } from "@/effects/types";
 import type { Mask } from "@/masks/types";
 import type { ParamValues } from "@/params";
 import type { MediaTime } from "@/wasm";
+import type { TransitionType } from "opencut-wasm";
 
 export type ElementRef = {
 	trackId: string;
@@ -96,15 +97,7 @@ export interface RetimeConfig {
 	maintainPitch?: boolean;
 }
 
-export const CLIP_TRANSITION_TYPES = [
-	"crossfade",
-	"fade-through-black",
-	"slide",
-	"wipe",
-	"zoom",
-] as const;
-
-export type ClipTransitionType = (typeof CLIP_TRANSITION_TYPES)[number];
+export type ClipTransitionType = TransitionType;
 
 export interface ClipTransition {
 	id: string;

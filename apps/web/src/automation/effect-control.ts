@@ -14,6 +14,7 @@ import type {
 	AutomationEditOperation,
 	AutomationEffectCatalogEntry,
 } from "./types";
+import { resolveMediaTreatment } from "opencut-wasm";
 
 type EffectOperation = Extract<
 	AutomationEditOperation,
@@ -68,8 +69,6 @@ function buildUpsertPatch({
 	if (!isVisualElement(element)) {
 		throw new Error("clip effects require a visual timeline element");
 	}
-	registerDefaultEffects();
-	const definition = effectsRegistry.get(operation.effectType);
 	const existing = element.effects?.find(
 		(effect) => effect.id === operation.effectId,
 	);
@@ -78,6 +77,36 @@ function buildUpsertPatch({
 			`effect ${operation.effectId} already has type ${existing.type}`,
 		);
 	}
+	const treatment = resolveMediaTreatment({
+		treatmentId: operation.effectType,
+		elementType: element.type,
+		existingParams: existing?.params,
+		requestedParams: operation.params,
+	});
+	if (treatment.status === "rejected") {
+		throw new Error(treatment.reason);
+	}
+	if (treatment.status === "not-treatment" && treatment.reservedNamespace) {
+		throw new Error(`unknown treatment ID: ${operation.effectType}`);
+	}
+	if (treatment.status === "resolved") {
+		const nextEffect: Effect = {
+			id: operation.effectId,
+			type: operation.effectType,
+			params: treatment.params,
+			enabled: operation.enabled ?? existing?.enabled ?? true,
+		};
+		return {
+			effects: existing
+				? element.effects?.map((effect) =>
+						effect.id === operation.effectId ? nextEffect : effect,
+					)
+				: [...(element.effects ?? []), nextEffect],
+		};
+	}
+
+	registerDefaultEffects();
+	const definition = effectsRegistry.get(operation.effectType);
 	let nextEffect: Effect = existing ?? {
 		id: operation.effectId,
 		type: operation.effectType,

@@ -385,6 +385,14 @@ pub enum TransitionType {
 }
 
 impl TransitionType {
+    pub const ALL: [Self; 5] = [
+        Self::Crossfade,
+        Self::FadeThroughBlack,
+        Self::Slide,
+        Self::Wipe,
+        Self::Zoom,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Crossfade => "crossfade",

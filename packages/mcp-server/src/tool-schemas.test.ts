@@ -1524,7 +1524,7 @@ describe("OpenCut edit-plan MCP contract", () => {
 		expect(result.success).toBe(true);
 	});
 
-	test("rejects unsupported transition types and non-positive durations", () => {
+	test("leaves transition IDs and duration semantics to Rust", () => {
 		const result = editPlanInputSchema.safeParse({
 			projectId: "project-1",
 			operationId: "transitions-invalid-1",
@@ -1543,7 +1543,26 @@ describe("OpenCut edit-plan MCP contract", () => {
 			],
 		});
 
-		expect(result.success).toBe(false);
+		expect(result.success).toBe(true);
+		expect(
+			editPlanInputSchema.safeParse({
+				projectId: "project-1",
+				operationId: "transitions-malformed-1",
+				expectedRevision: 2,
+				description: "Malformed transition transport",
+				operations: [
+					{
+						kind: "upsert_transition",
+						trackId: "track-1",
+						transitionId: "transition-1",
+						fromElementId: "clip-1",
+						toElementId: "clip-2",
+						transitionType: "   ",
+						duration: 1.5,
+					},
+				],
+			}).success,
+		).toBe(false);
 	});
 
 	test("rejects retiming outside OpenCut's supported range", () => {
