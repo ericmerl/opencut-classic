@@ -500,8 +500,12 @@ function createServer(): McpServer {
 		},
 		async (input) =>
 			toolResult(
-				await ledgerBoundary.execute("opencut_start_editor_worker", input, () =>
-					editorWorker.ensureConnected(input.projectId),
+				await ledgerBoundary.execute(
+					"opencut_start_editor_worker",
+					input,
+					() => editorWorker.ensureConnected(input.projectId),
+					undefined,
+					() => editorWorker.ensureConnected(input.projectId),
 				),
 			),
 	);
@@ -515,8 +519,12 @@ function createServer(): McpServer {
 		},
 		async (input) =>
 			toolResult(
-				await ledgerBoundary.execute("opencut_stop_editor_worker", input, () =>
-					editorWorker.stop(),
+				await ledgerBoundary.execute(
+					"opencut_stop_editor_worker",
+					input,
+					() => editorWorker.stop(),
+					undefined,
+					() => editorWorker.stop(),
 				),
 			),
 	);
@@ -2938,19 +2946,38 @@ console.error(
 	`OpenCut MCP server listening for the editor on 127.0.0.1:${port}`,
 );
 
-function shutdown(): void {
-	exportJobs.stop();
-	void editorWorker.stop();
-	bridge.stop();
-	operationLedger.close();
-	historyCheckpointStore.close();
-	previewEvidence.close();
-	editPlanPreflightStore.close();
-	void handle.close();
+let shutdownPromise: Promise<void> | null = null;
+
+function shutdown(): Promise<void> {
+	shutdownPromise ??= (async () => {
+		exportJobs.stop();
+		await editorWorker.stop();
+		bridge.stop();
+		operationLedger.close();
+		historyCheckpointStore.close();
+		previewEvidence.close();
+		editPlanPreflightStore.close();
+		await handle.close();
+	})();
+	return shutdownPromise;
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+function shutdownAndExit(): void {
+	void shutdown().then(
+		() => process.exit(0),
+		(error) => {
+			console.error(
+				"[opencut-mcp] shutdown failed:",
+				error instanceof Error ? (error.stack ?? error.message) : String(error),
+			);
+			process.exit(1);
+		},
+	);
+}
+
+process.once("SIGINT", shutdownAndExit);
+process.once("SIGTERM", shutdownAndExit);
+process.stdin.once("end", shutdownAndExit);
 
 function toolResult(value: unknown) {
 	const status = bridge.getStatus();

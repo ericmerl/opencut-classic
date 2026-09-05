@@ -89,6 +89,7 @@ export interface LedgeredOperationSpec<TInput, TResult> {
 	recover?: (
 		context: OperationExecutionContext,
 	) => Promise<OperationExecutionOutcome<TResult> | null>;
+	replay?: () => Promise<TResult>;
 	execute: (
 		context: OperationExecutionContext,
 	) => Promise<OperationExecutionOutcome<TResult>>;
@@ -140,13 +141,32 @@ export async function executeLedgeredOperation<TInput, TResult>(
 		relationships: spec.relationships,
 	});
 
-	if (claim.state === "replayed") return replayResult<TResult>(claim.record);
+	if (claim.state === "replayed") {
+		const replayed = replayResult<TResult>(claim.record);
+		if (!spec.replay || replayed.disposition !== "applied-verified")
+			return replayed;
+		try {
+			return {
+				status: "replayed",
+				disposition: "applied-verified",
+				value: await spec.replay(),
+				operation: claim.record,
+			};
+		} catch (error) {
+			return recoverable(
+				claim.record,
+				recoverableErrorReason(error, "replay refresh failed"),
+			);
+		}
+	}
 
 	let record = claim.record;
 	let ownsFence =
 		claim.state === "claimed" || record.lease?.ownerId === spec.ownerId;
 	const ownerState =
-		!ownsFence && record.lease ? processOwnerState(record.lease.ownerId) : "unscoped";
+		!ownsFence && record.lease
+			? processOwnerState(record.lease.ownerId)
+			: "unscoped";
 	const abandonedOwner = ownerState === "dead" ? record.lease!.ownerId : null;
 	if (
 		!ownsFence &&
@@ -159,9 +179,7 @@ export async function executeLedgeredOperation<TInput, TResult>(
 				ownerId: spec.ownerId,
 				expectedFencingToken: record.lease!.fencingToken,
 				leaseDurationMs: spec.leaseDurationMs,
-				...(abandonedOwner
-					? { allowUnexpiredOwnerId: abandonedOwner }
-					: {}),
+				...(abandonedOwner ? { allowUnexpiredOwnerId: abandonedOwner } : {}),
 			},
 		);
 		ownsFence = true;
@@ -207,9 +225,31 @@ export async function executeLedgeredOperation<TInput, TResult>(
 		);
 		return recoverable(
 			record,
-			error instanceof Error ? error.name : "operation execution failed",
+			recoverableErrorReason(error, "operation execution failed"),
 		);
 	}
+}
+
+function recoverableErrorReason(error: unknown, fallback: string): string {
+	if (!(error instanceof Error)) return fallback;
+	if (error.name !== "ZodError") return error.name;
+	const issues = (error as Error & { issues?: unknown }).issues;
+	if (!Array.isArray(issues)) return error.name;
+	const details = issues
+		.slice(0, 5)
+		.map((issue) => {
+			if (!issue || typeof issue !== "object") return null;
+			const value = issue as Record<string, unknown>;
+			const path = Array.isArray(value.path)
+				? value.path.map(String).join(".")
+				: "schema";
+			const message =
+				typeof value.message === "string" ? value.message : "validation failed";
+			return `${path || "schema"}: ${message}`;
+		})
+		.filter((value): value is string => value !== null)
+		.join("; ");
+	return details ? `ZodError: ${details}`.slice(0, 2000) : error.name;
 }
 
 function processOwnerState(ownerId: string): "live" | "dead" | "unscoped" {

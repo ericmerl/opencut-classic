@@ -144,6 +144,72 @@ describe("ManagedEditorWorker", () => {
 		expect(killed).toBe(true);
 	});
 
+	const windowsTest = process.platform === "win32" ? test : test.skip;
+	windowsTest("terminates the complete browser process tree", async () => {
+		const browserPath = join(directory, "browser.exe");
+		await writeFile(browserPath, "fixture");
+		let connected = false;
+		const browser = new EventEmitter() as EventEmitter & {
+			pid: number;
+			exitCode: number | null;
+			kill: () => boolean;
+		};
+		browser.pid = 4321;
+		browser.exitCode = null;
+		browser.kill = () => false;
+		const killer = new EventEmitter() as EventEmitter & {
+			exitCode: number | null;
+		};
+		killer.exitCode = null;
+		const termination: {
+			value: {
+				command: string;
+				args: readonly string[];
+				windowsHide: boolean | undefined;
+			} | null;
+		} = { value: null };
+		const terminateProcessTree = ((
+			command: string,
+			args: readonly string[],
+			options: { windowsHide?: boolean },
+		) => {
+			termination.value = { command, args, windowsHide: options.windowsHide };
+			queueMicrotask(() => {
+				killer.exitCode = 0;
+				killer.emit("exit", 0, null);
+				browser.exitCode = 0;
+				browser.emit("exit", 0, null);
+			});
+			return killer as unknown as ChildProcess;
+		}) as typeof spawn;
+		const worker = new ManagedEditorWorker(
+			{
+				getStatus: () => ({ connected, port: 32191 }),
+				createBootstrapTicket: () => ({ id: "ticket", expiresAt: "unused" }),
+				waitForConnection: async () => {
+					connected = true;
+				},
+			},
+			{
+				baseUrl: "http://127.0.0.1:3000",
+				browserPath,
+				profileDirectory: join(directory, "profile"),
+				spawnProcess: (() =>
+					browser as unknown as ChildProcess) as typeof spawn,
+				terminateProcessTree,
+			},
+		);
+		await worker.ensureConnected();
+
+		await worker.stop();
+
+		expect(termination.value).toEqual({
+			command: "taskkill.exe",
+			args: ["/PID", "4321", "/T", "/F"],
+			windowsHide: true,
+		});
+	});
+
 	test("requires explicit headless-editor enablement", async () => {
 		const worker = new ManagedEditorWorker(
 			{

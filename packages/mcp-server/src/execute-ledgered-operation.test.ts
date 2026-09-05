@@ -99,6 +99,36 @@ describe("executeLedgeredOperation", () => {
 		).rejects.toBeInstanceOf(OperationLedgerReuseError);
 	});
 
+	test("refreshes transient state only after validating a matching replay", async () => {
+		const initial = operationSpec(ledger, "refresh-replay");
+		await executeLedgeredOperation(initial);
+		let refreshes = 0;
+		const replayed = await executeLedgeredOperation({
+			...operationSpec(ledger, "refresh-replay"),
+			replay: async () => {
+				refreshes += 1;
+				return { status: "connected", generation: 2 };
+			},
+		});
+		expect(replayed).toMatchObject({
+			status: "replayed",
+			value: { status: "connected", generation: 2 },
+		});
+		expect(refreshes).toBe(1);
+
+		await expect(
+			executeLedgeredOperation({
+				...operationSpec(ledger, "refresh-replay"),
+				input: { projectId: "different-project" },
+				replay: async () => {
+					refreshes += 1;
+					return { status: "connected" };
+				},
+			}),
+		).rejects.toBeInstanceOf(OperationLedgerReuseError);
+		expect(refreshes).toBe(1);
+	});
+
 	test("keeps unknown outcomes recoverable and completes from durable recovery evidence", async () => {
 		let initialExecutions = 0;
 		const unknown = await executeLedgeredOperation({
@@ -129,6 +159,31 @@ describe("executeLedgeredOperation", () => {
 		expect(recovered.status).toBe("completed");
 		expect(initialExecutions).toBe(1);
 		expect(recoveryCalls).toBe(1);
+	});
+
+	test("returns bounded schema issue paths for recoverable validation failures", async () => {
+		const result = await executeLedgeredOperation({
+			...operationSpec(ledger, "schema-detail"),
+			execute: async () => {
+				const error = new Error("validation failed") as Error & {
+					issues: Array<{ path: Array<string | number>; message: string }>;
+				};
+				error.name = "ZodError";
+				error.issues = [
+					{
+						path: ["fontReadiness", "descriptors", 0],
+						message: "variable face does not cover requested weight",
+					},
+				];
+				throw error;
+			},
+		});
+
+		expect(result).toMatchObject({
+			status: "recoverable",
+			reason:
+				"ZodError: fontReadiness.descriptors.0: variable face does not cover requested weight",
+		});
 	});
 
 	test("persists composite provider and artifact checkpoints for recovery", async () => {

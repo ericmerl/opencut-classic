@@ -71,6 +71,7 @@ export class McpLedgerBoundary {
 		recoverEffect?: (
 			context: McpOperationExecutionContext,
 		) => Promise<unknown | null>,
+		replayEffect?: () => Promise<unknown>,
 	): Promise<unknown> {
 		const definition = mutatingToolDefinition(toolName);
 		const operationId = readOperationId(toolName, input);
@@ -145,6 +146,7 @@ export class McpLedgerBoundary {
 			// is populated only from authoritative result data after the effect commits.
 			affectedObjects: [],
 			relationships: inputRelationships(toolName, input),
+			replay: replayEffect ? async () => replayEffect() : undefined,
 			recover: async (context) => {
 				const operationContext = this.withBrowserContext(
 					context,

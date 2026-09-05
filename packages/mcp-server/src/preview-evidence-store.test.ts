@@ -100,6 +100,32 @@ describe("preview evidence store", () => {
 		restarted.close();
 	});
 
+	test("accepts a requested weight covered by a variable font face", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "opencut-preview-test-"));
+		directories.push(directory);
+		const store = new PreviewEvidenceStore(directory, 32191);
+		const ticket = store.createTicket("preview-variable-font", 8, 8);
+		const id = new URL(ticket.url).pathname.split("/").at(-1)!;
+		await store.receive(
+			id,
+			new Request(ticket.url, {
+				method: "PUT",
+				headers: { "Content-Type": "image/png" },
+				body: requestBody(await testPng(8, 8)),
+			}),
+		);
+		const upload = (await store.uploadIdentity("preview-variable-font"))!;
+		const receipt = {
+			...makeReceipt(upload, { operationId: "preview-variable-font" }),
+			fontReadiness: variableFontReadiness(),
+		};
+
+		await expect(store.write(receipt)).resolves.toMatchObject({
+			operationId: "preview-variable-font",
+		});
+		store.close();
+	});
+
 	test("fails closed when a durable artifact is tampered with", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "opencut-preview-test-"));
 		directories.push(directory);
@@ -515,6 +541,49 @@ function fontReadiness(): PreviewFrameReceipt["fontReadiness"] {
 	return {
 		status: "ready",
 		families: ["Arial"],
+		descriptors: [descriptor],
+		descriptorsSha256: createHash("sha256")
+			.update(JSON.stringify([descriptor]))
+			.digest("hex"),
+	};
+}
+
+function variableFontReadiness(): PreviewFrameReceipt["fontReadiness"] {
+	const face = {
+		provenance: "bundled-font-bytes" as const,
+		family: "TikTok Sans",
+		style: "normal",
+		weight: "300 900",
+		stretch: "75% 125%",
+		unicodeRange: "U+0-10FFFF",
+		featureSettings: "normal",
+		display: "auto",
+		byteSha256: "a".repeat(64),
+	};
+	const matchedFace = {
+		...face,
+		identitySha256: createHash("sha256")
+			.update(JSON.stringify(face))
+			.digest("hex"),
+	};
+	const descriptorBase = {
+		family: "TikTok Sans",
+		style: "normal",
+		weight: "700",
+		stretch: "normal",
+		css: 'normal 700 16px "TikTok Sans"',
+	};
+	const descriptor = {
+		...descriptorBase,
+		identitySha256: createHash("sha256")
+			.update(JSON.stringify(descriptorBase))
+			.digest("hex"),
+		matchedFaceIdentities: [matchedFace.identitySha256],
+		matchedFaces: [matchedFace],
+	};
+	return {
+		status: "ready",
+		families: ["TikTok Sans"],
 		descriptors: [descriptor],
 		descriptorsSha256: createHash("sha256")
 			.update(JSON.stringify([descriptor]))
