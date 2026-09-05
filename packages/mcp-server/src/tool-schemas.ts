@@ -1902,7 +1902,7 @@ const mediaAnalysisProvenanceSchema = z
 							"retried",
 							"completed",
 						]),
-						occurredAt: z.string().trim().min(1).max(4_096),
+						occurredAt: z.iso.datetime({ precision: 3 }),
 					})
 					.strict(),
 			)
@@ -2047,6 +2047,12 @@ const mediaAnalysisSemanticInputsSchema = z.discriminatedUnion("kind", [
 			prompt: z.string().trim().min(1).max(4_096).nullable(),
 			initialBox: normalizedTrackingBoxSchema.nullable(),
 			maxSubjects: z.number().int().min(1).max(1_024),
+			range: z
+				.object({
+					startTicks: z.number().int().nonnegative(),
+					endTicks: z.number().int().positive(),
+				})
+				.strict(),
 		})
 		.strict(),
 	z
