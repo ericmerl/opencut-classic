@@ -35,6 +35,9 @@ describe("capability snapshot public MCP transport", () => {
 		const publicToolNames = (listed.tools as Array<Record<string, unknown>>)
 			.map((tool) => String(tool.name))
 			.sort();
+		const treatmentTool = (
+			listed.tools as Array<Record<string, unknown>>
+		).find((tool) => tool.name === "opencut_list_treatments");
 		const snapshot = await harness.callTool("opencut_capabilities");
 		const { snapshotHash, ...content } = snapshot;
 
@@ -42,6 +45,14 @@ describe("capability snapshot public MCP transport", () => {
 		expect((snapshot.tools as Record<string, unknown>).registered).toEqual(
 			publicToolNames,
 		);
+		expect(treatmentTool?.description).toContain(
+			"deterministic OpenCut-defined",
+		);
+		expect(treatmentTool?.description).toMatch(
+			/external pixel equivalence is not claimed/i,
+		);
+		expect(treatmentTool?.description).not.toContain("reference-missing");
+		expect(treatmentTool?.description).not.toContain("owner reference");
 		expect(snapshotHash).toBe(hashCapabilitySnapshot(content));
 		expect(snapshot).toMatchObject({
 			schemaVersion: 1,

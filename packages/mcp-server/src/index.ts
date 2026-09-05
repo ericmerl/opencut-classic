@@ -1356,7 +1356,7 @@ function createServer(): McpServer {
 		"opencut_list_treatments",
 		{
 			description:
-				"List the Rust-owned named Simple Media treatment catalog, or resolve one stable treatment ID. Readiness is reference-missing until audit row E records an owner reference and numeric tolerance; catalog presence does not claim exact rendering.",
+				"List the Rust-owned named Simple Media treatment catalog, or resolve one stable treatment ID, including deterministic OpenCut-defined rendering behavior. External pixel equivalence is not claimed.",
 			inputSchema: z
 				.object({ treatmentId: z.string().trim().min(1).optional() })
 				.strict(),
