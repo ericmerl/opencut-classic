@@ -22,6 +22,8 @@ bun.lockb
 .open-next
 
 target/
+__pycache__/
+*.pyc
 
 .cargo-tools/
 

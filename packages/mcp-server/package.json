@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
+		"acquire-approved-models": "bun run scripts/acquire-approved-models.ts",
 		"check-types": "tsc --noEmit"
 	},
 	"dependencies": {

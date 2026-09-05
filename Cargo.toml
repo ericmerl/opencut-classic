@@ -11,7 +11,8 @@ members = [
     "rust/crates/edit-plan",
     "rust/crates/project-state",
     "rust/crates/comparison",
-	"rust/crates/review-evidence",
+    "rust/crates/review-evidence",
+    "rust/crates/media-foundation",
     "rust/wasm",
     "rust/crates/compositor",
 ]

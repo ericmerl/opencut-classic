@@ -297,6 +297,11 @@ export const MUTATING_TOOL_MANIFEST = {
 		requiresSaveVerification: false,
 		protocolMutationPolicy: "v2-required",
 	},
+	opencut_create_media_analysis: {
+		operationKind: "create-media-analysis",
+		requiresSaveVerification: false,
+		protocolMutationPolicy: "v2-required",
+	},
 	opencut_create_editorial_decision: {
 		operationKind: "create-editorial-decision",
 		requiresSaveVerification: false,

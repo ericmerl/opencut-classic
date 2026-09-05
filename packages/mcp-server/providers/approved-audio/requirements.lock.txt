@@ -1,0 +1,8 @@
+# Install from the approved immutable source commits; hashes of the model files
+# are independently enforced at every inference by provider.py.
+numpy==2.3.2
+onnxruntime==1.22.1
+torch==2.8.0
+torchaudio==2.8.0
+speechbrain @ git+https://github.com/speechbrain/speechbrain.git@89ead74d163463d30c62329a09cfdb4c54f5abc1
+openunmix @ git+https://github.com/sigsep/open-unmix-pytorch.git@814f144e34b2d1ed517eb605ce928dcb838abbed

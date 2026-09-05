@@ -72,6 +72,7 @@ const successes: Record<MutatingToolName, Record<string, unknown>> = {
 	opencut_correct_transcript: { status: "corrected" },
 	opencut_analyze_speech: { status: "analyzed" },
 	opencut_create_editorial_decision: { status: "created" },
+	opencut_create_media_analysis: { status: "created" },
 	opencut_reapply_editorial_decision: { status: "created" },
 	opencut_export_editorial_decision_json: { status: "exported" },
 	opencut_import_editorial_decision_json: { status: "imported" },

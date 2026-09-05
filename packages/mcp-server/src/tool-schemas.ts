@@ -1864,6 +1864,404 @@ export const getSpeechAnalysisInputSchema = z
 	.object({ analysisId: transcriptIdentifierSchema })
 	.strict();
 
+export const getMediaCapabilityCatalogInputSchema = z
+	.object({
+		taskIds: z.array(z.string().trim().min(1)).max(4).optional(),
+	})
+	.strict();
+
+// This transport guard mirrors Rust's `require_text`; Rust remains authoritative
+// for all semantic validation performed after the MCP boundary.
+const mediaAnalysisIdentifierSchema = z.string().trim().min(1).max(4_096);
+const mediaAnalysisSha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+const mediaAnalysisSourceSchema = z
+	.object({
+		assetId: mediaAnalysisIdentifierSchema,
+		mediaKind: z.enum(["audio", "video"]),
+		durationTicks: z.number().int().positive(),
+		contentSha256: mediaAnalysisSha256Schema,
+		bytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+	})
+	.strict();
+const mediaAnalysisProvenanceSchema = z
+	.object({
+		origin: z.literal("external-result"),
+		approvalStatus: z.enum(["unverified", "approved"]),
+		providerId: mediaAnalysisIdentifierSchema,
+		adapterId: mediaAnalysisIdentifierSchema,
+		adapterVersion: mediaAnalysisIdentifierSchema,
+		model: z
+			.object({
+				id: mediaAnalysisIdentifierSchema,
+				version: mediaAnalysisIdentifierSchema,
+				sha256: mediaAnalysisSha256Schema,
+				source: z.string().trim().min(1).max(4_096),
+				license: z.string().trim().min(1).max(4_096),
+			})
+			.strict(),
+		runtime: mediaAnalysisIdentifierSchema,
+		device: z.enum(["cpu", "cuda", "webgpu", "other"]),
+		warnings: z
+			.array(z.string().trim().min(1).max(4_096))
+			.max(1_000)
+			.default([]),
+		fallbackReason: z.string().trim().min(1).max(4_096).nullable(),
+		lifecycleEvents: z
+			.array(
+				z
+					.object({
+						sequence: z.number().int().positive(),
+						attempt: z.number().int().positive(),
+						kind: z.enum([
+							"submitted",
+							"started",
+							"progress",
+							"retried",
+							"completed",
+						]),
+						occurredAt: z.iso.datetime({ precision: 3 }),
+					})
+					.strict(),
+			)
+			.min(1)
+			.max(10_000),
+		cost: z
+			.object({
+				status: z.enum(["not-incurred", "external-unverified"]),
+				amount: z.number().finite().nonnegative(),
+				currency: z.string().trim().min(1).max(64).nullable(),
+			})
+			.strict(),
+		outputArtifacts: z
+			.array(
+				z
+					.object({
+						artifactId: mediaAnalysisIdentifierSchema,
+						kind: mediaAnalysisIdentifierSchema,
+						contentSha256: mediaAnalysisSha256Schema,
+						bytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+					})
+					.strict(),
+			)
+			.max(100_000),
+	})
+	.strict();
+const normalizedTrackingBoxSchema = z
+	.object({
+		x: z.number().finite(),
+		y: z.number().finite(),
+		width: z.number().finite(),
+		height: z.number().finite(),
+	})
+	.strict();
+const trackingPayloadSchema = z
+	.object({
+		kind: z.literal("subject-tracking"),
+		coverage: z
+			.object({
+				startTicks: z.number().int(),
+				endTicks: z.number().int(),
+			})
+			.strict(),
+		subjects: z
+			.array(
+				z
+					.object({
+						subjectId: mediaAnalysisIdentifierSchema,
+						label: z.string().trim().min(1).max(512).nullable().optional(),
+						samples: z
+							.array(
+								z
+									.object({
+										sampleId: mediaAnalysisIdentifierSchema,
+										sourceTimeTicks: z.number().int(),
+										box: normalizedTrackingBoxSchema,
+										confidence: z.number().finite(),
+										occlusion: z.enum([
+											"visible",
+											"partial",
+											"occluded",
+											"unknown",
+										]),
+									})
+									.strict(),
+							)
+							.min(2)
+							.max(1_000_000),
+						corrections: z
+							.array(
+								z
+									.object({
+										correctionId: mediaAnalysisIdentifierSchema,
+										sourceTimeTicks: z.number().int(),
+										box: normalizedTrackingBoxSchema,
+										note: z.string().trim().min(1).max(4_096),
+									})
+									.strict(),
+							)
+							.max(100_000)
+							.default([]),
+					})
+					.strict(),
+			)
+			.min(1)
+			.max(10_000),
+		attachments: z
+			.array(
+				z
+					.object({
+						attachmentId: mediaAnalysisIdentifierSchema,
+						kind: z.enum(["reframe", "mask", "effect"]),
+						targetId: mediaAnalysisIdentifierSchema,
+						subjectId: mediaAnalysisIdentifierSchema,
+						sourceContentSha256: mediaAnalysisSha256Schema,
+					})
+					.strict(),
+			)
+			.max(100_000)
+			.default([]),
+	})
+	.strict();
+const activityRangeSchema = z
+	.object({
+		rangeId: mediaAnalysisIdentifierSchema,
+		startTicks: z.number().int(),
+		endTicks: z.number().int(),
+		confidence: z.number().finite(),
+	})
+	.strict();
+const voiceActivityPayloadSchema = z
+	.object({
+		kind: z.literal("voice-activity"),
+		channel: mediaAnalysisIdentifierSchema,
+		ranges: z.array(activityRangeSchema).max(100_000),
+		corrections: z
+			.array(
+				z
+					.object({
+						correctionId: mediaAnalysisIdentifierSchema,
+						action: z.enum(["upsert", "remove"]),
+						rangeId: mediaAnalysisIdentifierSchema,
+						range: activityRangeSchema.nullable(),
+						note: z.string().trim().min(1).max(4_096),
+					})
+					.strict(),
+			)
+			.max(100_000)
+			.default([]),
+	})
+	.strict();
+const mediaAnalysisSemanticInputsSchema = z.discriminatedUnion("kind", [
+	z
+		.object({
+			kind: z.literal("subject-tracking"),
+			sampling: z
+				.object({
+					intervalTicks: z.number().int().positive(),
+					maxSamples: z.number().int().min(2).max(1_000_000),
+				})
+				.strict(),
+			prompt: z.string().trim().min(1).max(4_096).nullable(),
+			initialBox: normalizedTrackingBoxSchema.nullable(),
+			maxSubjects: z.number().int().min(1).max(1_024),
+			range: z
+				.object({
+					startTicks: z.number().int().nonnegative(),
+					endTicks: z.number().int().positive(),
+				})
+				.strict(),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("voice-activity-detection"),
+			channel: mediaAnalysisIdentifierSchema,
+			threshold: z.number().finite().min(0).max(1),
+			minimumDurationTicks: z.number().int().positive(),
+			paddingTicks: z.number().int().nonnegative(),
+			range: z
+				.object({
+					startTicks: z.number().int().nonnegative(),
+					endTicks: z.number().int().positive(),
+				})
+				.strict(),
+		})
+		.strict(),
+]);
+const mediaAnalysisDraftSchema = z
+	.object({
+		schemaVersion: z.literal("opencut.media-analysis.v1"),
+		analysisId: mediaAnalysisIdentifierSchema,
+		projectId: mediaAnalysisIdentifierSchema,
+		sceneId: mediaAnalysisIdentifierSchema,
+		taskId: mediaAnalysisIdentifierSchema,
+		source: mediaAnalysisSourceSchema,
+		semanticInputs: mediaAnalysisSemanticInputsSchema,
+		provenance: mediaAnalysisProvenanceSchema,
+		payload: z.discriminatedUnion("kind", [
+			trackingPayloadSchema,
+			voiceActivityPayloadSchema,
+		]),
+	})
+	.strict();
+
+export const createMediaAnalysisInputSchema = withMutationOperationId(
+	z
+		.object({
+			operationId: operationIdSchema.optional(),
+			analysis: mediaAnalysisDraftSchema,
+		})
+		.strict(),
+);
+
+export const getMediaAnalysisInputSchema = z
+	.object({ analysisId: mediaAnalysisIdentifierSchema })
+	.strict();
+
+const audioProcessorSchema = z.discriminatedUnion("kind", [
+	z
+		.object({
+			kind: z.literal("equalizer"),
+			bands: z
+				.array(
+					z
+						.object({
+							bandId: mediaAnalysisIdentifierSchema,
+							kind: z.enum([
+								"high-pass",
+								"low-pass",
+								"low-shelf",
+								"high-shelf",
+								"bell",
+								"notch",
+							]),
+							frequencyHz: z.number().finite(),
+							gainDb: z.number().finite(),
+							q: z.number().finite(),
+						})
+						.strict(),
+				)
+				.min(1)
+				.max(128),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("compressor"),
+			thresholdDb: z.number().finite(),
+			ratio: z.number().finite(),
+			attackMs: z.number().finite(),
+			releaseMs: z.number().finite(),
+			makeupGainDb: z.number().finite(),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("limiter"),
+			ceilingDb: z.number().finite(),
+			releaseMs: z.number().finite(),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("gate"),
+			thresholdDb: z.number().finite(),
+			attackMs: z.number().finite(),
+			holdMs: z.number().finite(),
+			releaseMs: z.number().finite(),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("de-esser"),
+			frequencyHz: z.number().finite(),
+			thresholdDb: z.number().finite(),
+			ratio: z.number().finite(),
+		})
+		.strict(),
+	z.object({ kind: z.literal("pan"), pan: z.number().finite() }).strict(),
+	z
+		.object({
+			kind: z.literal("channel-map"),
+			inputChannels: z.number().int().positive(),
+			outputChannels: z.number().int().positive(),
+			mapping: z
+				.array(
+					z
+						.object({
+							input: z.number().int().nonnegative(),
+							output: z.number().int().nonnegative(),
+							gainDb: z.number().finite(),
+						})
+						.strict(),
+				)
+				.max(1_024),
+		})
+		.strict(),
+	z.object({ kind: z.literal("gain"), gainDb: z.number().finite() }).strict(),
+]);
+const audioStageScopeSchema = z.discriminatedUnion("kind", [
+	z
+		.object({ kind: z.literal("clip"), clipId: mediaAnalysisIdentifierSchema })
+		.strict(),
+	z
+		.object({
+			kind: z.literal("track"),
+			trackId: mediaAnalysisIdentifierSchema,
+		})
+		.strict(),
+	z.object({ kind: z.literal("master") }).strict(),
+]);
+const audioProcessingGraphSchema = z
+	.object({
+		schemaVersion: z.literal("opencut.audio-processing-graph.v1"),
+		stages: z
+			.array(
+				z
+					.object({
+						scope: audioStageScopeSchema,
+						processors: z
+							.array(
+								z
+									.object({
+										nodeId: mediaAnalysisIdentifierSchema,
+										order: z.number().int().nonnegative(),
+										enabled: z.boolean(),
+										processor: audioProcessorSchema,
+									})
+									.strict(),
+							)
+							.max(1_000),
+					})
+					.strict(),
+			)
+			.max(10_000),
+	})
+	.strict();
+
+export const planAudioPostInputSchema = z
+	.object({
+		analysisId: mediaAnalysisIdentifierSchema,
+		expectedAnalysisContentHash: mediaAnalysisSha256Schema,
+		currentSource: z
+			.object({
+				assetId: mediaAnalysisIdentifierSchema,
+				contentSha256: mediaAnalysisSha256Schema,
+				durationTicks: z.number().int().positive(),
+			})
+			.strict(),
+		graph: audioProcessingGraphSchema,
+		ducking: z
+			.object({
+				targetTrackId: mediaAnalysisIdentifierSchema,
+				reductionDb: z.number().finite(),
+				attackTicks: z.number().int().nonnegative(),
+				releaseTicks: z.number().int().nonnegative(),
+			})
+			.strict(),
+	})
+	.strict();
+
 const editorialSelectionInputSchema = z.discriminatedUnion("kind", [
 	z
 		.object({
@@ -2074,6 +2472,17 @@ export const trackSubjectInputSchema = z.object({
 	trackingMode: z.enum(["focal-point", "crop"]).default("focal-point"),
 	subjectPrompt: z.string().trim().min(1).optional(),
 	initialBox: normalizedRectSchema.optional(),
+	corrections: z
+		.array(
+			z.object({
+				correctionId: z.string().trim().min(1),
+				sourceTimeTicks: z.number().int().nonnegative(),
+				box: normalizedRectSchema,
+				note: z.string().trim().min(1).max(4_096),
+			}),
+		)
+		.max(10_000)
+		.default([]),
 	sampleIntervalTicks: z
 		.number()
 		.int()

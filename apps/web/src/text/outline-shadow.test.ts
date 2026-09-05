@@ -57,7 +57,7 @@ function paint(params: Record<string, string | number | boolean>) {
 		CANVAS.width,
 		CANVAS.height,
 	);
-	const counts = { white: 0, dark: 0, darkRight: 0, darkLeft: 0 };
+	const counts = { white: 0, dark: 0, darkXTotal: 0 };
 	for (let y = 0; y < height; y++) {
 		for (let x = 0; x < width; x++) {
 			const offset = (y * width + x) * 4;
@@ -71,8 +71,7 @@ function paint(params: Record<string, string | number | boolean>) {
 			if (r > 230 && g > 230 && b > 230) counts.white += 1;
 			else if (r < 60 && g < 60 && b < 60) {
 				counts.dark += 1;
-				if (x > width / 2) counts.darkRight += 1;
-				else counts.darkLeft += 1;
+				counts.darkXTotal += x;
 			}
 		}
 	}
@@ -120,17 +119,27 @@ describe("text outline and drop shadow", () => {
 	});
 
 	test("offsets the drop shadow in the requested direction", () => {
-		const shadowed = paint({
+		const rightShadow = paint({
 			"shadow.enabled": true,
 			"shadow.color": "#000000",
 			"shadow.offsetX": 0.25,
 			"shadow.offsetY": 0,
 			"shadow.blur": 0,
 		});
-		expect(shadowed.counts.dark).toBeGreaterThan(0);
-		// Shifted right, the shadow leaks past the right edge of the text more
-		// than the left edge.
-		expect(shadowed.counts.darkRight).toBeGreaterThan(shadowed.counts.darkLeft);
+		const leftShadow = paint({
+			"shadow.enabled": true,
+			"shadow.color": "#000000",
+			"shadow.offsetX": -0.25,
+			"shadow.offsetY": 0,
+			"shadow.blur": 0,
+		});
+		expect(rightShadow.counts.dark).toBeGreaterThan(0);
+		expect(leftShadow.counts.dark).toBeGreaterThan(0);
+		// Compare the shadow centroids rather than splitting at the canvas center.
+		// Glyph shapes and fallback fonts are asymmetric across CI platforms.
+		expect(
+			rightShadow.counts.darkXTotal / rightShadow.counts.dark,
+		).toBeGreaterThan(leftShadow.counts.darkXTotal / leftShadow.counts.dark);
 	});
 
 	test("widens the visual rect by the outline and shadow extents", () => {

@@ -885,20 +885,28 @@ describe("OpenCut subject-tracking MCP contract", () => {
 		}
 	});
 
-	test("accepts a prompt, initial box, crop tracking, and provider options", () => {
-		expect(
-			trackSubjectInputSchema.safeParse({
-				projectId: "project-1",
-				operationId: "track-2",
-				expectedRevision: 3,
-				trackId: "main",
-				elementId: "video-1",
-				trackingMode: "crop",
-				subjectPrompt: "presenter",
-				initialBox: { x: 0.1, y: 0.1, width: 0.4, height: 0.8 },
-				options: { detector: "person", redetect: true },
-			}).success,
-		).toBe(true);
+	test("accepts a prompt, initial box, correction boxes, crop tracking, and provider options", () => {
+		const result = trackSubjectInputSchema.safeParse({
+			projectId: "project-1",
+			operationId: "track-2",
+			expectedRevision: 3,
+			trackId: "main",
+			elementId: "video-1",
+			trackingMode: "crop",
+			subjectPrompt: "presenter",
+			initialBox: { x: 0.1, y: 0.1, width: 0.4, height: 0.8 },
+			corrections: [
+				{
+					correctionId: "correction-1",
+					sourceTimeTicks: 120_000,
+					box: { x: 0.2, y: 0.1, width: 0.4, height: 0.8 },
+					note: "reacquire after occlusion",
+				},
+			],
+			options: { detector: "person", redetect: true },
+		});
+		expect(result.success).toBe(true);
+		if (result.success) expect(result.data.corrections).toHaveLength(1);
 	});
 });
 

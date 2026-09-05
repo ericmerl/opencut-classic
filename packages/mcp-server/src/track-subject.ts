@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
 import { hashSourceFile } from "./matte-producer";
 import {
 	commandSubjectTrackerFromEnvironment,
+	APPROVED_SAM21_MODEL,
 	type NormalizedTrackingBox,
 	type SubjectTrackerJob,
 	type SubjectTrackerResult,
@@ -32,6 +33,12 @@ export interface TrackSubjectInput {
 	trackingMode: "focal-point" | "crop";
 	subjectPrompt?: string;
 	initialBox?: NormalizedTrackingBox;
+	corrections: Array<{
+		correctionId: string;
+		sourceTimeTicks: number;
+		box: NormalizedTrackingBox;
+		note: string;
+	}>;
 	sampleIntervalTicks: number;
 	maxSamples: number;
 	minConfidence: number;
@@ -176,6 +183,13 @@ export class SubjectTrackingService {
 				);
 		const jobDirectory = await mkdtemp(join(tmpdir(), "opencut-track-job-"));
 		try {
+			const outputDirectory = this.providerResultDirectory
+				? join(
+						this.providerResultDirectory,
+						sanitizeFileName(input.operationId),
+					)
+				: join(jobDirectory, "outputs");
+			await mkdir(outputDirectory, { recursive: true });
 			const sourcePath = join(
 				jobDirectory,
 				`source-${sanitizeFileName(clip.name)}`,
@@ -214,6 +228,7 @@ export class SubjectTrackingService {
 					sourcePath,
 					sourceContentHash,
 					transfer,
+					outputDirectory,
 				}),
 				input.timeoutSeconds * 1000,
 			);
@@ -508,15 +523,17 @@ function buildTrackerJob({
 	sourcePath,
 	sourceContentHash,
 	transfer,
+	outputDirectory,
 }: {
 	input: TrackSubjectInput;
 	clip: TrackingClip;
 	sourcePath: string;
 	sourceContentHash: string;
 	transfer: ReturnType<typeof asTransferResult>;
+	outputDirectory: string;
 }): SubjectTrackerJob {
 	return {
-		protocolVersion: 1,
+		protocolVersion: 2,
 		operationId: input.operationId,
 		timebase: { ticksPerSecond: TICKS_PER_SECOND },
 		source: {
@@ -540,22 +557,23 @@ function buildTrackerJob({
 			intervalTicks: input.sampleIntervalTicks,
 			maxSamples: input.maxSamples,
 		},
-		...(input.subjectPrompt || input.initialBox
+		coverage: { startTicks: 0, endTicks: clip.sourceDurationTicks },
+		outputDirectory,
+		...(input.subjectPrompt || input.initialBox || input.corrections.length > 0
 			? {
 					subject: {
 						...(input.subjectPrompt ? { prompt: input.subjectPrompt } : {}),
 						...(input.initialBox ? { initialBox: input.initialBox } : {}),
+						corrections: input.corrections,
 					},
 				}
 			: {}),
-		...(input.modelId || input.modelVersion
-			? {
-					requestedModel: {
-						...(input.modelId ? { id: input.modelId } : {}),
-						...(input.modelVersion ? { version: input.modelVersion } : {}),
-					},
-				}
-			: {}),
+		requestedModel: {
+			id: APPROVED_SAM21_MODEL.id,
+			revision: APPROVED_SAM21_MODEL.revision,
+			artifactSha256: APPROVED_SAM21_MODEL.artifactSha256,
+			codeRevision: APPROVED_SAM21_MODEL.codeRevision,
+		},
 		options: input.options,
 	};
 }
