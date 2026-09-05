@@ -331,10 +331,13 @@ export class SplitElementsCommand extends Command {
 }
 
 function assertTrackTransitionsValid(track: TimelineTrack): void {
-	for (const { transition, fromElement, toElement } of getTrackTransitionStates({
-		track,
-	})) {
-		if (!fromElement) throw new Error("retained transition endpoint is missing");
+	for (const { transition, fromElement, toElement } of getTrackTransitionStates(
+		{
+			track,
+		},
+	)) {
+		if (!fromElement)
+			throw new Error("retained transition endpoint is missing");
 		const validation = OpenCutWasm.evaluateStoredTransition({
 			transitionId: transition.id,
 			transitionType: transition.type,

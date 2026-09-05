@@ -35,9 +35,9 @@ describe("capability snapshot public MCP transport", () => {
 		const publicToolNames = (listed.tools as Array<Record<string, unknown>>)
 			.map((tool) => String(tool.name))
 			.sort();
-		const treatmentTool = (
-			listed.tools as Array<Record<string, unknown>>
-		).find((tool) => tool.name === "opencut_list_treatments");
+		const treatmentTool = (listed.tools as Array<Record<string, unknown>>).find(
+			(tool) => tool.name === "opencut_list_treatments",
+		);
 		const snapshot = await harness.callTool("opencut_capabilities");
 		const { snapshotHash, ...content } = snapshot;
 
@@ -102,7 +102,24 @@ describe("capability snapshot public MCP transport", () => {
 
 		const treatments = await harness.callTool("opencut_list_treatments");
 		expect(treatments.schemaVersion).toBe("opencut.media-treatment-catalog.v1");
-		const filmFrame = requireRecords(treatments.treatments).find(
+		const treatmentEntries = requireRecords(treatments.treatments);
+		expect(treatmentEntries.map((treatment) => treatment.id)).toEqual([
+			"simple-media.film-frame",
+			"simple-media.play-pendulum",
+			"simple-media.technicolor-flash",
+			"simple-media.scanner-bar",
+			"simple-media.glitch",
+			"simple-media.chromatic",
+			"simple-media.dark-night",
+			"simple-media.mirror",
+			"simple-media.body-treatment",
+			"simple-media.meme-treatment",
+			"simple-media.pull-in",
+			"simple-media.pull-out",
+			"simple-media.swipe-left",
+			"simple-media.montage-curve",
+		]);
+		const filmFrame = treatmentEntries.find(
 			(treatment) => treatment.id === "simple-media.film-frame",
 		);
 		expect(filmFrame).toMatchObject({
@@ -146,6 +163,13 @@ describe("capability snapshot public MCP transport", () => {
 		const transitions = await harness.callTool("opencut_list_transitions");
 		expect(transitions.schemaVersion).toBe("opencut.transition-catalog.v1");
 		const transitionEntries = requireRecords(transitions.transitions);
+		expect(transitionEntries.map((transition) => transition.id)).toEqual([
+			"crossfade",
+			"fade-through-black",
+			"slide",
+			"wipe",
+			"zoom",
+		]);
 		expect(
 			transitionEntries.find((transition) => transition.id === "crossfade"),
 		).toMatchObject({
@@ -166,6 +190,18 @@ describe("capability snapshot public MCP transport", () => {
 			compoundBoundaryPolicy: "unsupported",
 			maskedIncomingPolicy: "unsupported",
 		});
+		expect(
+			(
+				await harness.callTool("opencut_list_transitions", {
+					transitionId: "fade-through-black",
+				})
+			).transitions,
+		).toEqual([
+			expect.objectContaining({
+				id: "fade-through-black",
+				compoundBoundaryPolicy: "supported",
+			}),
+		]);
 		expect(snapshot).toMatchObject({
 			catalogs: {
 				mediaTreatments: {

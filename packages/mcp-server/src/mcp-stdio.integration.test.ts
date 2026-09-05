@@ -1155,6 +1155,13 @@ integrationTest(
 			"simple-media.swipe-left",
 			"simple-media.montage-curve",
 		] as const;
+		const ordinaryTransitionTypes = [
+			"crossfade",
+			"fade-through-black",
+			"slide",
+			"wipe",
+			"zoom",
+		] as const;
 		const sources: ReadonlyArray<readonly [string, string]> = [
 			["red", "color=c=0xd02020:size=320x240:rate=30:duration=2"],
 			["green", "color=c=0x20d040:size=320x240:rate=30:duration=2"],
@@ -1295,6 +1302,42 @@ integrationTest(
 			},
 		);
 		expect(invalidTransition).toMatchObject({ result: { status: "rejected" } });
+		const sourcePreviewBase = {
+			...affinity(firstIdentity),
+			contractVersion: 2,
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(state.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(state),
+			expectedWriteVersion: requireNumber(saved.writeVersion, "writeVersion"),
+			saveReceiptOperationId: "named-treatment-source-save",
+			expectedSaveReceiptId: requireString(saved.receiptId, "save receiptId"),
+			canvasSize: { width: 320, height: 240 },
+			format: "png",
+		};
+		const untreatedTreatmentRgba = new Map<string, Buffer>();
+		for (const [index, treatmentId] of treatmentIds.entries()) {
+			const untreated = await first.callTool(
+				"opencut_render_preview_frame",
+				{
+					...sourcePreviewBase,
+					operationId: `named-treatment-${index}-untreated-preview`,
+					time: {
+						kind: "media-time",
+						ticks: (index + 3) * 240_000 + 12_000,
+						rounding: "exact",
+					},
+				},
+				5 * 60_000,
+			);
+			expect(untreated).toMatchObject({ status: "rendered" });
+			untreatedTreatmentRgba.set(
+				treatmentId,
+				await extractRgba(
+					requireString(untreated.outputPath, "untreated outputPath"),
+				),
+			);
+		}
 
 		const treatmentElementIds = elementIds.slice(3);
 		const treatmentOperations = treatmentIds.map((treatmentId, index) => ({
@@ -1308,6 +1351,36 @@ integrationTest(
 				: {}),
 			enabled: true,
 		}));
+		const ordinaryTransitionCases = ordinaryTransitionTypes.map(
+			(transitionType, index) => {
+				const fromTreatmentIndex = 1 + index * 2;
+				const toTreatmentIndex = fromTreatmentIndex + 1;
+				return {
+					label: `ordinary-${transitionType}`,
+					transitionId: `ordinary-${transitionType}`,
+					transitionType,
+					fromElementId: treatmentElementIds[fromTreatmentIndex],
+					toElementId: treatmentElementIds[toTreatmentIndex],
+					ticks: (toTreatmentIndex + 3) * 240_000 + 28_000,
+				};
+			},
+		);
+		const compoundBoundaryCases = [
+			{
+				label: "compound-incoming",
+				transitionId: "outer-crossfade",
+				fromElementId: elementIds[0],
+				toElementId: "transition-compound",
+				ticks: 268_000,
+			},
+			{
+				label: "compound-outgoing",
+				transitionId: "outer-outgoing-crossfade",
+				fromElementId: "transition-compound",
+				toElementId: treatmentElementIds[0],
+				ticks: 748_000,
+			},
+		] as const;
 		const operations = [
 			...treatmentOperations,
 			{
@@ -1329,15 +1402,6 @@ integrationTest(
 				})),
 				relationshipScope: "element",
 				targetTrackId: trackId,
-			},
-			{
-				kind: "upsert_transition",
-				trackId,
-				transitionId: "outer-crossfade",
-				fromElementId: elementIds[0],
-				toElementId: "transition-compound",
-				transitionType: "crossfade",
-				duration: 60_000,
 			},
 		];
 		const preflight = await first.callTool("opencut_preflight_edit_plan", {
@@ -1373,7 +1437,7 @@ integrationTest(
 				planDiffHash: requireString(evaluation.planDiffHash, "planDiffHash"),
 			},
 		});
-		expect(applied.status).toBe("applied");
+		expect(applied).toMatchObject({ status: "applied" });
 		const appliedSnapshot = requireRecord(applied.snapshot, "applied snapshot");
 		const firstElement = requireRecords(
 			appliedSnapshot.elements,
@@ -1418,21 +1482,142 @@ integrationTest(
 				params: { mix: 0.75 },
 			}),
 		);
+		let boundarySave = await restarted.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "named-treatment-foundation-save",
+			expectedRevision: requireNumber(reloaded.revision, "revision"),
+			expectedContentHash: requireProjectContentHash(reloaded),
+		});
+		const boundaryOperations = [
+			...compoundBoundaryCases.map((transition) => ({
+				kind: "upsert_transition",
+				trackId,
+				transitionId: transition.transitionId,
+				fromElementId: transition.fromElementId,
+				toElementId: transition.toElementId,
+				transitionType: "crossfade",
+				duration: 60_000,
+			})),
+			...ordinaryTransitionCases.map((transition) => ({
+				kind: "upsert_transition",
+				trackId,
+				transitionId: transition.transitionId,
+				fromElementId: transition.fromElementId,
+				toElementId: transition.toElementId,
+				transitionType: transition.transitionType,
+				duration: 60_000,
+			})),
+		];
+		let boundarySnapshot = reloaded;
+		let boundaryRevision = requireNumber(reloaded.revision, "revision");
+		for (const [index, operation] of boundaryOperations.entries()) {
+			const boundaryPreflight = await restarted.callTool(
+				"opencut_preflight_edit_plan",
+				{
+					contractVersion: 2,
+					...affinity(identity),
+					projectId,
+					sceneId,
+					expectedRevision: boundaryRevision,
+					expectedProjectContentHash:
+						requireProjectContentHash(boundarySnapshot),
+					expectedWriteVersion: requireNumber(
+						boundarySave.writeVersion,
+						"boundary writeVersion",
+					),
+					saveReceiptOperationId:
+						index === 0
+							? "named-treatment-foundation-save"
+							: `named-treatment-boundary-${index - 1}-save`,
+					expectedSaveReceiptId: requireString(
+						boundarySave.receiptId,
+						"boundary save receiptId",
+					),
+					preflightId: `named-treatment-boundary-${index}-preflight`,
+					description: `Add supported boundary ${index}`,
+					operations: [operation],
+					policy: {
+						warningPolicy: "allow",
+						providerExecution: "forbidden",
+						costPolicy: "require-exact",
+					},
+				},
+			);
+			expect(boundaryPreflight).toMatchObject({
+				result: { status: "validated" },
+			});
+			const boundaryEvaluation = requireRecord(
+				requireRecord(boundaryPreflight.result, "boundary preflight result")
+					.evaluation,
+				"boundary evaluation",
+			);
+			const boundaryApplied = await restarted.callTool(
+				"opencut_apply_edit_plan",
+				{
+					...affinity(identity),
+					projectId,
+					sceneId,
+					operationId: `named-treatment-boundary-${index}-apply`,
+					expectedRevision: boundaryRevision,
+					expectedProjectContentHash:
+						requireProjectContentHash(boundarySnapshot),
+					description: `Add supported boundary ${index}`,
+					operations: [operation],
+					preflight: {
+						receiptId: requireString(
+							boundaryPreflight.receiptId,
+							"boundary preflight receiptId",
+						),
+						planFingerprint: requireString(
+							boundaryEvaluation.planFingerprint,
+							"boundary planFingerprint",
+						),
+						preflightFingerprint: requireString(
+							boundaryEvaluation.preflightFingerprint,
+							"boundary preflightFingerprint",
+						),
+						planDiffHash: requireString(
+							boundaryEvaluation.planDiffHash,
+							"boundary planDiffHash",
+						),
+					},
+				},
+			);
+			expect(boundaryApplied).toMatchObject({ status: "applied" });
+			boundarySnapshot = requireRecord(
+				boundaryApplied.snapshot,
+				"boundary snapshot",
+			);
+			boundaryRevision = requireNumber(
+				boundaryApplied.revision,
+				"boundary revision",
+			);
+			boundarySave = await restarted.callTool("opencut_save_project", {
+				...affinity(identity),
+				projectId,
+				sceneId,
+				operationId: `named-treatment-boundary-${index}-save`,
+				expectedRevision: boundaryRevision,
+				expectedContentHash: requireProjectContentHash(boundarySnapshot),
+			});
+		}
 		const paritySave = await restarted.callTool("opencut_save_project", {
 			...affinity(identity),
 			projectId,
 			sceneId,
 			operationId: "named-treatment-parity-save",
-			expectedRevision: requireNumber(reloaded.revision, "revision"),
-			expectedContentHash: requireProjectContentHash(reloaded),
+			expectedRevision: boundaryRevision,
+			expectedContentHash: requireProjectContentHash(boundarySnapshot),
 		});
 		const previewBase = {
 			...affinity(identity),
 			contractVersion: 2,
 			projectId,
 			sceneId,
-			expectedRevision: requireNumber(reloaded.revision, "revision"),
-			expectedProjectContentHash: requireProjectContentHash(reloaded),
+			expectedRevision: boundaryRevision,
+			expectedProjectContentHash: requireProjectContentHash(boundarySnapshot),
 			expectedWriteVersion: requireNumber(
 				paritySave.writeVersion,
 				"writeVersion",
@@ -1482,10 +1667,8 @@ integrationTest(
 			const treatmentRgba = await extractRgba(
 				requireString(treatmentPreview.outputPath, "treatment outputPath"),
 			);
-			const untreatedRgba = await extractRgba(
-				join(directory, `treatment-${index}.mp4`),
-				12_000 / MEDIA_TICKS_PER_SECOND,
-			);
+			const untreatedRgba = untreatedTreatmentRgba.get(treatmentId);
+			if (!untreatedRgba) throw new Error(`missing control for ${treatmentId}`);
 			expect(
 				rgbaComparisonMetrics(treatmentRgba, untreatedRgba).meanAbsoluteError,
 			).toBeGreaterThan(0.5);
@@ -1504,10 +1687,13 @@ integrationTest(
 				minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
 			});
 		}
-		for (const [label, ticks] of [
-			["compound-boundary", 268_000],
-			["nested-simple-boundary", 508_000],
-		] as const) {
+		const initialTransitionCases = [
+			...ordinaryTransitionCases.map(({ label, ticks }) => ({ label, ticks })),
+			...compoundBoundaryCases.map(({ label, ticks }) => ({ label, ticks })),
+			{ label: "nested-simple-boundary", ticks: 508_000 },
+		];
+		const transitionRgbaByLabel = new Map<string, Buffer>();
+		for (const { label, ticks } of initialTransitionCases) {
 			const preview = await restarted.callTool(
 				"opencut_render_preview_frame",
 				{
@@ -1521,6 +1707,7 @@ integrationTest(
 			const previewRgba = await extractRgba(
 				requireString(preview.outputPath, "preview outputPath"),
 			);
+			transitionRgbaByLabel.set(label, previewRgba);
 			const exportRgba = await extractRgba(
 				outputPath,
 				ticks / MEDIA_TICKS_PER_SECOND,
@@ -1538,18 +1725,16 @@ integrationTest(
 			});
 		}
 
-		const fadeOperations = [
-			{
-				kind: "upsert_transition",
-				trackId,
-				transitionId: "outer-crossfade",
-				fromElementId: elementIds[0],
-				toElementId: "transition-compound",
-				transitionType: "fade-through-black",
-				duration: 60_000,
-			},
+		const removableTransitionCases = [
+			...ordinaryTransitionCases,
+			...compoundBoundaryCases,
 		];
-		const fadePreflight = await restarted.callTool(
+		const removeOperations = removableTransitionCases.map((transition) => ({
+			kind: "remove_transition",
+			trackId,
+			transitionId: transition.transitionId,
+		}));
+		const removePreflight = await restarted.callTool(
 			"opencut_preflight_edit_plan",
 			{
 				contractVersion: 2,
@@ -1561,6 +1746,138 @@ integrationTest(
 				expectedWriteVersion: previewBase.expectedWriteVersion,
 				saveReceiptOperationId: previewBase.saveReceiptOperationId,
 				expectedSaveReceiptId: previewBase.expectedSaveReceiptId,
+				preflightId: "named-treatment-no-transition-control-preflight",
+				description: "Remove transitions to render same-pipeline controls",
+				operations: removeOperations,
+				policy: {
+					warningPolicy: "allow",
+					providerExecution: "forbidden",
+					costPolicy: "require-exact",
+				},
+			},
+		);
+		expect(removePreflight).toMatchObject({
+			result: { status: "validated" },
+		});
+		const removeEvaluation = requireRecord(
+			requireRecord(removePreflight.result, "remove preflight result")
+				.evaluation,
+			"remove evaluation",
+		);
+		const removed = await restarted.callTool("opencut_apply_edit_plan", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "named-treatment-no-transition-control-apply",
+			expectedRevision: previewBase.expectedRevision,
+			expectedProjectContentHash: previewBase.expectedProjectContentHash,
+			description: "Remove transitions to render same-pipeline controls",
+			operations: removeOperations,
+			preflight: {
+				receiptId: requireString(
+					removePreflight.receiptId,
+					"remove preflight receiptId",
+				),
+				planFingerprint: requireString(
+					removeEvaluation.planFingerprint,
+					"remove planFingerprint",
+				),
+				preflightFingerprint: requireString(
+					removeEvaluation.preflightFingerprint,
+					"remove preflightFingerprint",
+				),
+				planDiffHash: requireString(
+					removeEvaluation.planDiffHash,
+					"remove planDiffHash",
+				),
+			},
+		});
+		expect(removed.status).toBe("applied");
+		const removedSnapshot = requireRecord(removed.snapshot, "removed snapshot");
+		const controlSave = await restarted.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "named-treatment-no-transition-control-save",
+			expectedRevision: requireNumber(removed.revision, "removed revision"),
+			expectedContentHash: requireProjectContentHash(removedSnapshot),
+		});
+		const controlPreviewBase = {
+			...affinity(identity),
+			contractVersion: 2,
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(removed.revision, "removed revision"),
+			expectedProjectContentHash: requireProjectContentHash(removedSnapshot),
+			expectedWriteVersion: requireNumber(
+				controlSave.writeVersion,
+				"control writeVersion",
+			),
+			saveReceiptOperationId: "named-treatment-no-transition-control-save",
+			expectedSaveReceiptId: requireString(
+				controlSave.receiptId,
+				"control save receiptId",
+			),
+			canvasSize: { width: 320, height: 240 },
+			format: "png",
+		};
+		const transitionControlRgba = new Map<string, Buffer>();
+		for (const { label, ticks } of removableTransitionCases) {
+			const control = await restarted.callTool(
+				"opencut_render_preview_frame",
+				{
+					...controlPreviewBase,
+					operationId: `named-treatment-${label}-control-preview`,
+					time: { kind: "media-time", ticks, rounding: "exact" },
+				},
+				5 * 60_000,
+			);
+			expect(control).toMatchObject({ status: "rendered" });
+			const controlRgba = await extractRgba(
+				requireString(control.outputPath, "transition control outputPath"),
+			);
+			transitionControlRgba.set(label, controlRgba);
+			const transitionedRgba = transitionRgbaByLabel.get(label);
+			if (!transitionedRgba)
+				throw new Error(`missing transitioned frame for ${label}`);
+			expect(
+				rgbaComparisonMetrics(transitionedRgba, controlRgba).meanAbsoluteError,
+			).toBeGreaterThan(0.5);
+		}
+
+		const fadeOperations = [
+			{
+				kind: "upsert_transition",
+				trackId,
+				transitionId: "outer-crossfade",
+				fromElementId: elementIds[0],
+				toElementId: "transition-compound",
+				transitionType: "fade-through-black",
+				duration: 60_000,
+			},
+			{
+				kind: "upsert_transition",
+				trackId,
+				transitionId: "outer-outgoing-crossfade",
+				fromElementId: "transition-compound",
+				toElementId: treatmentElementIds[0],
+				transitionType: "fade-through-black",
+				duration: 60_000,
+			},
+		];
+		const fadePreflight = await restarted.callTool(
+			"opencut_preflight_edit_plan",
+			{
+				contractVersion: 2,
+				...affinity(identity),
+				projectId,
+				sceneId,
+				expectedRevision: controlPreviewBase.expectedRevision,
+				expectedProjectContentHash:
+					controlPreviewBase.expectedProjectContentHash,
+				expectedWriteVersion: controlPreviewBase.expectedWriteVersion,
+				saveReceiptOperationId: controlPreviewBase.saveReceiptOperationId,
+				expectedSaveReceiptId: controlPreviewBase.expectedSaveReceiptId,
 				preflightId: "named-treatment-fade-compound-preflight",
 				description:
 					"Change the compound-boundary transition to fade through black",
@@ -1584,8 +1901,8 @@ integrationTest(
 			projectId,
 			sceneId,
 			operationId: "named-treatment-fade-compound-apply",
-			expectedRevision: previewBase.expectedRevision,
-			expectedProjectContentHash: previewBase.expectedProjectContentHash,
+			expectedRevision: controlPreviewBase.expectedRevision,
+			expectedProjectContentHash: controlPreviewBase.expectedProjectContentHash,
 			description:
 				"Change the compound-boundary transition to fade through black",
 			operations: fadeOperations,
@@ -1656,33 +1973,40 @@ integrationTest(
 			5 * 60_000,
 		);
 		expect(fadeExport.status).toBe("exported");
-		const fadeTicks = 268_000;
-		const fadePreview = await restarted.callTool(
-			"opencut_render_preview_frame",
-			{
-				...fadePreviewBase,
-				operationId: "named-treatment-compound-fade-preview",
-				time: { kind: "media-time", ticks: fadeTicks, rounding: "exact" },
-			},
-			5 * 60_000,
-		);
-		expect(fadePreview).toMatchObject({ status: "rendered" });
-		const fadeParity = rgbaComparisonMetrics(
-			await extractRgba(
+		for (const { label, ticks } of compoundBoundaryCases) {
+			const fadePreview = await restarted.callTool(
+				"opencut_render_preview_frame",
+				{
+					...fadePreviewBase,
+					operationId: `named-treatment-${label}-fade-preview`,
+					time: { kind: "media-time", ticks, rounding: "exact" },
+				},
+				5 * 60_000,
+			);
+			expect(fadePreview).toMatchObject({ status: "rendered" });
+			const fadePreviewRgba = await extractRgba(
 				requireString(fadePreview.outputPath, "fade preview outputPath"),
-			),
-			await extractRgba(fadeOutputPath, fadeTicks / MEDIA_TICKS_PER_SECOND),
-		);
-		assertMetricAtMost({
-			label: "fade compound-boundary preview/export RGBA MAE",
-			actual: fadeParity.meanAbsoluteError,
-			maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
-		});
-		assertMetricAtLeast({
-			label: "fade compound-boundary preview/export PSNR",
-			actual: fadeParity.psnrDb,
-			minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
-		});
+			);
+			const controlRgba = transitionControlRgba.get(label);
+			if (!controlRgba) throw new Error(`missing fade control for ${label}`);
+			expect(
+				rgbaComparisonMetrics(fadePreviewRgba, controlRgba).meanAbsoluteError,
+			).toBeGreaterThan(0.5);
+			const fadeParity = rgbaComparisonMetrics(
+				fadePreviewRgba,
+				await extractRgba(fadeOutputPath, ticks / MEDIA_TICKS_PER_SECOND),
+			);
+			assertMetricAtMost({
+				label: `fade ${label} preview/export RGBA MAE`,
+				actual: fadeParity.meanAbsoluteError,
+				maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+			});
+			assertMetricAtLeast({
+				label: `fade ${label} preview/export PSNR`,
+				actual: fadeParity.psnrDb,
+				minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
+			});
+		}
 		await restarted.callTool("opencut_stop_editor_worker", {});
 	},
 	10 * 60_000,

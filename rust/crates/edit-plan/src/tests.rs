@@ -3675,6 +3675,74 @@ fn transition_catalog_owns_ids_and_compound_boundary_policy() {
     assert_eq!(nonconsecutive.path.as_deref(), Some("fromElementId"));
 }
 
+#[test]
+fn transition_validation_fails_closed_for_every_catalog_constraint() {
+    let boundary =
+        |id: &str, element_type: &str, start_time: i64, duration: i64| TransitionBoundaryElement {
+            id: id.into(),
+            element_type: element_type.into(),
+            start_time,
+            duration,
+            has_masks: false,
+        };
+    let base = EvaluateTransitionOptions {
+        transition_id: "transition".into(),
+        transition_type: "crossfade".into(),
+        track_type: "video".into(),
+        from_element_id: "from".into(),
+        to_element_id: "to".into(),
+        track_elements: vec![
+            boundary("from", "video", 0, 120_000),
+            boundary("to", "video", 120_000, 120_000),
+        ],
+        duration: 60_000,
+        existing_incoming_transition_id: None,
+    };
+    assert_eq!(
+        evaluate_transition(base.clone()),
+        EvaluateTransitionResponse::Validated
+    );
+
+    let rejected = |options| {
+        assert!(matches!(
+            evaluate_transition(options),
+            EvaluateTransitionResponse::Rejected { .. }
+        ));
+    };
+    let mut incoming = base.clone();
+    incoming.existing_incoming_transition_id = Some("another-transition".into());
+    rejected(incoming);
+    let mut masked = base.clone();
+    masked.transition_type = "wipe".into();
+    masked.track_elements[1].has_masks = true;
+    rejected(masked);
+    let mut wrong_track = base.clone();
+    wrong_track.track_type = "audio".into();
+    rejected(wrong_track);
+    let mut same_endpoint = base.clone();
+    same_endpoint.to_element_id = "from".into();
+    rejected(same_endpoint);
+    let mut zero_duration = base.clone();
+    zero_duration.duration = 0;
+    rejected(zero_duration);
+    let mut source_too_short = base.clone();
+    source_too_short.track_elements[0].duration = 59_999;
+    source_too_short.track_elements[1].start_time = 59_999;
+    rejected(source_too_short);
+    let mut destination_too_short = base.clone();
+    destination_too_short.track_elements[1].duration = 59_999;
+    rejected(destination_too_short);
+    for compound_index in [0, 1] {
+        let mut unsupported_compound = base.clone();
+        unsupported_compound.transition_type = "slide".into();
+        unsupported_compound.track_elements[compound_index].element_type = "compound".into();
+        rejected(unsupported_compound);
+    }
+    let mut missing_endpoint = base;
+    missing_endpoint.track_elements.pop();
+    rejected(missing_endpoint);
+}
+
 fn caption_plan(operations: Vec<EditOperation>) -> Vec<EditOperation> {
     let mut plan = vec![EditOperation::InsertCaptions {
         track_id: Some("captions".into()),
