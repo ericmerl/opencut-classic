@@ -3742,3 +3742,151 @@ fn scalar_string_of<'a>(params: &'a CanonicalValue, key: &str) -> Option<&'a str
         _ => None,
     }
 }
+
+#[test]
+fn restyle_captions_resolves_outline_and_shadow_params_and_bounds_them() {
+    let result = evaluate(options(caption_plan(vec![
+        EditOperation::RestyleCaptions {
+            track_id: "captions".into(),
+            element_ids: None,
+            speaker: None,
+            style: SubtitleStyleOverrides {
+                outline: Some(SubtitleOutline {
+                    enabled: true,
+                    color: Some("#000000".into()),
+                    width: Some(0.08),
+                }),
+                shadow: Some(SubtitleShadow {
+                    enabled: true,
+                    color: Some("rgba(0, 0, 0, 0.8)".into()),
+                    offset_x: Some(0.05),
+                    offset_y: Some(0.05),
+                    blur: Some(0.1),
+                }),
+                ..Default::default()
+            },
+            resolved_params: None,
+        },
+    ])))
+    .unwrap();
+    let EditOperation::RestyleCaptions {
+        resolved_params: Some(params),
+        ..
+    } = &result.resolved_operations[1]
+    else {
+        panic!("restyle params were not resolved");
+    };
+    for (key, expected) in [
+        ("outline.enabled", Scalar::Boolean(true)),
+        ("outline.color", Scalar::String("#000000".into())),
+        ("outline.width", Scalar::Number(0.08)),
+        ("shadow.enabled", Scalar::Boolean(true)),
+        ("shadow.color", Scalar::String("rgba(0, 0, 0, 0.8)".into())),
+        ("shadow.offsetX", Scalar::Number(0.05)),
+        ("shadow.offsetY", Scalar::Number(0.05)),
+        ("shadow.blur", Scalar::Number(0.1)),
+    ] {
+        assert_eq!(params.0.get(key), Some(&expected), "{key}");
+    }
+    let caption = caption_after(&result, "cap-a").common();
+    assert_eq!(
+        scalar_string_of(&caption.params, "outline.color"),
+        Some("#000000")
+    );
+
+    let too_wide = evaluate(options(caption_plan(vec![
+        EditOperation::RestyleCaptions {
+            track_id: "captions".into(),
+            element_ids: None,
+            speaker: None,
+            style: SubtitleStyleOverrides {
+                outline: Some(SubtitleOutline {
+                    enabled: true,
+                    color: None,
+                    width: Some(2.0),
+                }),
+                ..Default::default()
+            },
+            resolved_params: None,
+        },
+    ])))
+    .unwrap_err();
+    assert!(matches!(too_wide.code, ErrorCode::InvalidValue));
+    assert!(too_wide.message.contains("outline.width"));
+}
+
+#[test]
+fn text_outline_and_shadow_params_default_off_and_reject_out_of_range_values() {
+    let inserted = evaluate(options(vec![EditOperation::InsertText {
+        element_id: Some("title-1".into()),
+        content: "Hello".into(),
+        start_time: MediaTime::ZERO,
+        duration: MediaTime::from_ticks(120_000),
+        auto_track_id: None,
+        resolved_allocations: None,
+    }]))
+    .unwrap();
+    let title = inserted.predicted_after.project.scenes[0]
+        .tracks
+        .iter()
+        .flat_map(|track| track.elements.iter())
+        .find(|element| element.common().id == "title-1")
+        .expect("inserted title");
+    let params = &title.common().params;
+    assert_eq!(scalar_string_of(params, "outline.color"), Some("#000000"));
+    let CanonicalValue::Object(fields) = params else {
+        panic!("params were not an object");
+    };
+    assert_eq!(
+        fields.get("outline.enabled"),
+        Some(&CanonicalValue::Boolean(false))
+    );
+    assert_eq!(
+        fields.get("shadow.enabled"),
+        Some(&CanonicalValue::Boolean(false))
+    );
+    assert_eq!(
+        fields.get("outline.width"),
+        Some(&CanonicalValue::Number(0.08))
+    );
+    assert_eq!(
+        fields.get("shadow.blur"),
+        Some(&CanonicalValue::Number(0.08))
+    );
+
+    // set_params follows the parameter convention every text param uses: Rust
+    // snaps and clamps to the declared range instead of rejecting.
+    let clamped = evaluate(options(vec![
+        EditOperation::InsertText {
+            element_id: Some("title-2".into()),
+            content: "Hello".into(),
+            start_time: MediaTime::ZERO,
+            duration: MediaTime::from_ticks(120_000),
+            auto_track_id: Some("title-track".into()),
+            resolved_allocations: None,
+        },
+        EditOperation::SetParams {
+            track_id: "title-track".into(),
+            element_id: "title-2".into(),
+            params: Params(
+                [("shadow.blur".to_owned(), Scalar::Number(4.0))]
+                    .into_iter()
+                    .collect(),
+            ),
+        },
+    ]))
+    .unwrap_or_else(|error| panic!("clamp plan rejected: {}", error.message));
+    let title = clamped.predicted_after.project.scenes[0]
+        .tracks
+        .iter()
+        .flat_map(|track| track.elements.iter())
+        .find(|element| element.common().id == "title-2")
+        .expect("clamped title");
+    let CanonicalValue::Object(fields) = &title.common().params else {
+        panic!("params were not an object");
+    };
+    assert_eq!(
+        fields.get("shadow.blur"),
+        Some(&CanonicalValue::Number(1.0))
+    );
+}

@@ -6,6 +6,15 @@ import { resolveNumberAtTime } from "@/animation/values";
 import { activeWordIndex, type ResolvedTextHighlight } from "./highlight";
 import { getTextVisualRect } from "./layout";
 import {
+	resolveTextOutline,
+	resolveTextShadow,
+	textDecorationExtents,
+	type ResolvedTextOutline,
+	type ResolvedTextShadow,
+	type TextOutline,
+	type TextShadow,
+} from "./outline-shadow";
+import {
 	measureTextLayout,
 	type MeasuredTextLayout,
 	type TextAlign,
@@ -27,6 +36,8 @@ export interface ResolvedTextBackground extends TextBackground {
 export interface MeasuredTextElement extends MeasuredTextLayout {
 	resolvedBackground: ResolvedTextBackground;
 	highlight: ResolvedTextHighlight;
+	outline: ResolvedTextOutline;
+	shadow: ResolvedTextShadow;
 	visualRect: { left: number; top: number; width: number; height: number };
 }
 
@@ -139,17 +150,59 @@ export function measureTextElement({
 				: null,
 	};
 
+	const outlineParams = buildTextOutlineFromElement({ element });
+	const outline = resolveTextOutline({
+		outline: {
+			...outlineParams,
+			width: resolveNumberAtTime({
+				baseValue: outlineParams.width,
+				animations: element.animations,
+				propertyPath: "outline.width",
+				localTime,
+			}),
+		},
+		scaledFontSize: measuredLayout.scaledFontSize,
+	});
+	const shadowParams = buildTextShadowFromElement({ element });
+	const shadow = resolveTextShadow({
+		shadow: {
+			...shadowParams,
+			offsetX: resolveNumberAtTime({
+				baseValue: shadowParams.offsetX,
+				animations: element.animations,
+				propertyPath: "shadow.offsetX",
+				localTime,
+			}),
+			offsetY: resolveNumberAtTime({
+				baseValue: shadowParams.offsetY,
+				animations: element.animations,
+				propertyPath: "shadow.offsetY",
+				localTime,
+			}),
+			blur: resolveNumberAtTime({
+				baseValue: shadowParams.blur,
+				animations: element.animations,
+				propertyPath: "shadow.blur",
+				localTime,
+			}),
+		},
+		scaledFontSize: measuredLayout.scaledFontSize,
+	});
+
 	const visualRect = getTextVisualRect({
 		textAlign: text.textAlign,
 		block: measuredLayout.block,
 		background: resolvedBackground,
 		fontSizeRatio: measuredLayout.fontSizeRatio,
+		extents: textDecorationExtents({ outline, shadow }),
 	});
 
 	return {
 		...measuredLayout,
 		resolvedBackground,
 		highlight,
+		outline,
+		shadow,
 		visualRect,
 	};
 }
@@ -249,6 +302,64 @@ export function buildTextBackgroundFromElement({
 			params: element.params,
 			key: "background.offsetY",
 			fallback: DEFAULTS.text.background.offsetY,
+		}),
+	};
+}
+
+export function buildTextOutlineFromElement({
+	element,
+}: {
+	element: TextElement;
+}): TextOutline {
+	return {
+		enabled: readBooleanParam({
+			params: element.params,
+			key: "outline.enabled",
+			fallback: DEFAULTS.text.outline.enabled,
+		}),
+		color: readStringParam({
+			params: element.params,
+			key: "outline.color",
+			fallback: DEFAULTS.text.outline.color,
+		}),
+		width: readNumberParam({
+			params: element.params,
+			key: "outline.width",
+			fallback: DEFAULTS.text.outline.width,
+		}),
+	};
+}
+
+export function buildTextShadowFromElement({
+	element,
+}: {
+	element: TextElement;
+}): TextShadow {
+	return {
+		enabled: readBooleanParam({
+			params: element.params,
+			key: "shadow.enabled",
+			fallback: DEFAULTS.text.shadow.enabled,
+		}),
+		color: readStringParam({
+			params: element.params,
+			key: "shadow.color",
+			fallback: DEFAULTS.text.shadow.color,
+		}),
+		offsetX: readNumberParam({
+			params: element.params,
+			key: "shadow.offsetX",
+			fallback: DEFAULTS.text.shadow.offsetX,
+		}),
+		offsetY: readNumberParam({
+			params: element.params,
+			key: "shadow.offsetY",
+			fallback: DEFAULTS.text.shadow.offsetY,
+		}),
+		blur: readNumberParam({
+			params: element.params,
+			key: "shadow.blur",
+			fallback: DEFAULTS.text.shadow.blur,
 		}),
 	};
 }

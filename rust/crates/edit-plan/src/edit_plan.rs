@@ -6547,6 +6547,14 @@ fn default_text_params(content: &str) -> Params {
         ("background.offsetY", Scalar::Number(0.0)),
         ("highlight.enabled", Scalar::Boolean(false)),
         ("highlight.color", Scalar::String("#ffd400".into())),
+        ("outline.enabled", Scalar::Boolean(false)),
+        ("outline.color", Scalar::String("#000000".into())),
+        ("outline.width", Scalar::Number(0.08)),
+        ("shadow.enabled", Scalar::Boolean(false)),
+        ("shadow.color", Scalar::String("#000000".into())),
+        ("shadow.offsetX", Scalar::Number(0.04)),
+        ("shadow.offsetY", Scalar::Number(0.04)),
+        ("shadow.blur", Scalar::Number(0.08)),
         ("caption.speaker", Scalar::String(String::new())),
         ("transform.positionX", Scalar::Number(0.0)),
         ("transform.positionY", Scalar::Number(0.0)),
@@ -6853,9 +6861,38 @@ fn coerce_element_param(
         {
             coerce_boolean(value, index, key)
         }
-        "highlight.color" | "caption.speaker" if element_type == "text" => {
+        "highlight.color" | "caption.speaker" | "outline.color" | "shadow.color"
+            if element_type == "text" =>
+        {
             coerce_string(value, index, key)
         }
+        "outline.enabled" | "shadow.enabled" if element_type == "text" => {
+            coerce_boolean(value, index, key)
+        }
+        "outline.width" if element_type == "text" => coerce_number(
+            value,
+            0.0,
+            Some(crate::model::TEXT_OUTLINE_MAX_WIDTH),
+            0.01,
+            index,
+            key,
+        ),
+        "shadow.blur" if element_type == "text" => coerce_number(
+            value,
+            0.0,
+            Some(crate::model::TEXT_SHADOW_MAX_BLUR),
+            0.01,
+            index,
+            key,
+        ),
+        "shadow.offsetX" | "shadow.offsetY" if element_type == "text" => coerce_number(
+            value,
+            -crate::model::TEXT_SHADOW_MAX_OFFSET,
+            Some(crate::model::TEXT_SHADOW_MAX_OFFSET),
+            0.01,
+            index,
+            key,
+        ),
         "background.cornerRadius" if element_type == "text" => {
             coerce_number(value, 0.0, Some(100.0), 1.0, index, key)
         }
@@ -7022,6 +7059,8 @@ fn coerce_animation_value(
             | "fontStyle"
             | "textDecoration"
             | "background.enabled"
+            | "outline.enabled"
+            | "shadow.enabled"
             | "muted"
             | "reframe.mode"
     ) {

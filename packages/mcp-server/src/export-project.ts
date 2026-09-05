@@ -75,6 +75,14 @@ export interface ExportRenderOverlay {
 			backgroundPerLine?: boolean;
 			highlightEnabled?: boolean;
 			highlightColor?: string;
+			outlineEnabled?: boolean;
+			outlineColor?: string;
+			outlineWidth?: number;
+			shadowEnabled?: boolean;
+			shadowColor?: string;
+			shadowOffsetX?: number;
+			shadowOffsetY?: number;
+			shadowBlur?: number;
 		};
 		position?: { x: number; y: number };
 		positionSafeZoneId?: string;

@@ -10,10 +10,18 @@ import {
 	type TextCanvasContext,
 } from "./layout";
 import {
+	resolveTextOutline,
+	resolveTextShadow,
+	textDecorationExtents,
+	type TextOutline,
+	type TextShadow,
+} from "./outline-shadow";
+import {
 	measureTextLayout,
 	type MeasuredTextLayout,
 	type TextLayoutParams,
 } from "./primitives";
+import { DEFAULTS } from "@/timeline/defaults";
 import { clamp } from "@/utils/math";
 
 /**
@@ -141,16 +149,36 @@ export function wrapTextToWidth({
 export function measureCaptionLocalLayout({
 	text,
 	background,
+	outline,
+	shadow,
 	canvasHeight,
 	ctx,
 }: {
 	text: TextLayoutParams;
 	background: TextBackground;
+	/** Outline and shadow widen the visual rect; omitted means bare glyphs. */
+	outline?: TextOutline;
+	shadow?: TextShadow;
 	canvasHeight: number;
 	ctx: TextCanvasContext;
 }): CaptionLocalLayout {
 	const layout = measureTextLayout({ text, canvasHeight, ctx });
-	const block = getTextRect({ textAlign: layout.textAlign, block: layout.block });
+	// Disabled outline and shadow resolve to zero extents, so the defaults
+	// stand in for callers that draw bare glyphs.
+	const extents = textDecorationExtents({
+		outline: resolveTextOutline({
+			outline: outline ?? DEFAULTS.text.outline,
+			scaledFontSize: layout.scaledFontSize,
+		}),
+		shadow: resolveTextShadow({
+			shadow: shadow ?? DEFAULTS.text.shadow,
+			scaledFontSize: layout.scaledFontSize,
+		}),
+	});
+	const block = getTextRect({
+		textAlign: layout.textAlign,
+		block: layout.block,
+	});
 	const bubbleRect = getTextBackgroundRect({
 		textAlign: layout.textAlign,
 		block: layout.block,
@@ -184,10 +212,12 @@ export function measureCaptionLocalLayout({
 		block: layout.block,
 		background,
 		fontSizeRatio: layout.fontSizeRatio,
+		extents,
 	});
 	const lines = layout.lines.map((line, index) => {
 		const metrics = layout.lineMetrics[index]!;
-		const anchorY = index * layout.lineHeightPx - layout.block.visualCenterOffset;
+		const anchorY =
+			index * layout.lineHeightPx - layout.block.visualCenterOffset;
 		const ascent = getMetricAscent({
 			metrics,
 			fallbackFontSize: layout.scaledFontSize,

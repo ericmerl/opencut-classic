@@ -1420,6 +1420,17 @@ integrationTest(
 				style: {
 					preset: "tiktok-classic-red",
 					highlight: { enabled: true, color: "#ffd400" },
+					// A black glyph outline and a hard drop shadow, both as fractions
+					// of the font size, so the reference "white type over black" look
+					// no longer needs stacked duplicate elements.
+					outline: { enabled: true, color: "#000000", width: 0.1 },
+					shadow: {
+						enabled: true,
+						color: "#000000",
+						offsetX: 0.06,
+						offsetY: 0.06,
+						blur: 0,
+					},
 				},
 			},
 			{
@@ -1491,6 +1502,14 @@ integrationTest(
 				"background.color": "#ff0000",
 				"highlight.enabled": true,
 				"highlight.color": "#ffd400",
+				"outline.enabled": true,
+				"outline.color": "#000000",
+				"outline.width": 0.1,
+				"shadow.enabled": true,
+				"shadow.color": "#000000",
+				"shadow.offsetX": 0.06,
+				"shadow.offsetY": 0.06,
+				"shadow.blur": 0,
 			},
 		});
 		// Rust re-segments both halves into word-timed chunks under the budget
@@ -1552,6 +1571,10 @@ integrationTest(
 				"caption.speaker": "host",
 				"highlight.enabled": true,
 				"highlight.color": "#ffd400",
+				"outline.enabled": true,
+				"outline.width": 0.1,
+				"shadow.enabled": true,
+				"shadow.offsetX": 0.06,
 			});
 		}
 		expect(
@@ -1561,9 +1584,260 @@ integrationTest(
 		).toBe(
 			requireString(restructureEvaluation.predictedProjectHash, "predicted"),
 		);
+		// The restyle round-trips through an independent readback: the persisted
+		// project reports the same outline and shadow params on every chunk.
+		const readback = await harness.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		const readbackCaptions = requireRecords(
+			readback.elements,
+			"elements",
+		).filter((element) => element.type === "text");
+		expect(readbackCaptions).toHaveLength(resolvedChunks.length);
+		for (const caption of readbackCaptions) {
+			expect(requireRecord(caption.params, "params")).toMatchObject({
+				"outline.enabled": true,
+				"outline.color": "#000000",
+				"outline.width": 0.1,
+				"shadow.enabled": true,
+				"shadow.color": "#000000",
+				"shadow.offsetX": 0.06,
+				"shadow.offsetY": 0.06,
+				"shadow.blur": 0,
+			});
+		}
+		// ASS cannot combine an opaque box with a glyph outline or shadow, so the
+		// boxed red preset reports both as structured losses instead of dropping
+		// them silently.
+		const boxedAssPath = join(directory, "captions-outlined.ass");
+		const boxedAss = await harness.callTool("opencut_export_subtitles", {
+			...affinity(identity),
+			projectId,
+			operationId: `caption-outline-export-ass-${runId}`,
+			expectedRevision: requireNumber(restructured.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(
+				requireRecord(restructured.snapshot, "snapshot"),
+			),
+			outputPath: boxedAssPath,
+			format: "ass",
+		});
+		expect(boxedAss).toMatchObject({ status: "exported", format: "ass" });
+		expect(
+			requireRecords(
+				requireRecord(boxedAss.lossReport, "lossReport").dropped,
+				"dropped",
+			).map((loss) => loss.feature),
+		).toEqual(expect.arrayContaining(["outline", "shadow"]));
+
+		// The outlined, shadowed captions must render identically in preview and
+		// export, and the outline must actually be painted: only the black stroke
+		// puts near-black pixels right next to the white glyphs.
+		const restructuredSnapshot = requireRecord(
+			restructured.snapshot,
+			"snapshot",
+		);
+		const restructuredHash = requireProjectContentHash(restructuredSnapshot);
+		const parityCanvas = { width: 540, height: 960 } as const;
+		const paritySave = await harness.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: `caption-outline-parity-save-${runId}`,
+			expectedRevision: requireNumber(restructured.revision, "revision"),
+			expectedContentHash: restructuredHash,
+		});
+		expect(paritySave).toMatchObject({ status: "saved" });
+		// Frame 8 at 30 fps: exact rounding requires a frame-aligned time.
+		const parityTicks = 32_000;
+		const outlinePreview = await harness.callTool(
+			"opencut_render_preview_frame",
+			{
+				...affinity(identity),
+				contractVersion: 2,
+				operationId: `caption-outline-preview-${runId}`,
+				projectId,
+				sceneId,
+				expectedRevision: requireNumber(restructured.revision, "revision"),
+				expectedProjectContentHash: restructuredHash,
+				expectedWriteVersion: requireNumber(
+					paritySave.writeVersion,
+					"writeVersion",
+				),
+				saveReceiptOperationId: `caption-outline-parity-save-${runId}`,
+				expectedSaveReceiptId: requireString(paritySave.receiptId, "receiptId"),
+				time: { kind: "media-time", ticks: parityTicks, rounding: "exact" },
+				canvasSize: parityCanvas,
+				format: "png",
+			},
+			5 * 60_000,
+		);
+		expect(outlinePreview).toMatchObject({ status: "rendered" });
+		const outlineExportPath = join(directory, "caption-outline.webm");
+		const outlineExport = await harness.callTool(
+			"opencut_export_project",
+			{
+				...affinity(identity),
+				projectId,
+				operationId: `caption-outline-export-${runId}`,
+				expectedRevision: requireNumber(restructured.revision, "revision"),
+				expectedProjectContentHash: restructuredHash,
+				outputPath: outlineExportPath,
+				format: "webm",
+				quality: "very_high",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: false,
+				canvasSize: parityCanvas,
+			},
+			5 * 60_000,
+		);
+		expect(outlineExport).toMatchObject({ status: "exported" });
+		const previewRgba = await extractRgba(
+			requireString(outlinePreview.outputPath, "preview path"),
+		);
+		const exportRgba = await extractRgba(
+			outlineExportPath,
+			parityTicks / MEDIA_TICKS_PER_SECOND,
+		);
+		assertMetricAtMost({
+			label: "caption outline preview/export RGBA MAE",
+			actual: rgbaComparisonMetrics(previewRgba, exportRgba).meanAbsoluteError,
+			maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+		});
+		const previewBlock = captionBlockEvidence({
+			rgba: previewRgba,
+			...parityCanvas,
+		});
+		const exportBlock = captionBlockEvidence({
+			rgba: exportRgba,
+			...parityCanvas,
+		});
+		for (const [label, block] of [
+			["preview", previewBlock],
+			["export", exportBlock],
+		] as const) {
+			expect({ label, redPixels: block.redPixels > 500 }).toEqual({
+				label,
+				redPixels: true,
+			});
+			// Near-black pixels touching white glyphs come only from the stroke;
+			// unstroked antialiasing over red produces pink, never black.
+			expect({ label, outlinePixels: block.outlinePixels > 50 }).toEqual({
+				label,
+				outlinePixels: true,
+			});
+		}
+		// A whole-frame mean hides a missing stroke on a mostly black canvas, so
+		// the parity bound is also applied to the caption block alone.
+		assertMetricAtMost({
+			label: "caption block preview/export RGBA MAE",
+			actual: regionMeanAbsoluteError({
+				before: previewRgba,
+				after: exportRgba,
+				width: parityCanvas.width,
+				box: previewBlock.box,
+			}),
+			maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+		});
 	},
-	120_000,
+	8 * 60_000,
 );
+
+function regionMeanAbsoluteError({
+	before,
+	after,
+	width,
+	box,
+}: {
+	before: Buffer;
+	after: Buffer;
+	width: number;
+	box: { left: number; top: number; right: number; bottom: number };
+}): number {
+	let total = 0;
+	let count = 0;
+	for (let y = box.top; y <= box.bottom; y += 1) {
+		for (let x = box.left; x <= box.right; x += 1) {
+			const offset = (y * width + x) * 4;
+			for (let channel = 0; channel < 4; channel += 1) {
+				total += Math.abs(before[offset + channel]! - after[offset + channel]!);
+				count += 1;
+			}
+		}
+	}
+	if (count === 0) throw new Error("caption block region is empty");
+	return total / count;
+}
+
+/**
+ * The bounding box of the strongly red pixels (the tiktok-classic-red caption
+ * block) and, inside it, the count of near-black pixels that have a white
+ * glyph pixel within three pixels. Black canvas showing between per-line
+ * bubbles is never that close to a glyph, and unstroked glyph edges over red
+ * blend to pink, so only a painted outline (or its hard shadow) can score.
+ */
+function captionBlockEvidence({
+	rgba,
+	width,
+	height,
+}: {
+	rgba: Buffer;
+	width: number;
+	height: number;
+}): {
+	redPixels: number;
+	outlinePixels: number;
+	box: { left: number; top: number; right: number; bottom: number };
+} {
+	let left = width;
+	let top = height;
+	let right = -1;
+	let bottom = -1;
+	let redPixels = 0;
+	const at = (x: number, y: number) => {
+		const offset = (y * width + x) * 4;
+		return [rgba[offset]!, rgba[offset + 1]!, rgba[offset + 2]!] as const;
+	};
+	const isWhite = (x: number, y: number) => {
+		if (x < 0 || y < 0 || x >= width || y >= height) return false;
+		const [r, g, b] = at(x, y);
+		return r > 230 && g > 230 && b > 230;
+	};
+	for (let y = 0; y < height; y += 1) {
+		for (let x = 0; x < width; x += 1) {
+			const [r, g, b] = at(x, y);
+			if (r > 180 && g < 90 && b < 90) {
+				redPixels += 1;
+				left = Math.min(left, x);
+				top = Math.min(top, y);
+				right = Math.max(right, x);
+				bottom = Math.max(bottom, y);
+			}
+		}
+	}
+	if (right < left || bottom < top) {
+		throw new Error("no red caption block found in the frame");
+	}
+	const reach = 3;
+	let outlinePixels = 0;
+	for (let y = top; y <= bottom; y += 1) {
+		for (let x = left; x <= right; x += 1) {
+			const [r, g, b] = at(x, y);
+			if (r >= 60 || g >= 60 || b >= 60) continue;
+			let nearWhite = false;
+			for (let dy = -reach; dy <= reach && !nearWhite; dy += 1) {
+				for (let dx = -reach; dx <= reach; dx += 1) {
+					if (isWhite(x + dx, y + dy)) {
+						nearWhite = true;
+						break;
+					}
+				}
+			}
+			if (nearWhite) outlinePixels += 1;
+		}
+	}
+	return { redPixels, outlinePixels, box: { left, top, right, bottom } };
+}
 
 integrationTest(
 	"records structured review evidence and human sign-off through managed Chrome",

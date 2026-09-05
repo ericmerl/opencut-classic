@@ -30,8 +30,9 @@ export function setCanvasLetterSpacing({
 	letterSpacingPx: number;
 }): void {
 	if ("letterSpacing" in ctx) {
-		(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing =
-			`${letterSpacingPx}px`;
+		(
+			ctx as CanvasRenderingContext2D & { letterSpacing: string }
+		).letterSpacing = `${letterSpacingPx}px`;
 	}
 }
 
@@ -190,13 +191,27 @@ export function getTextVisualRect({
 	block,
 	background,
 	fontSizeRatio = 1,
+	extents,
 }: {
 	textAlign: TextAlign;
 	block: TextBlockMeasurement;
 	background: TextBackground;
 	fontSizeRatio?: number;
+	/**
+	 * How far the outline stroke and drop shadow reach past the glyph boxes on
+	 * each side, in pixels (`textDecorationExtents`). Omitted means bare glyphs.
+	 */
+	extents?: { left: number; top: number; right: number; bottom: number };
 }): TextRect {
-	const textRect = getTextRect({ textAlign, block });
+	const glyphRect = getTextRect({ textAlign, block });
+	const textRect: TextRect = extents
+		? {
+				left: glyphRect.left - extents.left,
+				top: glyphRect.top - extents.top,
+				width: glyphRect.width + extents.left + extents.right,
+				height: glyphRect.height + extents.top + extents.bottom,
+			}
+		: glyphRect;
 	const backgroundRect = getTextBackgroundRect({
 		textAlign,
 		block,

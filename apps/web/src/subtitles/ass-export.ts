@@ -32,6 +32,8 @@ export const ASS_SUPPORTED_FEATURES = [
 	"margins",
 	"backgroundColor",
 	"speaker",
+	"outline",
+	"shadow",
 ] as const;
 
 const ASS_STYLE_FORMAT = [
@@ -165,17 +167,27 @@ function mapStyleFields({
 	const alignment = ALIGNMENT_CODES[verticalAlign]?.[textAlign] ?? 2;
 	const margin = (ratio: number | undefined, extent: number) =>
 		ratio === undefined ? 0 : Math.round(ratio * extent);
+	const fontPx =
+		fontSizeRatio === undefined
+			? Math.round((5 / FONT_SIZE_SCALE_REFERENCE) * playRes.height)
+			: Math.round(fontSizeRatio * playRes.height);
+	// Outline and shadow are fractions of the font size in the app; ASS wants
+	// pixels at PlayRes, so they scale by the face's pixel size. An ASS style
+	// shadow is one distance down and right, so an uneven shadow exports its
+	// horizontal distance and the difference is reported as a loss.
+	const outline = style.outline?.enabled ? style.outline : null;
+	const outlinePx = outline ? Math.round((outline.width ?? 0) * fontPx) : 0;
+	const shadow = style.shadow?.enabled ? style.shadow : null;
+	const shadowPx = shadow ? Math.round((shadow.offsetX ?? 0) * fontPx) : 0;
+	const shadowColour =
+		shadow && !background ? toAssColor(shadow.color ?? "#000000") : null;
 	return [
 		style.fontFamily ?? "Arial",
-		String(
-			fontSizeRatio === undefined
-				? Math.round((5 / FONT_SIZE_SCALE_REFERENCE) * playRes.height)
-				: Math.round(fontSizeRatio * playRes.height),
-		),
+		String(fontPx),
 		primary,
 		primary,
-		"&H00000000",
-		background ?? "&H00000000",
+		outline ? toAssColor(outline.color ?? "#000000") : "&H00000000",
+		background ?? shadowColour ?? "&H00000000",
 		style.fontWeight === "bold" ? "-1" : "0",
 		style.fontStyle === "italic" ? "-1" : "0",
 		style.textDecoration === "underline" ? "-1" : "0",
@@ -185,8 +197,8 @@ function mapStyleFields({
 		String(style.letterSpacing ?? 0),
 		"0",
 		background ? "3" : "1",
-		"0",
-		"0",
+		String(background ? 0 : outlinePx),
+		String(background ? 0 : shadowPx),
 		String(alignment),
 		String(margin(style.placement?.marginLeftRatio, playRes.width)),
 		String(margin(style.placement?.marginRightRatio, playRes.width)),
@@ -207,6 +219,32 @@ function reportUnmappable(
 			"highlight",
 			"ASS karaoke tags fill words as they are sung rather than emphasizing the spoken word",
 		);
+	}
+	const boxed =
+		style.background?.enabled && style.background.color !== "transparent";
+	if (style.outline?.enabled && boxed) {
+		countLoss(
+			"outline",
+			"ASS opaque boxes (BorderStyle 3) replace the glyph outline",
+		);
+	}
+	const shadow = style.shadow;
+	if (shadow?.enabled) {
+		if (boxed) {
+			countLoss(
+				"shadow",
+				"ASS opaque boxes (BorderStyle 3) use BackColour for the box, not a shadow",
+			);
+		}
+		if ((shadow.blur ?? 0) > 0) {
+			countLoss("shadow.blur", "ASS style shadows are hard-edged");
+		}
+		if ((shadow.offsetX ?? 0) !== (shadow.offsetY ?? 0)) {
+			countLoss(
+				"shadow.offset",
+				"ASS style shadows offset by one distance down and right",
+			);
+		}
 	}
 	const background = style.background;
 	if (background?.enabled) {

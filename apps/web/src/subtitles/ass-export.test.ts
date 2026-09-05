@@ -177,3 +177,86 @@ describe("ASS export speaker and highlight", () => {
 		expect(parsed.captions).toHaveLength(1);
 	});
 });
+
+describe("ASS outline and shadow", () => {
+	const OUTLINED: SubtitleCue = {
+		text: "Outlined",
+		startTime: 0,
+		duration: 1,
+		style: {
+			fontFamily: "TikTok Sans",
+			fontSize: 6,
+			color: "#ffffff",
+			outline: { enabled: true, color: "#102030", width: 0.125 },
+			shadow: {
+				enabled: true,
+				color: "#000000",
+				offsetX: 0.0625,
+				offsetY: 0.0625,
+				blur: 0,
+			},
+		},
+	};
+
+	test("round-trips outline width and an even shadow through ASS pixels", () => {
+		// fontSize 6 is 6/90 of the 1920 play height: a 128 px face, so the
+		// 0.125 em outline is 16 px and the 0.0625 em shadow is 8 px.
+		const { content, lossReport } = serializeAss({
+			captions: [OUTLINED],
+			playRes: { width: 1080, height: 1920 },
+		});
+		const styleRow = content
+			.split("\n")
+			.find((line) => line.startsWith("Style: Default,"));
+		expect(styleRow).toBeDefined();
+		const fields = styleRow!.slice("Style: ".length).split(",");
+		// Name, Fontname, Fontsize, Primary, Secondary, Outline colour, Back colour ...
+		expect(fields[2]).toBe("128");
+		expect(fields[5]).toBe("&H00302010");
+		expect(fields[15]).toBe("1");
+		expect(fields[16]).toBe("16");
+		expect(fields[17]).toBe("8");
+		expect(lossReport.supported).toEqual(
+			expect.arrayContaining(["outline", "shadow"]),
+		);
+		expect(lossReport.dropped).toEqual([]);
+
+		const parsed = parseAss({ input: content });
+		expect(parsed.warnings).toEqual([]);
+		expect(parsed.captions[0]?.style).toMatchObject({
+			outline: { enabled: true, color: "#102030", width: 0.125 },
+			shadow: {
+				enabled: true,
+				color: "#000000",
+				offsetX: 0.0625,
+				offsetY: 0.0625,
+				blur: 0,
+			},
+		});
+	});
+
+	test("reports blur and uneven shadow offsets as structured losses", () => {
+		const { lossReport } = serializeAss({
+			captions: [
+				{
+					...OUTLINED,
+					style: {
+						...OUTLINED.style,
+						shadow: {
+							enabled: true,
+							color: "#000000",
+							offsetX: 0.1,
+							offsetY: 0.02,
+							blur: 0.2,
+						},
+					},
+				},
+			],
+			playRes: { width: 1080, height: 1920 },
+		});
+		expect(lossReport.dropped.map((loss) => loss.feature)).toEqual([
+			"shadow.blur",
+			"shadow.offset",
+		]);
+	});
+});

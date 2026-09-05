@@ -377,6 +377,22 @@ function resolvedSubtitleStyle(
 					color: optional(style.highlight.color),
 				}
 			: undefined,
+		outline: style.outline
+			? {
+					enabled: style.outline.enabled,
+					color: optional(style.outline.color),
+					width: optional(style.outline.width),
+				}
+			: undefined,
+		shadow: style.shadow
+			? {
+					enabled: style.shadow.enabled,
+					color: optional(style.shadow.color),
+					offsetX: optional(style.shadow.offsetX),
+					offsetY: optional(style.shadow.offsetY),
+					blur: optional(style.shadow.blur),
+				}
+			: undefined,
 		placement: style.placement
 			? {
 					verticalAlign: optional(style.placement.verticalAlign),

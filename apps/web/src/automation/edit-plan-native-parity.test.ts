@@ -301,6 +301,25 @@ const parityCases: NativeParityCase[] = [
 		state: withPlainCaptions,
 	},
 	{
+		name: "restyle_captions applies Rust-resolved outline and shadow params",
+		operation: {
+			kind: "restyle_captions",
+			trackId: "text-track",
+			elementIds: ["caption-second"],
+			style: {
+				outline: { enabled: true, color: "#000000", width: 0.1 },
+				shadow: {
+					enabled: true,
+					color: "rgba(0, 0, 0, 0.8)",
+					offsetX: 0.05,
+					offsetY: 0.05,
+					blur: 0.1,
+				},
+			},
+		},
+		state: withPlainCaptions,
+	},
+	{
 		name: "restyle_captions selects captions by speaker",
 		operation: {
 			kind: "restyle_captions",

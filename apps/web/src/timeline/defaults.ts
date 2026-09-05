@@ -34,6 +34,22 @@ const defaultTextHighlight = {
 	color: "#ffd400",
 };
 
+// Outline and shadow geometry are fractions of the font size; Rust
+// (`edit-plan` default_text_params) declares the same defaults and bounds.
+const defaultTextOutline = {
+	enabled: false,
+	color: "#000000",
+	width: 0.08,
+};
+
+const defaultTextShadow = {
+	enabled: false,
+	color: "#000000",
+	offsetX: 0.04,
+	offsetY: 0.04,
+	blur: 0.08,
+};
+
 const defaultTextElement: Omit<TextElement, "id"> = {
 	type: "text",
 	name: "Text",
@@ -62,6 +78,14 @@ const defaultTextElement: Omit<TextElement, "id"> = {
 		"background.offsetY": defaultTextBackground.offsetY,
 		"highlight.enabled": defaultTextHighlight.enabled,
 		"highlight.color": defaultTextHighlight.color,
+		"outline.enabled": defaultTextOutline.enabled,
+		"outline.color": defaultTextOutline.color,
+		"outline.width": defaultTextOutline.width,
+		"shadow.enabled": defaultTextShadow.enabled,
+		"shadow.color": defaultTextShadow.color,
+		"shadow.offsetX": defaultTextShadow.offsetX,
+		"shadow.offsetY": defaultTextShadow.offsetY,
+		"shadow.blur": defaultTextShadow.blur,
 		"transform.positionX": defaultTransform.position.x,
 		"transform.positionY": defaultTransform.position.y,
 		"transform.scaleX": defaultTransform.scaleX,
@@ -90,6 +114,8 @@ export const DEFAULTS = {
 		lineHeight: defaultTextLineHeight,
 		background: defaultTextBackground,
 		highlight: defaultTextHighlight,
+		outline: defaultTextOutline,
+		shadow: defaultTextShadow,
 		element: defaultTextElement,
 	},
 	timeline: {

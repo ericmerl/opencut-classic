@@ -69,6 +69,15 @@ export interface ExportCaptionStyleOverlay {
 	backgroundPerLine?: boolean;
 	highlightEnabled?: boolean;
 	highlightColor?: string;
+	outlineEnabled?: boolean;
+	outlineColor?: string;
+	/** Fraction of the font size, bounded by Rust like the element param. */
+	outlineWidth?: number;
+	shadowEnabled?: boolean;
+	shadowColor?: string;
+	shadowOffsetX?: number;
+	shadowOffsetY?: number;
+	shadowBlur?: number;
 }
 
 export interface ExportCaptionOverlay {
@@ -455,6 +464,14 @@ function applyCaptionStyle(
 		["background.perLine", style.backgroundPerLine],
 		["highlight.enabled", style.highlightEnabled],
 		["highlight.color", style.highlightColor],
+		["outline.enabled", style.outlineEnabled],
+		["outline.color", style.outlineColor],
+		["outline.width", style.outlineWidth],
+		["shadow.enabled", style.shadowEnabled],
+		["shadow.color", style.shadowColor],
+		["shadow.offsetX", style.shadowOffsetX],
+		["shadow.offsetY", style.shadowOffsetY],
+		["shadow.blur", style.shadowBlur],
 	];
 	for (const [key, value] of values) {
 		if (value !== undefined) element.params[key] = value as never;

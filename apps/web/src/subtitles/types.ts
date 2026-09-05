@@ -49,6 +49,22 @@ export interface SubtitleStyleOverrides {
 	 * caption's duration, takes `color` in preview and export.
 	 */
 	highlight?: { enabled: boolean; color?: string };
+	/**
+	 * Stroke around every glyph, behind the fill. `width` is a fraction of the
+	 * font size; Rust bounds it (0 through 0.5, default 0.08).
+	 */
+	outline?: { enabled: boolean; color?: string; width?: number };
+	/**
+	 * Drop shadow behind the glyphs and their outline. Offsets and blur are
+	 * fractions of the font size; Rust bounds them.
+	 */
+	shadow?: {
+		enabled: boolean;
+		color?: string;
+		offsetX?: number;
+		offsetY?: number;
+		blur?: number;
+	};
 }
 
 export interface SubtitleCue extends CaptionChunk {

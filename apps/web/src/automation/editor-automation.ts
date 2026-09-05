@@ -65,6 +65,8 @@ import { parseSubtitleFile } from "@/subtitles/parse";
 import { serializeSubtitleDocument } from "@/subtitles/serialize";
 import {
 	buildTextBackgroundFromElement,
+	buildTextOutlineFromElement,
+	buildTextShadowFromElement,
 	buildTextLayoutParamsFromElement,
 } from "@/text/measure-element";
 import type { SubtitleCue, SubtitleStyleOverrides } from "@/subtitles/types";
@@ -4154,8 +4156,12 @@ function captionStyleFromElement(
 ): SubtitleStyleOverrides {
 	const text = buildTextLayoutParamsFromElement({ element });
 	const background = buildTextBackgroundFromElement({ element });
+	const outline = buildTextOutlineFromElement({ element });
+	const shadow = buildTextShadowFromElement({ element });
 	const color = element.params.color;
 	return {
+		...(outline.enabled ? { outline } : {}),
+		...(shadow.enabled ? { shadow } : {}),
 		fontFamily: text.fontFamily,
 		fontSize: text.fontSize,
 		...(typeof color === "string" ? { color } : {}),
