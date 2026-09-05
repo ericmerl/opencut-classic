@@ -99,14 +99,3 @@ export function textDecorationExtents({
 		bottom: reach(shadow.offsetYPx),
 	};
 }
-
-export function hasTextDecorationExtents(
-	extents: TextDecorationExtents,
-): boolean {
-	return (
-		extents.left > 0 ||
-		extents.top > 0 ||
-		extents.right > 0 ||
-		extents.bottom > 0
-	);
-}

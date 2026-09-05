@@ -383,6 +383,10 @@ function mapAssStyleToSubtitleStyle({
 	const underline = parseAssBoolean({ input: style.underline });
 	const strikeOut = parseAssBoolean({ input: style.strikeout });
 	const borderStyle = parseFloat(style.borderstyle ?? "");
+	// BorderStyle 1 strokes and shadows the glyphs; 3 draws an opaque box.
+	const border = Math.round(borderStyle);
+	const strokedBorder = border === 1;
+	const boxedBorder = border === 3;
 	const spacing = parseFloat(style.spacing ?? "");
 	const alignment = parseFloat(style.alignment ?? "");
 	const marginLeft = parseFloat(style.marginl ?? "");
@@ -435,7 +439,7 @@ function mapAssStyleToSubtitleStyle({
 		...(Number.isFinite(spacing) ? { letterSpacing: spacing } : {}),
 		textAlign: mappedAlignment.textAlign,
 		...(placement ? { placement } : {}),
-		...(backColor?.cssColor && Math.round(borderStyle) === 3
+		...(backColor?.cssColor && boxedBorder
 			? {
 					background: {
 						enabled: backColor.alpha > 0,
@@ -446,7 +450,7 @@ function mapAssStyleToSubtitleStyle({
 		// With BorderStyle 1 the outline is a glyph stroke in OutlineColour and
 		// the shadow is a hard-edged copy in BackColour, offset equally right
 		// and down by Shadow pixels.
-		...(Math.round(borderStyle) === 1 &&
+		...(strokedBorder &&
 		outlinePx > 0 &&
 		outlineColor?.cssColor &&
 		emOf(outlinePx) !== null
@@ -458,7 +462,7 @@ function mapAssStyleToSubtitleStyle({
 					},
 				}
 			: {}),
-		...(Math.round(borderStyle) === 1 &&
+		...(strokedBorder &&
 		shadowPx > 0 &&
 		backColor?.cssColor &&
 		emOf(shadowPx) !== null
@@ -474,9 +478,8 @@ function mapAssStyleToSubtitleStyle({
 			: {}),
 	};
 
-	const boxedBorder = Math.round(borderStyle) === 3;
 	const hasUnsupportedFeatures =
-		Math.round(borderStyle) !== 1 && !boxedBorder
+		!strokedBorder && !boxedBorder
 			? true
 			: (boxedBorder && (outlinePx > 0 || shadowPx > 0)) ||
 				(parseFloat(style.angle ?? "") || 0) !== 0 ||

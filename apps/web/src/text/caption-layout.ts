@@ -21,6 +21,7 @@ import {
 	type MeasuredTextLayout,
 	type TextLayoutParams,
 } from "./primitives";
+import { DEFAULTS } from "@/timeline/defaults";
 import { clamp } from "@/utils/math";
 
 /**
@@ -162,25 +163,18 @@ export function measureCaptionLocalLayout({
 	ctx: TextCanvasContext;
 }): CaptionLocalLayout {
 	const layout = measureTextLayout({ text, canvasHeight, ctx });
-	const extents =
-		outline || shadow
-			? textDecorationExtents({
-					outline: resolveTextOutline({
-						outline: outline ?? { enabled: false, color: "", width: 0 },
-						scaledFontSize: layout.scaledFontSize,
-					}),
-					shadow: resolveTextShadow({
-						shadow: shadow ?? {
-							enabled: false,
-							color: "",
-							offsetX: 0,
-							offsetY: 0,
-							blur: 0,
-						},
-						scaledFontSize: layout.scaledFontSize,
-					}),
-				})
-			: undefined;
+	// Disabled outline and shadow resolve to zero extents, so the defaults
+	// stand in for callers that draw bare glyphs.
+	const extents = textDecorationExtents({
+		outline: resolveTextOutline({
+			outline: outline ?? DEFAULTS.text.outline,
+			scaledFontSize: layout.scaledFontSize,
+		}),
+		shadow: resolveTextShadow({
+			shadow: shadow ?? DEFAULTS.text.shadow,
+			scaledFontSize: layout.scaledFontSize,
+		}),
+	});
 	const block = getTextRect({
 		textAlign: layout.textAlign,
 		block: layout.block,

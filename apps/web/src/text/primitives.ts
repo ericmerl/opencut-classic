@@ -292,32 +292,36 @@ export function drawMeasuredTextLayout({
 
 	const lineYAt = (index: number) =>
 		index * layout.lineHeightPx - layout.block.visualCenterOffset;
-	const strokeLines = () => {
-		ctx.strokeStyle = outline!.color;
-		ctx.lineWidth = outline!.widthPx;
-		ctx.lineJoin = "round";
-		ctx.lineCap = "round";
-		for (let index = 0; index < layout.lines.length; index++) {
-			ctx.strokeText(layout.lines[index], 0, lineYAt(index));
-		}
-	};
-	const hasOutline = Boolean(outline?.enabled && outline.widthPx > 0);
+	const strokeOutline =
+		outline?.enabled && outline.widthPx > 0
+			? () =>
+					strokeMeasuredTextLayout({
+						ctx,
+						layout,
+						strokeColor: outline.color,
+						strokeWidth: outline.widthPx,
+						textBaseline,
+					})
+			: null;
 
-	// The shadow is cast once by the stroked glyphs, then the outline and the
-	// fill are painted sharp on top so neither carries a second shadow.
+	// The shadow pass draws the stroke and the fill with canvas shadow state on,
+	// so the shadow has the stroked glyph's silhouette (an opaque shadow colour
+	// reads as one shape; a translucent one compounds where stroke and fill
+	// overlap). The outline and fill are then repainted sharp on top, without
+	// shadow state, so neither carries a second shadow.
 	if (shadow?.enabled) {
 		ctx.save();
 		ctx.shadowColor = shadow.color;
 		ctx.shadowOffsetX = shadow.offsetXPx;
 		ctx.shadowOffsetY = shadow.offsetYPx;
 		ctx.shadowBlur = shadow.blurPx;
-		if (hasOutline) strokeLines();
+		strokeOutline?.();
 		for (let index = 0; index < layout.lines.length; index++) {
 			ctx.fillText(layout.lines[index], 0, lineYAt(index));
 		}
 		ctx.restore();
 	}
-	if (hasOutline) strokeLines();
+	strokeOutline?.();
 
 	const highlighted = highlight
 		? locateTextWord({ layout, wordIndex: highlight.wordIndex })

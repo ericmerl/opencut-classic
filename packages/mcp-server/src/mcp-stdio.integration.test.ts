@@ -1584,10 +1584,55 @@ integrationTest(
 		).toBe(
 			requireString(restructureEvaluation.predictedProjectHash, "predicted"),
 		);
+		// The restyle round-trips through an independent readback: the persisted
+		// project reports the same outline and shadow params on every chunk.
+		const readback = await harness.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		const readbackCaptions = requireRecords(
+			readback.elements,
+			"elements",
+		).filter((element) => element.type === "text");
+		expect(readbackCaptions).toHaveLength(resolvedChunks.length);
+		for (const caption of readbackCaptions) {
+			expect(requireRecord(caption.params, "params")).toMatchObject({
+				"outline.enabled": true,
+				"outline.color": "#000000",
+				"outline.width": 0.1,
+				"shadow.enabled": true,
+				"shadow.color": "#000000",
+				"shadow.offsetX": 0.06,
+				"shadow.offsetY": 0.06,
+				"shadow.blur": 0,
+			});
+		}
+		// ASS cannot combine an opaque box with a glyph outline or shadow, so the
+		// boxed red preset reports both as structured losses instead of dropping
+		// them silently.
+		const boxedAssPath = join(directory, "captions-outlined.ass");
+		const boxedAss = await harness.callTool("opencut_export_subtitles", {
+			...affinity(identity),
+			projectId,
+			operationId: `caption-outline-export-ass-${runId}`,
+			expectedRevision: requireNumber(restructured.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(
+				requireRecord(restructured.snapshot, "snapshot"),
+			),
+			outputPath: boxedAssPath,
+			format: "ass",
+		});
+		expect(boxedAss).toMatchObject({ status: "exported", format: "ass" });
+		expect(
+			requireRecords(
+				requireRecord(boxedAss.lossReport, "lossReport").dropped,
+				"dropped",
+			).map((loss) => loss.feature),
+		).toEqual(expect.arrayContaining(["outline", "shadow"]));
 
 		// The outlined, shadowed captions must render identically in preview and
-		// export, and the outline must actually be painted: inside the red
-		// caption block only the black stroke and shadow can produce dark pixels.
+		// export, and the outline must actually be painted: only the black stroke
+		// puts near-black pixels right next to the white glyphs.
 		const restructuredSnapshot = requireRecord(
 			restructured.snapshot,
 			"snapshot",
@@ -1659,30 +1704,79 @@ integrationTest(
 			actual: rgbaComparisonMetrics(previewRgba, exportRgba).meanAbsoluteError,
 			maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
 		});
-		for (const [label, rgba] of [
-			["preview", previewRgba],
-			["export", exportRgba],
+		const previewBlock = captionBlockEvidence({
+			rgba: previewRgba,
+			...parityCanvas,
+		});
+		const exportBlock = captionBlockEvidence({
+			rgba: exportRgba,
+			...parityCanvas,
+		});
+		for (const [label, block] of [
+			["preview", previewBlock],
+			["export", exportBlock],
 		] as const) {
-			const dark = darkPixelsInsideRedBlock({ rgba, ...parityCanvas });
-			expect({ label, redPixels: dark.redPixels > 500 }).toEqual({
+			expect({ label, redPixels: block.redPixels > 500 }).toEqual({
 				label,
 				redPixels: true,
 			});
-			expect({ label, outlinePixels: dark.darkPixels > 50 }).toEqual({
+			// Near-black pixels touching white glyphs come only from the stroke;
+			// unstroked antialiasing over red produces pink, never black.
+			expect({ label, outlinePixels: block.outlinePixels > 50 }).toEqual({
 				label,
 				outlinePixels: true,
 			});
 		}
+		// A whole-frame mean hides a missing stroke on a mostly black canvas, so
+		// the parity bound is also applied to the caption block alone.
+		assertMetricAtMost({
+			label: "caption block preview/export RGBA MAE",
+			actual: regionMeanAbsoluteError({
+				before: previewRgba,
+				after: exportRgba,
+				width: parityCanvas.width,
+				box: previewBlock.box,
+			}),
+			maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+		});
 	},
 	8 * 60_000,
 );
 
+function regionMeanAbsoluteError({
+	before,
+	after,
+	width,
+	box,
+}: {
+	before: Buffer;
+	after: Buffer;
+	width: number;
+	box: { left: number; top: number; right: number; bottom: number };
+}): number {
+	let total = 0;
+	let count = 0;
+	for (let y = box.top; y <= box.bottom; y += 1) {
+		for (let x = box.left; x <= box.right; x += 1) {
+			const offset = (y * width + x) * 4;
+			for (let channel = 0; channel < 4; channel += 1) {
+				total += Math.abs(before[offset + channel]! - after[offset + channel]!);
+				count += 1;
+			}
+		}
+	}
+	if (count === 0) throw new Error("caption block region is empty");
+	return total / count;
+}
+
 /**
  * The bounding box of the strongly red pixels (the tiktok-classic-red caption
- * block) and the count of near-black pixels inside it. White glyphs and a
- * yellow highlight never produce those; only the outline and shadow do.
+ * block) and, inside it, the count of near-black pixels that have a white
+ * glyph pixel within three pixels. Black canvas showing between per-line
+ * bubbles is never that close to a glyph, and unstroked glyph edges over red
+ * blend to pink, so only a painted outline (or its hard shadow) can score.
  */
-function darkPixelsInsideRedBlock({
+function captionBlockEvidence({
 	rgba,
 	width,
 	height,
@@ -1690,7 +1784,11 @@ function darkPixelsInsideRedBlock({
 	rgba: Buffer;
 	width: number;
 	height: number;
-}): { redPixels: number; darkPixels: number } {
+}): {
+	redPixels: number;
+	outlinePixels: number;
+	box: { left: number; top: number; right: number; bottom: number };
+} {
 	let left = width;
 	let top = height;
 	let right = -1;
@@ -1699,6 +1797,11 @@ function darkPixelsInsideRedBlock({
 	const at = (x: number, y: number) => {
 		const offset = (y * width + x) * 4;
 		return [rgba[offset]!, rgba[offset + 1]!, rgba[offset + 2]!] as const;
+	};
+	const isWhite = (x: number, y: number) => {
+		if (x < 0 || y < 0 || x >= width || y >= height) return false;
+		const [r, g, b] = at(x, y);
+		return r > 230 && g > 230 && b > 230;
 	};
 	for (let y = 0; y < height; y += 1) {
 		for (let x = 0; x < width; x += 1) {
@@ -1712,14 +1815,28 @@ function darkPixelsInsideRedBlock({
 			}
 		}
 	}
-	let darkPixels = 0;
+	if (right < left || bottom < top) {
+		throw new Error("no red caption block found in the frame");
+	}
+	const reach = 3;
+	let outlinePixels = 0;
 	for (let y = top; y <= bottom; y += 1) {
 		for (let x = left; x <= right; x += 1) {
 			const [r, g, b] = at(x, y);
-			if (r < 60 && g < 60 && b < 60) darkPixels += 1;
+			if (r >= 60 || g >= 60 || b >= 60) continue;
+			let nearWhite = false;
+			for (let dy = -reach; dy <= reach && !nearWhite; dy += 1) {
+				for (let dx = -reach; dx <= reach; dx += 1) {
+					if (isWhite(x + dx, y + dy)) {
+						nearWhite = true;
+						break;
+					}
+				}
+			}
+			if (nearWhite) outlinePixels += 1;
 		}
 	}
-	return { redPixels, darkPixels };
+	return { redPixels, outlinePixels, box: { left, top, right, bottom } };
 }
 
 integrationTest(
