@@ -1,6 +1,10 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import * as z from "zod/v4";
+import {
+	APPROVED_AUDIO_PROVIDER_PROTOCOL,
+	CommandApprovedAudioProvider,
+} from "./approved-audio-provider";
 import { semanticProviderInput } from "./provider-semantic-input";
 import {
 	DurableProviderSupervisor,
@@ -57,7 +61,11 @@ export interface AudioCleanerResult {
 	warnings: string[];
 }
 
-export class CommandAudioCleaner {
+export interface AudioCleanerProtocol {
+	clean(job: AudioCleanerJob, timeoutMs: number): Promise<AudioCleanerResult>;
+}
+
+export class CommandAudioCleaner implements AudioCleanerProtocol {
 	constructor(
 		private config: {
 			command: string;
@@ -168,30 +176,63 @@ export class CommandAudioCleaner {
 
 export function commandAudioCleanerFromEnvironment(
 	resultReceiptDirectory?: string,
-): CommandAudioCleaner {
+): AudioCleanerProtocol {
+	const approvedCommand =
+		globalThis.process.env.OPENCUT_APPROVED_AUDIO_PROVIDER_COMMAND;
+	if (approvedCommand) {
+		const provider = new CommandApprovedAudioProvider({
+			command: approvedCommand,
+			args: parseCommandArgs(
+				globalThis.process.env.OPENCUT_APPROVED_AUDIO_PROVIDER_ARGS,
+				"OPENCUT_APPROVED_AUDIO_PROVIDER_ARGS",
+			),
+		});
+		return {
+			async clean(job, timeoutMs) {
+				const result = await provider.run(
+					{
+						protocol: APPROVED_AUDIO_PROVIDER_PROTOCOL,
+						operationId: job.operationId,
+						task: "audio-cleanup",
+						source: {
+							path: job.source.path,
+							contentSha256: job.source.contentHash,
+						},
+						outputDirectory: job.outputDirectory,
+						devicePolicy: { kind: "cpu", canonical: true },
+						options: {
+							...job.options,
+							noiseReduction: job.cleanup.noiseReduction,
+							deReverb: job.cleanup.deReverb,
+							deEss: job.cleanup.deEss,
+							highPassHz: job.cleanup.highPassHz,
+							normalize: job.cleanup.normalize,
+						},
+					},
+					timeoutMs,
+				);
+				if (result.task !== "audio-cleanup") {
+					throw new Error("approved audio provider returned the wrong task");
+				}
+				return {
+					artifactPath: result.artifacts.cleaned.path,
+					modelId: result.model.id,
+					modelVersion: result.model.revision,
+					warnings: result.warnings,
+				};
+			},
+		};
+	}
 	const command = globalThis.process.env.OPENCUT_AUDIO_CLEANER_COMMAND;
 	if (!command) {
 		throw new Error(
 			"OPENCUT_AUDIO_CLEANER_COMMAND is required for opencut_clean_audio",
 		);
 	}
-	const rawArgs = globalThis.process.env.OPENCUT_AUDIO_CLEANER_ARGS;
-	let args: string[] = [];
-	if (rawArgs) {
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(rawArgs);
-		} catch {
-			throw new Error("OPENCUT_AUDIO_CLEANER_ARGS must be a JSON array");
-		}
-		if (
-			!Array.isArray(parsed) ||
-			!parsed.every((value) => typeof value === "string")
-		) {
-			throw new Error("OPENCUT_AUDIO_CLEANER_ARGS must contain only strings");
-		}
-		args = parsed;
-	}
+	const args = parseCommandArgs(
+		globalThis.process.env.OPENCUT_AUDIO_CLEANER_ARGS,
+		"OPENCUT_AUDIO_CLEANER_ARGS",
+	);
 	return new CommandAudioCleaner({
 		command,
 		args,
@@ -199,6 +240,23 @@ export function commandAudioCleanerFromEnvironment(
 			? { supervisorDirectory: resultReceiptDirectory }
 			: {}),
 	});
+}
+
+function parseCommandArgs(raw: string | undefined, name: string): string[] {
+	if (!raw) return [];
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		throw new Error(`${name} must be a JSON array`);
+	}
+	if (
+		!Array.isArray(parsed) ||
+		!parsed.every((value) => typeof value === "string")
+	) {
+		throw new Error(`${name} must contain only strings`);
+	}
+	return parsed;
 }
 
 const cleanerResultSchema = z.object({
