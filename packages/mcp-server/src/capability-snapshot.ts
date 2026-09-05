@@ -723,7 +723,12 @@ function unavailableMediaProviderReadiness(reason: string) {
 }
 
 export function hashCapabilitySnapshot(value: unknown): string {
-	return createHash("sha256").update(stableSerialize(value)).digest("hex");
+	// Hash the same JSON-safe projection that crosses the MCP transport. Optional
+	// WASM fields can be `undefined` in-process, but JSON object serialization
+	// omits them; hashing the pre-transport shape would make the published digest
+	// unverifiable by clients.
+	const transported = JSON.parse(JSON.stringify(value)) as unknown;
+	return createHash("sha256").update(stableSerialize(transported)).digest("hex");
 }
 
 async function probeExecutable(command: string, versionArgs: string[]) {
