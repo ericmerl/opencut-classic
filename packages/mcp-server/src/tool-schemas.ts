@@ -1870,7 +1870,9 @@ export const getMediaCapabilityCatalogInputSchema = z
 	})
 	.strict();
 
-const mediaAnalysisIdentifierSchema = z.string().trim().min(1).max(512);
+// This transport guard mirrors Rust's `require_text`; Rust remains authoritative
+// for all semantic validation performed after the MCP boundary.
+const mediaAnalysisIdentifierSchema = z.string().trim().min(1).max(4_096);
 const mediaAnalysisSha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const mediaAnalysisSourceSchema = z
 	.object({
