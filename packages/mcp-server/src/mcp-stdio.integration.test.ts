@@ -4019,12 +4019,138 @@ integrationTest(
 			},
 		});
 
+		const trimSourceSave = await first.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "time-map-trim-source-save",
+			expectedRevision: requireNumber(applied.revision, "applied revision"),
+			expectedContentHash: appliedHash,
+		});
+		const trimOperations = [
+			{
+				kind: "trim",
+				trackId,
+				elementId,
+				startTime: 30_000,
+				duration: 180_000,
+				trimStart: 0,
+				trimEnd: 0,
+				ripple: false,
+			},
+		];
+		const trimDescription =
+			"Reposition a time-mapped clip and crop only its right timeline edge";
+		const trimPreflight = await first.callTool("opencut_preflight_edit_plan", {
+			contractVersion: 2,
+			...affinity(identity),
+			preflightId: "time-map-trim-preflight",
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(applied.revision, "applied revision"),
+			expectedProjectContentHash: appliedHash,
+			expectedWriteVersion: requireNumber(
+				trimSourceSave.writeVersion,
+				"trim source writeVersion",
+			),
+			saveReceiptOperationId: "time-map-trim-source-save",
+			expectedSaveReceiptId: requireString(
+				trimSourceSave.receiptId,
+				"trim source receiptId",
+			),
+			description: trimDescription,
+			operations: trimOperations,
+			policy: {
+				warningPolicy: "allow",
+				providerExecution: "forbidden",
+				costPolicy: "require-exact",
+			},
+		});
+		const trimPreflightResult = requireRecord(
+			trimPreflight.result,
+			"trim preflight result",
+		);
+		const trimEvaluation = requireRecord(
+			trimPreflightResult.evaluation,
+			"trim evaluation",
+		);
+		const trimmed = await first.callTool("opencut_apply_edit_plan", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "time-map-trim-apply",
+			expectedRevision: requireNumber(applied.revision, "applied revision"),
+			expectedProjectContentHash: appliedHash,
+			description: trimDescription,
+			operations: trimOperations,
+			preflight: {
+				receiptId: requireString(
+					trimPreflight.receiptId,
+					"trim preflight receiptId",
+				),
+				planFingerprint: requireString(
+					trimEvaluation.planFingerprint,
+					"trim planFingerprint",
+				),
+				preflightFingerprint: requireString(
+					trimEvaluation.preflightFingerprint,
+					"trim preflightFingerprint",
+				),
+				planDiffHash: requireString(
+					trimEvaluation.planDiffHash,
+					"trim planDiffHash",
+				),
+			},
+		});
+		const trimmedHash = requireProjectContentHash(
+			requireRecord(trimmed.snapshot, "trimmed snapshot"),
+		);
+		const trimQuery = await first.callTool("opencut_query_timeline", {
+			...affinity(identity),
+			projectId,
+			expectedRevision: requireNumber(trimmed.revision, "trimmed revision"),
+			trackIds: [trackId],
+		});
+		expect(
+			requireRecords(
+				requireRecords(trimQuery.tracks, "trim query tracks")[0]?.elements,
+				"trim query elements",
+			)[0],
+		).toMatchObject({
+			elementId,
+			duration: 180_000,
+			sourceTimeReadback: [
+				{ clipTime: 0, sourceTime: 0 },
+				{ clipTime: 60_000, sourceTime: 60_000 },
+				{ clipTime: 120_000, sourceTime: 60_000 },
+				{ clipTime: 180_000, sourceTime: 30_000 },
+			],
+		});
+		const trimUndone = await first.callTool("opencut_undo", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "time-map-trim-undo",
+			expectedRevision: requireNumber(trimmed.revision, "trimmed revision"),
+			expectedProjectContentHash: trimmedHash,
+			steps: 1,
+			undoOfOperationId: "time-map-trim-apply",
+		});
+		expect(
+			requireProjectContentHash(
+				requireRecord(trimUndone.snapshot, "trim undo snapshot"),
+			),
+		).toBe(appliedHash);
+
 		const undone = await first.callTool("opencut_undo", {
 			...affinity(identity),
 			projectId,
 			sceneId,
 			operationId: "time-map-undo",
-			expectedRevision: requireNumber(applied.revision, "applied revision"),
+			expectedRevision: requireNumber(
+				trimUndone.revision,
+				"trim undo revision",
+			),
 			expectedProjectContentHash: appliedHash,
 			steps: 1,
 			undoOfOperationId: "time-map-apply",
@@ -4158,30 +4284,86 @@ integrationTest(
 		const holdRms = pcmRms({ startSeconds: 0.65, endSeconds: 0.9 });
 		expect(rampRms).toBeGreaterThan(100);
 		expect(holdRms).toBeLessThan(rampRms * 0.1);
-		const reversePreview = await restarted.callTool(
-			"opencut_render_preview_frame",
+
+		const previewAudioRange = await restarted.callTool(
+			"opencut_render_preview_range",
 			{
-				...previewBase,
-				operationId: "time-map-reverse-preview",
-				time: { kind: "media-time", ticks: 160_000, rounding: "exact" },
+				...affinity(restartedIdentity),
+				contractVersion: 1,
+				operationId: "time-map-audio-preview",
+				projectId,
+				sceneId,
+				expectedRevision: previewBase.expectedRevision,
+				expectedProjectContentHash: appliedHash,
+				expectedWriteVersion: previewBase.expectedWriteVersion,
+				saveReceiptOperationId: "time-map-parity-save",
+				expectedSaveReceiptId: previewBase.expectedSaveReceiptId,
+				range: {
+					kind: "media-time",
+					startTicks: 0,
+					endTicksExclusive: 240_000,
+				},
+				canvasSize: { width: 16, height: 16 },
+				output: {
+					kind: "frame-sequence",
+					frameFormat: "png",
+					includeAudio: true,
+				},
 			},
 			5 * 60_000,
 		);
-		const previewRgba = await extractRgba(
-			requireString(reversePreview.outputPath, "reverse preview path"),
+		const previewAudio = requireRecord(
+			previewAudioRange.audio,
+			"time-map preview audio",
 		);
-		const exportRgba = await extractRgba(outputPath, 160_000 / 120_000);
-		const parity = rgbaComparisonMetrics(previewRgba, exportRgba);
+		const previewPcm = await extractPcmI16(
+			requireString(previewAudio.path, "time-map preview audio path"),
+		);
+		const audioParity = pcmComparisonMetrics(previewPcm, exportedPcm);
 		assertMetricAtMost({
-			label: "time-map preview/export RGBA MAE",
-			actual: parity.meanAbsoluteError,
-			maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+			label: "time-map preview/export audio alignment lag (seconds)",
+			actual: Math.abs(audioParity.lagFrames) / PARITY_AUDIO_SAMPLE_RATE,
+			maximum: PREVIEW_EXPORT_PCM_MAX_LAG_SECONDS,
 		});
-		assertMetricAtLeast({
-			label: "time-map preview/export PSNR",
-			actual: parity.psnrDb,
-			minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
+		assertMetricAtMost({
+			label: "time-map preview/export aligned PCM MAE",
+			actual: audioParity.meanAbsoluteError,
+			maximum: PREVIEW_EXPORT_PCM_MAE_TOLERANCE,
 		});
+
+		for (const [label, ticks] of [
+			["ramp", 28_000],
+			["freeze", 80_000],
+			["reverse", 160_000],
+		] as const) {
+			const preview = await restarted.callTool(
+				"opencut_render_preview_frame",
+				{
+					...previewBase,
+					operationId: `time-map-${label}-preview-parity`,
+					time: { kind: "media-time", ticks, rounding: "exact" },
+				},
+				5 * 60_000,
+			);
+			const previewRgba = await extractRgba(
+				requireString(preview.outputPath, `${label} preview path`),
+			);
+			const exportRgba = await extractRgba(
+				outputPath,
+				ticks / MEDIA_TICKS_PER_SECOND,
+			);
+			const parity = rgbaComparisonMetrics(previewRgba, exportRgba);
+			assertMetricAtMost({
+				label: `time-map ${label} preview/export RGBA MAE`,
+				actual: parity.meanAbsoluteError,
+				maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+			});
+			assertMetricAtLeast({
+				label: `time-map ${label} preview/export PSNR`,
+				actual: parity.psnrDb,
+				minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
+			});
+		}
 		await restarted.callTool("opencut_stop_editor_worker", {});
 	},
 	10 * 60_000,

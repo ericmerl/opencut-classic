@@ -45,17 +45,46 @@ describe("retime resolve", () => {
 		expect(getSourceTimeAtClipTime({ clipTime: 5, retime: { rate: 0 } })).toBe(
 			5,
 		);
-		expect(
-			getSourceTimeAtClipTime({ clipTime: 5, retime: { rate: -1 } }),
-		).toBe(5);
+		expect(getSourceTimeAtClipTime({ clipTime: 5, retime: { rate: -1 } })).toBe(
+			5,
+		);
 	});
 
 	test("caps retime rates above 5x", () => {
-		expect(getSourceTimeAtClipTime({ clipTime: 5, retime: { rate: 100 } })).toBe(
-			25,
-		);
 		expect(
-			getTimelineDurationForSourceSpan({ sourceSpan: 10, retime: { rate: 100 } }),
+			getSourceTimeAtClipTime({ clipTime: 5, retime: { rate: 100 } }),
+		).toBe(25);
+		expect(
+			getTimelineDurationForSourceSpan({
+				sourceSpan: 10,
+				retime: { rate: 100 },
+			}),
 		).toBe(2);
+	});
+
+	test("fails closed when Rust rejects a time-map lookup", () => {
+		const retime: RetimeConfig = {
+			rate: 1,
+			mode: "time-map",
+			timeMap: {
+				schemaVersion: "opencut.time-map.v1",
+				frameInterpolation: { requested: "nearest", fallback: "nearest" },
+				audioPolicy: { maintainPitch: false, hold: "mute" },
+				segments: [
+					{
+						kind: "speed",
+						timelineStart: 0,
+						timelineEnd: 120_000,
+						sourceStart: 0,
+						startRate: 1,
+						endRate: 1,
+						direction: "forward",
+					},
+				],
+			},
+		};
+		expect(() =>
+			getSourceTimeAtClipTime({ clipTime: 120_001, retime }),
+		).toThrow("Rust rejected");
 	});
 });

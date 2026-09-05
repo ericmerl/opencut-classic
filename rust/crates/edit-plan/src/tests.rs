@@ -1717,7 +1717,7 @@ fn time_map_is_canonical_and_split_rebases_hold_and_reverse_segments() {
 }
 
 #[test]
-fn time_map_trim_slices_timeline_and_preserves_source_boundaries() {
+fn time_map_trim_repositions_without_cropping_and_duration_crops_the_right_edge() {
     let result = evaluate(options_with_before(
         full_snapshot(),
         vec![
@@ -1756,12 +1756,9 @@ fn time_map_trim_slices_timeline_and_preserves_source_boundaries() {
     let time_map =
         serde_json::from_value::<time::TimeMap>(serde_json::to_value(&retime["timeMap"]).unwrap())
             .unwrap();
-    for (clip_time, expected_source_time) in [
-        (0, 22_500),
-        (15_000, 60_000),
-        (45_000, 60_000),
-        (90_000, 15_000),
-    ] {
+    for (clip_time, expected_source_time) in
+        [(0, 0), (15_000, 22_500), (45_000, 60_000), (90_000, 30_000)]
+    {
         assert_eq!(
             time_map
                 .source_time_at(MediaTime::from_ticks(clip_time))

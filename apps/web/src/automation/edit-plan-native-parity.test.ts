@@ -25,6 +25,14 @@ mock.module("opencut-wasm", () => ({
 	evaluateEditPlan: () => {
 		throw new Error("native parity tests use the Rust JSON evaluator");
 	},
+	evaluateTimeMap: ({
+		timeMap,
+	}: {
+		timeMap: { segments: Array<{ timelineEnd: number }> };
+	}) => ({
+		status: "evaluated",
+		duration: timeMap.segments.at(-1)?.timelineEnd ?? 0,
+	}),
 	formatTimecode: () => "00:00",
 	lastFrameTime: () => 0,
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) => seconds * 120_000,

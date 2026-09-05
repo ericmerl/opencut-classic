@@ -2,6 +2,36 @@
 
 import { describe, expect, mock, test } from "bun:test";
 
+function resolveTestTimeMap({
+	clipTime,
+	timeMap,
+}: {
+	clipTime: number;
+	timeMap: { segments: Array<Record<string, number | string>> };
+}) {
+	const segment = timeMap.segments.find(
+		(candidate) =>
+			clipTime >= Number(candidate.timelineStart) &&
+			clipTime <= Number(candidate.timelineEnd),
+	);
+	if (!segment) return undefined;
+	if (segment.kind === "hold") return segment.sourceTime;
+	const elapsed = clipTime - Number(segment.timelineStart);
+	const duration = Number(segment.timelineEnd) - Number(segment.timelineStart);
+	const position = elapsed / duration;
+	const delta =
+		duration *
+		(Number(segment.startRate) * position +
+			0.5 *
+				(Number(segment.endRate) - Number(segment.startRate)) *
+				position *
+				position);
+	return Math.round(
+		Number(segment.sourceStart) +
+			(segment.direction === "reverse" ? -delta : delta),
+	);
+}
+
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
 	lastFrameTime: () => 0,
@@ -11,36 +41,39 @@ mock.module("opencut-wasm", () => ({
 	parseTimecode: () => 0,
 	roundToFrame: ({ time }: { time: number }) => time,
 	snappedSeekTime: ({ time }: { time: number }) => time,
-	resolveTimeMapSourceTime: ({
-		clipTime,
+	resolveTimeMapSourceTime: resolveTestTimeMap,
+	describeTimeMap: ({
 		timeMap,
+		elementTimelineStart,
+		sourceTrimStart,
 	}: {
-		clipTime: number;
 		timeMap: { segments: Array<Record<string, number | string>> };
-	}) => {
-		const segment = timeMap.segments.find(
-			(candidate) =>
-				clipTime >= Number(candidate.timelineStart) &&
-				clipTime <= Number(candidate.timelineEnd),
-		);
-		if (!segment) return undefined;
-		if (segment.kind === "hold") return segment.sourceTime;
-		const elapsed = clipTime - Number(segment.timelineStart);
-		const duration =
-			Number(segment.timelineEnd) - Number(segment.timelineStart);
-		const position = elapsed / duration;
-		const delta =
-			duration *
-			(Number(segment.startRate) * position +
-				0.5 *
-					(Number(segment.endRate) - Number(segment.startRate)) *
-					position *
-					position);
-		return Math.round(
-			Number(segment.sourceStart) +
-				(segment.direction === "reverse" ? -delta : delta),
-		);
-	},
+		elementTimelineStart: number;
+		sourceTrimStart: number;
+	}) => ({
+		sourceTimeReadback: [
+			...new Set(
+				timeMap.segments.flatMap((segment) => [
+					Number(segment.timelineStart),
+					Number(segment.timelineEnd),
+				]),
+			),
+		].map((clipTime) => {
+			const sourceTime = Number(resolveTestTimeMap({ clipTime, timeMap }));
+			return {
+				clipTime,
+				timelineTime: elementTimelineStart + clipTime,
+				sourceTime,
+				absoluteSourceTime: sourceTrimStart + sourceTime,
+			};
+		}),
+		mappingPolicy: {
+			trim: "slice-time-map",
+			split: "slice-and-rebase-time-map",
+			timelineAnchored: ["keyframe", "transition", "caption"],
+			sourceMapped: ["tracker", "matte", "video-decoder", "audio"],
+		},
+	}),
 	sliceTimeMap: () => undefined,
 }));
 

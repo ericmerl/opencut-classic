@@ -5,8 +5,9 @@ import type {
 	AutomationTrackSnapshot,
 } from "./types";
 import type { ProjectContentHashResult } from "./project-content-hash";
-import { getSourceTimeAtClipTime } from "@/retime";
 import type { RetimeConfig } from "@/timeline";
+import * as opencutWasm from "opencut-wasm";
+import type { TimeMapMappingPolicy } from "opencut-wasm";
 
 export interface AutomationTimelineQueryRequest {
 	projectId: string;
@@ -36,12 +37,7 @@ export interface AutomationTimelineQueryElement {
 		sourceTime: MediaTime;
 		absoluteSourceTime: MediaTime;
 	}>;
-	mappingPolicy?: {
-		trim: "slice-time-map";
-		split: "slice-and-rebase-time-map";
-		timelineAnchored: ["keyframe", "transition", "caption"];
-		sourceMapped: ["tracker", "matte", "video-decoder", "audio"];
-	};
+	mappingPolicy?: TimeMapMappingPolicy;
 }
 
 export interface AutomationTimelineQueryGap {
@@ -262,16 +258,16 @@ function toQueryElement(
 	element: AutomationElementSnapshot,
 ): AutomationTimelineQueryElement {
 	const timeMap = element.retime?.timeMap;
-	const boundaryTimes = timeMap
-		? [
-				...new Set(
-					timeMap.segments.flatMap((segment) => [
-						segment.timelineStart,
-						segment.timelineEnd,
-					]),
-				),
-			].sort((left, right) => left - right)
-		: [];
+	const description = timeMap
+		? opencutWasm.describeTimeMap({
+				timeMap,
+				elementTimelineStart: element.startTime,
+				sourceTrimStart: element.trimStart,
+			})
+		: undefined;
+	if (timeMap && !description) {
+		throw new Error("Rust rejected the time-map query description");
+	}
 	return {
 		elementId: element.elementId,
 		type: element.type,
@@ -285,37 +281,19 @@ function toQueryElement(
 		...(element.mediaId ? { mediaId: element.mediaId } : {}),
 		...(element.hidden === undefined ? {} : { hidden: element.hidden }),
 		...(element.retime ? { retime: element.retime } : {}),
-		...(timeMap
+		...(description
 			? {
-					sourceTimeReadback: boundaryTimes.map((clipTime) => {
-						const sourceTime = getSourceTimeAtClipTime({
-							clipTime,
-							retime: element.retime,
-						});
-						return {
-							clipTime: mediaTime({ ticks: clipTime }),
-							timelineTime: mediaTime({ ticks: element.startTime + clipTime }),
-							sourceTime: mediaTime({ ticks: sourceTime }),
+					sourceTimeReadback: description.sourceTimeReadback.map(
+						(readback) => ({
+							clipTime: mediaTime({ ticks: readback.clipTime }),
+							timelineTime: mediaTime({ ticks: readback.timelineTime }),
+							sourceTime: mediaTime({ ticks: readback.sourceTime }),
 							absoluteSourceTime: mediaTime({
-								ticks: element.trimStart + sourceTime,
+								ticks: readback.absoluteSourceTime,
 							}),
-						};
-					}),
-					mappingPolicy: {
-						trim: "slice-time-map" as const,
-						split: "slice-and-rebase-time-map" as const,
-						timelineAnchored: ["keyframe", "transition", "caption"] as [
-							"keyframe",
-							"transition",
-							"caption",
-						],
-						sourceMapped: ["tracker", "matte", "video-decoder", "audio"] as [
-							"tracker",
-							"matte",
-							"video-decoder",
-							"audio",
-						],
-					},
+						}),
+					),
+					mappingPolicy: description.mappingPolicy,
 				}
 			: {}),
 	};

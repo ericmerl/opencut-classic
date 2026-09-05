@@ -18,7 +18,11 @@ import {
 } from "./subject-tracker";
 import type { BridgeConnectionIdentity } from "./editor-bridge";
 import type { CompositeOperationObserver } from "./composite-operation-observer";
-import { evaluateTimeMap } from "./native-time-map";
+import {
+	evaluateTimeMap,
+	mapTimeMapTrackingSamples as mapNativeTimeMapTrackingSamples,
+} from "./native-time-map";
+import type { TimeMap } from "opencut-wasm";
 
 const TICKS_PER_SECOND = 120_000;
 
@@ -85,7 +89,7 @@ interface TrackingClip {
 	trimStart: number;
 	trimEnd: number;
 	retimeRate: number;
-	timeMap?: Record<string, unknown>;
+	timeMap?: TimeMap;
 }
 
 interface TrackingKeyframeOperation {
@@ -527,70 +531,21 @@ function mapTimeMapTrackingSamples({
 	sampleIntervalTicks: number;
 }): Array<{ time: number; box: NormalizedTrackingBox }> {
 	if (!clip.timeMap || samples.length === 0) return [];
-	const clipTimes: number[] = [];
-	for (let time = 0; time < clip.duration; time += sampleIntervalTicks) {
-		clipTimes.push(time);
-	}
-	clipTimes.push(clip.duration);
-	const result = evaluateTimeMap({
+	const result = mapNativeTimeMapTrackingSamples({
 		timeMap: clip.timeMap,
-		sampleClipTimes: clipTimes,
+		clipDuration: clip.duration,
+		sourceTrimStart: clip.trimStart,
+		sampleInterval: sampleIntervalTicks,
+		samples: samples.map((sample) => ({
+			sourceTime: sample.sourceTime,
+			box: sample.box,
+		})),
 	});
-	if (
-		result.status !== "evaluated" ||
-		!Array.isArray(result.sourceTimeReadback)
-	) {
-		throw new Error(
-			`Rust rejected tracker time map: ${String(result.reason ?? "invalid readback")}`,
-		);
-	}
-	return result.sourceTimeReadback.flatMap((value) => {
-		if (!isRecord(value)) return [];
-		const clipTime = value.clipTime;
-		const sourceTime = value.sourceTime;
-		if (typeof clipTime !== "number" || typeof sourceTime !== "number")
-			return [];
-		const box = interpolateTrackingBox({
-			samples,
-			sourceTime: clip.trimStart + sourceTime,
-		});
-		return box ? [{ time: clipTime, box }] : [];
-	});
-}
-
-function interpolateTrackingBox({
-	samples,
-	sourceTime,
-}: {
-	samples: SubjectTrackingSample[];
-	sourceTime: number;
-}): NormalizedTrackingBox | null {
-	const first = samples[0];
-	const last = samples.at(-1);
-	if (
-		!first ||
-		!last ||
-		sourceTime < first.sourceTime ||
-		sourceTime > last.sourceTime
-	) {
-		return null;
-	}
-	const upperIndex = samples.findIndex(
-		(sample) => sample.sourceTime >= sourceTime,
-	);
-	const upper = samples[Math.max(0, upperIndex)] ?? last;
-	const lower = samples[Math.max(0, upperIndex - 1)] ?? first;
-	if (upper.sourceTime === lower.sourceTime) return upper.box;
-	const position =
-		(sourceTime - lower.sourceTime) / (upper.sourceTime - lower.sourceTime);
-	const interpolate = (left: number, right: number) =>
-		Math.round((left + (right - left) * position) * 1e12) / 1e12;
-	return {
-		x: interpolate(lower.box.x, upper.box.x),
-		y: interpolate(lower.box.y, upper.box.y),
-		width: interpolate(lower.box.width, upper.box.width),
-		height: interpolate(lower.box.height, upper.box.height),
-	};
+	if (!result) throw new Error("Rust rejected tracker time map");
+	return result.samples.map((sample) => ({
+		time: sample.time,
+		box: sample.box as unknown as NormalizedTrackingBox,
+	}));
 }
 
 function buildTrackerJob({
@@ -695,6 +650,17 @@ function findTrackingClip({
 	if (!Number.isFinite(retimeRate) || retimeRate <= 0) {
 		throw new Error("video element retime rate is invalid");
 	}
+	let timeMap: TimeMap | undefined;
+	if (retime && isRecord(retime.timeMap)) {
+		const evaluated = evaluateTimeMap({
+			timeMap: retime.timeMap,
+			sampleClipTimes: [],
+		});
+		if (evaluated.status !== "evaluated") {
+			throw new Error("video element time map is invalid");
+		}
+		timeMap = evaluated.canonicalTimeMap as unknown as TimeMap;
+	}
 	return {
 		mediaId: element.mediaId,
 		name: asset.name,
@@ -706,7 +672,7 @@ function findTrackingClip({
 		trimStart: element.trimStart,
 		trimEnd: element.trimEnd,
 		retimeRate,
-		...(retime && isRecord(retime.timeMap) ? { timeMap: retime.timeMap } : {}),
+		...(timeMap ? { timeMap } : {}),
 	};
 }
 

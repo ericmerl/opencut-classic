@@ -1,95 +1,21 @@
 import { PitchShifter } from "soundtouchjs";
 import { clampRetimeRate, shouldMaintainPitch } from "@/retime/rate";
 import type { RetimeConfig } from "@/timeline";
-import type { TimeMap } from "opencut-wasm";
+import * as opencutWasm from "opencut-wasm";
+import type { TimeMap, TimeMapAudioChunk } from "opencut-wasm";
 import { getSourceTimeAtClipTime } from "./resolve";
 
 const MEDIA_TICKS_PER_SECOND = 120_000;
 
 const RATE_EPSILON = 1e-6;
-// SoundTouch's 4,096-sample analysis window and startup latency need a
-// substantial slice. One-second chunks retain variable tempo on longer ramps
-// while keeping each independent analysis window renderable.
-const PITCH_PRESERVATION_CHUNK_TICKS = MEDIA_TICKS_PER_SECOND;
-
-export interface TimeMapAudioChunk {
-	kind: "speed" | "hold";
-	timelineStart: number;
-	timelineEnd: number;
-	sourceStart: number;
-	sourceEnd: number;
-}
-
 export function planTimeMapAudioChunks({
 	timeMap,
-	maxChunkTicks = PITCH_PRESERVATION_CHUNK_TICKS,
 }: {
 	timeMap: TimeMap;
-	maxChunkTicks?: number;
 }): TimeMapAudioChunk[] {
-	if (!Number.isInteger(maxChunkTicks) || maxChunkTicks <= 0) {
-		throw new Error("maxChunkTicks must be a positive integer");
-	}
-	const retime: RetimeConfig = { rate: 1, mode: "time-map", timeMap };
-	const chunks: TimeMapAudioChunk[] = [];
-	for (const segment of timeMap.segments) {
-		if (segment.kind === "hold") {
-			chunks.push({
-				kind: "hold",
-				timelineStart: segment.timelineStart,
-				timelineEnd: segment.timelineEnd,
-				sourceStart: segment.sourceTime,
-				sourceEnd: segment.sourceTime,
-			});
-			continue;
-		}
-		const chunkCount = Math.max(
-			1,
-			Math.ceil((segment.timelineEnd - segment.timelineStart) / maxChunkTicks),
-		);
-		for (let index = 0; index < chunkCount; index++) {
-			const timelineStart = Math.round(
-				segment.timelineStart +
-					((segment.timelineEnd - segment.timelineStart) * index) / chunkCount,
-			);
-			const timelineEnd = Math.round(
-				segment.timelineStart +
-					((segment.timelineEnd - segment.timelineStart) * (index + 1)) /
-						chunkCount,
-			);
-			chunks.push({
-				kind: "speed",
-				timelineStart,
-				timelineEnd,
-				sourceStart: getSourceTimeAtClipTime({
-					clipTime: timelineStart,
-					retime,
-				}),
-				sourceEnd: getSourceTimeAtClipTime({ clipTime: timelineEnd, retime }),
-			});
-		}
-	}
-	return chunks;
-}
-
-function isMutedTimeMapHold({
-	clipTicks,
-	retime,
-}: {
-	clipTicks: number;
-	retime?: RetimeConfig;
-}): boolean {
-	if (!retime?.timeMap || retime.timeMap.audioPolicy.hold !== "mute") {
-		return false;
-	}
-	const lastIndex = retime.timeMap.segments.length - 1;
-	return retime.timeMap.segments.some(
-		(segment, index) =>
-			segment.kind === "hold" &&
-			clipTicks >= segment.timelineStart &&
-			(clipTicks < segment.timelineEnd ||
-				(index === lastIndex && clipTicks === segment.timelineEnd)),
-	);
+	const plan = opencutWasm.planTimeMapAudio({ timeMap });
+	if (!plan) throw new Error("Rust rejected the time-map audio plan");
+	return plan.chunks;
 }
 
 function sampleLinear({
@@ -125,10 +51,18 @@ export function sampleRetimedAudioChannel({
 	retime?: RetimeConfig;
 }): number {
 	const clipTicks = Math.round(clipTime * MEDIA_TICKS_PER_SECOND);
-	if (isMutedTimeMapHold({ clipTicks, retime })) return 0;
-	const mappedSourceTime = retime?.timeMap
-		? getSourceTimeAtClipTime({ clipTime: clipTicks, retime }) /
-			MEDIA_TICKS_PER_SECOND
+	const audioMapping = retime?.timeMap
+		? opencutWasm.resolveTimeMapAudioSample({
+				timeMap: retime.timeMap,
+				clipTime: clipTicks,
+			})
+		: undefined;
+	if (retime?.timeMap && !audioMapping) {
+		throw new Error("Rust rejected the time-map audio sample");
+	}
+	if (audioMapping?.muted) return 0;
+	const mappedSourceTime = audioMapping
+		? audioMapping.sourceTime / MEDIA_TICKS_PER_SECOND
 		: getSourceTimeAtClipTime({ clipTime, retime });
 	return sampleLinear({
 		channelData,
@@ -185,6 +119,7 @@ async function buildPitchPreservedBuffer({
 	trimStart,
 	clipDuration,
 	rate,
+	endRate = rate,
 	reverse = false,
 	targetSampleRate,
 }: {
@@ -192,11 +127,12 @@ async function buildPitchPreservedBuffer({
 	trimStart: number;
 	clipDuration: number;
 	rate: number;
+	endRate?: number;
 	reverse?: boolean;
 	targetSampleRate: number;
 }): Promise<AudioBuffer> {
 	const nativeSampleRate = sourceBuffer.sampleRate;
-	const sourceDuration = clipDuration * rate;
+	const sourceDuration = clipDuration * ((rate + endRate) / 2);
 	const startSample = Math.max(0, Math.floor(trimStart * nativeSampleRate));
 	const numSourceSamples = Math.max(
 		1,
@@ -253,9 +189,20 @@ async function buildPitchPreservedBuffer({
 		outputSamples,
 		targetSampleRate,
 	);
-	const shifter = new PitchShifter(stretchCtx, resampledBuffer, 4096);
+	const analysisBlockSize = 1024;
+	const shifter = new PitchShifter(
+		stretchCtx,
+		resampledBuffer,
+		analysisBlockSize,
+	);
 	shifter.tempo = rate;
 	shifter.pitch = 1;
+	let renderedFrames = 0;
+	shifter.on("play", () => {
+		renderedFrames += analysisBlockSize;
+		const position = Math.min(1, renderedFrames / outputSamples);
+		shifter.tempo = rate + (endRate - rate) * position;
+	});
 	shifter.connect(stretchCtx.destination);
 	return stretchCtx.startRendering();
 }
@@ -294,9 +241,9 @@ async function buildPitchPreservedTimeMapBuffer({
 		if (outputEnd <= outputStart) continue;
 
 		if (chunk.kind === "hold") {
-			if (timeMap.audioPolicy.hold === "hold-sample") {
+			if (!chunk.muted) {
 				const sourceIndex =
-					(trimStart + chunk.sourceStart / MEDIA_TICKS_PER_SECOND) *
+					(trimStart + chunk.sourceTime / MEDIA_TICKS_PER_SECOND) *
 					sourceBuffer.sampleRate;
 				for (let channel = 0; channel < numChannels; channel++) {
 					const source = sourceBuffer.getChannelData(
@@ -314,17 +261,16 @@ async function buildPitchPreservedTimeMapBuffer({
 
 		const clipSeconds =
 			(chunk.timelineEnd - chunk.timelineStart) / MEDIA_TICKS_PER_SECOND;
-		const sourceDeltaSeconds =
-			Math.abs(chunk.sourceEnd - chunk.sourceStart) / MEDIA_TICKS_PER_SECOND;
-		const rate = sourceDeltaSeconds / clipSeconds;
-		if (!Number.isFinite(rate) || rate < RATE_EPSILON) continue;
-		const reverse = chunk.sourceEnd < chunk.sourceStart;
+		if (chunk.startRate < RATE_EPSILON || chunk.endRate < RATE_EPSILON)
+			continue;
+		const reverse = chunk.direction === "reverse";
 		const sourceStartTicks = Math.min(chunk.sourceStart, chunk.sourceEnd);
 		const rendered = await buildPitchPreservedBuffer({
 			sourceBuffer,
 			trimStart: trimStart + sourceStartTicks / MEDIA_TICKS_PER_SECOND,
 			clipDuration: clipSeconds,
-			rate,
+			rate: chunk.startRate,
+			endRate: chunk.endRate,
 			reverse,
 			targetSampleRate,
 		});

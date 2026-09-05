@@ -1,5 +1,6 @@
 use bridge::export;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 use crate::MediaTime;
 
@@ -177,6 +178,218 @@ pub struct SliceTimeMapOptions {
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolveTimeMapRateOptions {
+    pub time_map: TimeMap,
+    pub clip_time: MediaTime,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolveTimeMapAudioSampleOptions {
+    pub time_map: TimeMap,
+    pub clip_time: MediaTime,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapAudioSample {
+    pub source_time: MediaTime,
+    pub muted: bool,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanTimeMapAudioOptions {
+    pub time_map: TimeMap,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum TimeMapAudioChunk {
+    Speed {
+        timeline_start: MediaTime,
+        timeline_end: MediaTime,
+        source_start: MediaTime,
+        source_end: MediaTime,
+        start_rate: f64,
+        end_rate: f64,
+        direction: TimeMapDirection,
+    },
+    Hold {
+        timeline_start: MediaTime,
+        timeline_end: MediaTime,
+        source_time: MediaTime,
+        muted: bool,
+    },
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapAudioPlan {
+    pub audio_policy: AudioTimeMapPolicy,
+    pub chunks: Vec<TimeMapAudioChunk>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DescribeTimeMapOptions {
+    pub time_map: TimeMap,
+    pub element_timeline_start: MediaTime,
+    pub source_trim_start: MediaTime,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapBoundaryReadback {
+    pub clip_time: MediaTime,
+    pub timeline_time: MediaTime,
+    pub source_time: MediaTime,
+    pub absolute_source_time: MediaTime,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapMappingPolicy {
+    pub trim: String,
+    pub split: String,
+    pub timeline_anchored: Vec<String>,
+    pub source_mapped: Vec<String>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapDescription {
+    pub source_time_readback: Vec<TimeMapBoundaryReadback>,
+    pub mapping_policy: TimeMapMappingPolicy,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanTimeMapTrimOptions {
+    pub time_map: TimeMap,
+    pub element_start_time: MediaTime,
+    pub element_duration: MediaTime,
+    pub source_trim_start: MediaTime,
+    pub source_trim_end: MediaTime,
+    pub requested_start_time: Option<MediaTime>,
+    pub requested_duration: Option<MediaTime>,
+    pub requested_trim_start: MediaTime,
+    pub requested_trim_end: MediaTime,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapTrimPlan {
+    pub start_time: MediaTime,
+    pub duration: MediaTime,
+    pub trim_start: MediaTime,
+    pub trim_end: MediaTime,
+    pub time_map: TimeMap,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanTimeMapSplitOptions {
+    pub time_map: TimeMap,
+    pub split_clip_time: MediaTime,
+    pub source_trim_start: MediaTime,
+    pub source_trim_end: MediaTime,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapSplitPlan {
+    pub left_time_map: TimeMap,
+    pub right_time_map: TimeMap,
+    pub left_trim_start: MediaTime,
+    pub left_trim_end: MediaTime,
+    pub right_trim_start: MediaTime,
+    pub right_trim_end: MediaTime,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapTrackingBox {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapTrackingSample {
+    pub source_time: MediaTime,
+    #[serde(rename = "box")]
+    pub box_value: TimeMapTrackingBox,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MapTimeMapTrackingSamplesOptions {
+    pub time_map: TimeMap,
+    pub clip_duration: MediaTime,
+    pub source_trim_start: MediaTime,
+    pub sample_interval: MediaTime,
+    pub samples: Vec<TimeMapTrackingSample>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MappedTimeMapTrackingSample {
+    pub time: MediaTime,
+    #[serde(rename = "box")]
+    pub box_value: TimeMapTrackingBox,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimeMapTrackingPlan {
+    pub samples: Vec<MappedTimeMapTrackingSample>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TimeMapSourceReadback {
@@ -337,16 +550,7 @@ impl TimeMap {
                 self.duration().as_ticks()
             ));
         }
-        let last_index = self.segments.len().saturating_sub(1);
-        let (segment_index, segment) = self
-            .segments
-            .iter()
-            .enumerate()
-            .find(|(index, segment)| {
-                clip_time < segment.timeline_end()
-                    || (*index == last_index && clip_time == segment.timeline_end())
-            })
-            .ok_or_else(|| "clip time does not resolve to a segment".to_string())?;
+        let (segment_index, segment) = self.segment_at(clip_time)?;
         let source_time = segment
             .source_at(clip_time)
             .ok_or_else(|| "source mapping overflow".to_string())?;
@@ -356,6 +560,42 @@ impl TimeMap {
             segment_index,
             kind: segment.kind().into(),
         })
+    }
+
+    fn segment_at(&self, clip_time: MediaTime) -> Result<(usize, &TimeMapSegment), String> {
+        let last_index = self.segments.len().saturating_sub(1);
+        self.segments
+            .iter()
+            .enumerate()
+            .find(|(index, segment)| {
+                clip_time >= segment.timeline_start()
+                    && (clip_time < segment.timeline_end()
+                        || (*index == last_index && clip_time == segment.timeline_end()))
+            })
+            .ok_or_else(|| "clip time does not resolve to a segment".to_string())
+    }
+
+    fn effective_rate_at(&self, clip_time: MediaTime) -> Result<f64, String> {
+        let (_, segment) = self.segment_at(clip_time)?;
+        match segment {
+            TimeMapSegment::Hold { .. } => Ok(0.0),
+            TimeMapSegment::Speed {
+                timeline_start,
+                timeline_end,
+                start_rate,
+                end_rate,
+                direction,
+                ..
+            } => {
+                let duration = (timeline_end.as_ticks() - timeline_start.as_ticks()) as f64;
+                let position = (clip_time.as_ticks() - timeline_start.as_ticks()) as f64 / duration;
+                let magnitude = start_rate + (end_rate - start_rate) * position.clamp(0.0, 1.0);
+                Ok(match direction {
+                    TimeMapDirection::Forward => magnitude,
+                    TimeMapDirection::Reverse => -magnitude,
+                })
+            }
+        }
     }
 
     pub fn slice(
@@ -519,4 +759,409 @@ pub fn slice_time_map(
     }: SliceTimeMapOptions,
 ) -> Option<TimeMap> {
     time_map.slice(timeline_start, timeline_end).ok()
+}
+
+#[export]
+pub fn resolve_time_map_rate(
+    ResolveTimeMapRateOptions {
+        time_map,
+        clip_time,
+    }: ResolveTimeMapRateOptions,
+) -> Option<f64> {
+    time_map
+        .validate()
+        .ok()
+        .and_then(|()| time_map.effective_rate_at(clip_time).ok())
+}
+
+#[export]
+pub fn resolve_time_map_audio_sample(
+    ResolveTimeMapAudioSampleOptions {
+        time_map,
+        clip_time,
+    }: ResolveTimeMapAudioSampleOptions,
+) -> Option<TimeMapAudioSample> {
+    time_map.validate().ok()?;
+    let readback = time_map.source_time_at(clip_time).ok()?;
+    let (_, segment) = time_map.segment_at(clip_time).ok()?;
+    Some(TimeMapAudioSample {
+        source_time: readback.source_time,
+        muted: matches!(segment, TimeMapSegment::Hold { .. })
+            && time_map.audio_policy.hold == AudioHoldPolicy::Mute,
+    })
+}
+
+#[export]
+pub fn plan_time_map_audio(
+    PlanTimeMapAudioOptions { time_map }: PlanTimeMapAudioOptions,
+) -> Option<TimeMapAudioPlan> {
+    time_map.validate().ok()?;
+    let chunks = time_map
+        .segments
+        .iter()
+        .map(|segment| match segment {
+            TimeMapSegment::Speed {
+                timeline_start,
+                timeline_end,
+                source_start,
+                start_rate,
+                end_rate,
+                direction,
+            } => Some(TimeMapAudioChunk::Speed {
+                timeline_start: *timeline_start,
+                timeline_end: *timeline_end,
+                source_start: *source_start,
+                source_end: segment.source_at(*timeline_end)?,
+                start_rate: *start_rate,
+                end_rate: *end_rate,
+                direction: *direction,
+            }),
+            TimeMapSegment::Hold {
+                timeline_start,
+                timeline_end,
+                source_time,
+                ..
+            } => Some(TimeMapAudioChunk::Hold {
+                timeline_start: *timeline_start,
+                timeline_end: *timeline_end,
+                source_time: *source_time,
+                muted: time_map.audio_policy.hold == AudioHoldPolicy::Mute,
+            }),
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(TimeMapAudioPlan {
+        audio_policy: time_map.audio_policy,
+        chunks,
+    })
+}
+
+#[export]
+pub fn describe_time_map(
+    DescribeTimeMapOptions {
+        time_map,
+        element_timeline_start,
+        source_trim_start,
+    }: DescribeTimeMapOptions,
+) -> Option<TimeMapDescription> {
+    time_map.validate().ok()?;
+    let boundary_times = time_map
+        .segments
+        .iter()
+        .flat_map(|segment| [segment.timeline_start(), segment.timeline_end()])
+        .collect::<BTreeSet<_>>();
+    let source_time_readback = boundary_times
+        .into_iter()
+        .map(|clip_time| {
+            let source_time = time_map.source_time_at(clip_time).ok()?.source_time;
+            Some(TimeMapBoundaryReadback {
+                clip_time,
+                timeline_time: MediaTime::from_ticks(
+                    element_timeline_start
+                        .as_ticks()
+                        .checked_add(clip_time.as_ticks())?,
+                ),
+                source_time,
+                absolute_source_time: MediaTime::from_ticks(
+                    source_trim_start
+                        .as_ticks()
+                        .checked_add(source_time.as_ticks())?,
+                ),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(TimeMapDescription {
+        source_time_readback,
+        mapping_policy: TimeMapMappingPolicy {
+            trim: "slice-time-map".into(),
+            split: "slice-and-rebase-time-map".into(),
+            timeline_anchored: vec!["keyframe".into(), "transition".into(), "caption".into()],
+            source_mapped: vec![
+                "tracker".into(),
+                "matte".into(),
+                "video-decoder".into(),
+                "audio".into(),
+            ],
+        },
+    })
+}
+
+#[export]
+pub fn plan_time_map_trim(
+    PlanTimeMapTrimOptions {
+        time_map,
+        element_start_time,
+        element_duration,
+        source_trim_start,
+        source_trim_end,
+        requested_start_time,
+        requested_duration,
+        requested_trim_start,
+        requested_trim_end,
+    }: PlanTimeMapTrimOptions,
+) -> Option<TimeMapTrimPlan> {
+    time_map.validate().ok()?;
+    if element_duration != time_map.duration()
+        || requested_trim_start != source_trim_start
+        || requested_trim_end != source_trim_end
+    {
+        return None;
+    }
+    let start_time = requested_start_time.unwrap_or(element_start_time);
+    let duration = requested_duration.unwrap_or(element_duration);
+    if start_time < MediaTime::ZERO || duration <= MediaTime::ZERO || duration > element_duration {
+        return None;
+    }
+    let planned_time_map = if duration == element_duration {
+        time_map
+    } else {
+        time_map.slice(MediaTime::ZERO, duration).ok()?
+    };
+    Some(TimeMapTrimPlan {
+        start_time,
+        duration,
+        trim_start: source_trim_start,
+        trim_end: source_trim_end,
+        time_map: planned_time_map,
+    })
+}
+
+#[export]
+pub fn plan_time_map_split(
+    PlanTimeMapSplitOptions {
+        time_map,
+        split_clip_time,
+        source_trim_start,
+        source_trim_end,
+    }: PlanTimeMapSplitOptions,
+) -> Option<TimeMapSplitPlan> {
+    time_map.validate().ok()?;
+    if split_clip_time <= MediaTime::ZERO || split_clip_time >= time_map.duration() {
+        return None;
+    }
+    Some(TimeMapSplitPlan {
+        left_time_map: time_map.slice(MediaTime::ZERO, split_clip_time).ok()?,
+        right_time_map: time_map.slice(split_clip_time, time_map.duration()).ok()?,
+        left_trim_start: source_trim_start,
+        left_trim_end: source_trim_end,
+        right_trim_start: source_trim_start,
+        right_trim_end: source_trim_end,
+    })
+}
+
+#[export]
+pub fn map_time_map_tracking_samples(
+    MapTimeMapTrackingSamplesOptions {
+        time_map,
+        clip_duration,
+        source_trim_start,
+        sample_interval,
+        samples,
+    }: MapTimeMapTrackingSamplesOptions,
+) -> Option<TimeMapTrackingPlan> {
+    time_map.validate().ok()?;
+    if clip_duration < MediaTime::ZERO
+        || clip_duration > time_map.duration()
+        || sample_interval <= MediaTime::ZERO
+        || samples.is_empty()
+        || samples
+            .windows(2)
+            .any(|pair| pair[0].source_time > pair[1].source_time)
+    {
+        return None;
+    }
+    let mut clip_times = Vec::new();
+    let mut time = MediaTime::ZERO;
+    while time < clip_duration {
+        clip_times.push(time);
+        time = MediaTime::from_ticks(time.as_ticks().checked_add(sample_interval.as_ticks())?);
+    }
+    clip_times.push(clip_duration);
+    let mapped_samples = clip_times
+        .into_iter()
+        .filter_map(|clip_time| {
+            let mapped = time_map.source_time_at(clip_time).ok()?;
+            let absolute_source_time = MediaTime::from_ticks(
+                source_trim_start
+                    .as_ticks()
+                    .checked_add(mapped.source_time.as_ticks())?,
+            );
+            interpolate_tracking_box(&samples, absolute_source_time).map(|box_value| {
+                MappedTimeMapTrackingSample {
+                    time: clip_time,
+                    box_value,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    Some(TimeMapTrackingPlan {
+        samples: mapped_samples,
+    })
+}
+
+fn interpolate_tracking_box(
+    samples: &[TimeMapTrackingSample],
+    source_time: MediaTime,
+) -> Option<TimeMapTrackingBox> {
+    let first = samples.first()?;
+    let last = samples.last()?;
+    if source_time < first.source_time || source_time > last.source_time {
+        return None;
+    }
+    let upper_index = samples.partition_point(|sample| sample.source_time < source_time);
+    let upper = samples.get(upper_index).unwrap_or(last);
+    let lower = samples.get(upper_index.saturating_sub(1)).unwrap_or(first);
+    if upper.source_time == lower.source_time {
+        return Some(upper.box_value);
+    }
+    let position = (source_time.as_ticks() - lower.source_time.as_ticks()) as f64
+        / (upper.source_time.as_ticks() - lower.source_time.as_ticks()) as f64;
+    let interpolate =
+        |left: f64, right: f64| ((left + (right - left) * position) * 1e12).round() / 1e12;
+    Some(TimeMapTrackingBox {
+        x: interpolate(lower.box_value.x, upper.box_value.x),
+        y: interpolate(lower.box_value.y, upper.box_value.y),
+        width: interpolate(lower.box_value.width, upper.box_value.width),
+        height: interpolate(lower.box_value.height, upper.box_value.height),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_map() -> TimeMap {
+        TimeMap {
+            schema_version: TIME_MAP_SCHEMA_VERSION.into(),
+            frame_interpolation: FrameInterpolationPolicy {
+                requested: FrameInterpolation::Nearest,
+                fallback: FrameInterpolation::Nearest,
+            },
+            audio_policy: AudioTimeMapPolicy {
+                maintain_pitch: true,
+                hold: AudioHoldPolicy::Mute,
+            },
+            segments: vec![
+                TimeMapSegment::Speed {
+                    timeline_start: MediaTime::ZERO,
+                    timeline_end: MediaTime::from_ticks(120_000),
+                    source_start: MediaTime::ZERO,
+                    start_rate: 0.5,
+                    end_rate: 1.5,
+                    direction: TimeMapDirection::Forward,
+                },
+                TimeMapSegment::Hold {
+                    timeline_start: MediaTime::from_ticks(120_000),
+                    timeline_end: MediaTime::from_ticks(180_000),
+                    source_time: MediaTime::from_ticks(120_000),
+                    frame_identity: "source-frame:120000".into(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn rust_owns_effective_rate_and_audio_mapping() {
+        let time_map = sample_map();
+        assert_eq!(
+            resolve_time_map_rate(ResolveTimeMapRateOptions {
+                time_map: time_map.clone(),
+                clip_time: MediaTime::from_ticks(60_000),
+            }),
+            Some(1.0),
+        );
+        assert_eq!(
+            resolve_time_map_audio_sample(ResolveTimeMapAudioSampleOptions {
+                time_map: time_map.clone(),
+                clip_time: MediaTime::from_ticks(150_000),
+            }),
+            Some(TimeMapAudioSample {
+                source_time: MediaTime::from_ticks(120_000),
+                muted: true,
+            }),
+        );
+        let plan = plan_time_map_audio(PlanTimeMapAudioOptions { time_map }).unwrap();
+        assert_eq!(plan.chunks.len(), 2);
+        assert!(matches!(
+            &plan.chunks[0],
+            TimeMapAudioChunk::Speed {
+                start_rate,
+                end_rate,
+                source_end,
+                ..
+            } if *start_rate == 0.5 && *end_rate == 1.5 && *source_end == MediaTime::from_ticks(120_000)
+        ));
+    }
+
+    #[test]
+    fn rust_owns_query_description_and_mapping_policy() {
+        let description = describe_time_map(DescribeTimeMapOptions {
+            time_map: sample_map(),
+            element_timeline_start: MediaTime::from_ticks(10_000),
+            source_trim_start: MediaTime::from_ticks(20_000),
+        })
+        .unwrap();
+        assert_eq!(description.source_time_readback.len(), 3);
+        assert_eq!(
+            description.source_time_readback[1],
+            TimeMapBoundaryReadback {
+                clip_time: MediaTime::from_ticks(120_000),
+                timeline_time: MediaTime::from_ticks(130_000),
+                source_time: MediaTime::from_ticks(120_000),
+                absolute_source_time: MediaTime::from_ticks(140_000),
+            }
+        );
+        assert_eq!(description.mapping_policy.trim, "slice-time-map");
+    }
+
+    #[test]
+    fn moving_a_time_mapped_clip_does_not_crop_it() {
+        let plan = plan_time_map_trim(PlanTimeMapTrimOptions {
+            time_map: sample_map(),
+            element_start_time: MediaTime::ZERO,
+            element_duration: MediaTime::from_ticks(180_000),
+            source_trim_start: MediaTime::from_ticks(5_000),
+            source_trim_end: MediaTime::from_ticks(7_000),
+            requested_start_time: Some(MediaTime::from_ticks(30_000)),
+            requested_duration: None,
+            requested_trim_start: MediaTime::from_ticks(5_000),
+            requested_trim_end: MediaTime::from_ticks(7_000),
+        })
+        .unwrap();
+        assert_eq!(plan.start_time, MediaTime::from_ticks(30_000));
+        assert_eq!(plan.time_map, sample_map());
+    }
+
+    #[test]
+    fn rust_maps_tracking_samples_to_timeline() {
+        let mapped = map_time_map_tracking_samples(MapTimeMapTrackingSamplesOptions {
+            time_map: sample_map(),
+            clip_duration: MediaTime::from_ticks(120_000),
+            source_trim_start: MediaTime::ZERO,
+            sample_interval: MediaTime::from_ticks(60_000),
+            samples: vec![
+                TimeMapTrackingSample {
+                    source_time: MediaTime::ZERO,
+                    box_value: TimeMapTrackingBox {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 0.5,
+                        height: 0.5,
+                    },
+                },
+                TimeMapTrackingSample {
+                    source_time: MediaTime::from_ticks(120_000),
+                    box_value: TimeMapTrackingBox {
+                        x: 1.0,
+                        y: 1.0,
+                        width: 0.25,
+                        height: 0.25,
+                    },
+                },
+            ],
+        })
+        .unwrap();
+        assert_eq!(mapped.samples.len(), 3);
+        assert_eq!(mapped.samples[1].time, MediaTime::from_ticks(60_000));
+        assert_eq!(mapped.samples[1].box_value.x, 0.375);
+    }
 }

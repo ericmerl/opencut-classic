@@ -56,7 +56,7 @@ import {
 	buildConstantRetime,
 	MAX_RETIME_RATE,
 	MIN_RETIME_RATE,
-	sliceRetimeForTimelineRange,
+	planTimeMapTrim,
 } from "@/retime";
 import { DEFAULT_CANVAS_PRESETS } from "@/canvas/sizes";
 import type { TProject, TProjectSettings } from "@/project/types";
@@ -3603,22 +3603,16 @@ export class EditorAutomation {
 			isRetimableElement(element) &&
 			element.retime?.timeMap
 		) {
-			if (
-				operation.trimStart !== element.trimStart ||
-				operation.trimEnd !== element.trimEnd
-			) {
-				throw new Error(
-					"time-map trim preserves source trimStart/trimEnd; crop with startTime and duration",
-				);
-			}
-			const requestedStart = operation.startTime ?? element.startTime;
-			const startClipTime = requestedStart - element.startTime;
-			const nextDuration =
-				operation.duration ?? element.duration - startClipTime;
-			const nextRetime = sliceRetimeForTimelineRange({
+			const plan = planTimeMapTrim({
 				retime: element.retime,
-				startClipTime,
-				endClipTime: startClipTime + nextDuration,
+				elementStartTime: element.startTime,
+				elementDuration: element.duration,
+				sourceTrimStart: element.trimStart,
+				sourceTrimEnd: element.trimEnd,
+				requestedStartTime: operation.startTime,
+				requestedDuration: operation.duration,
+				requestedTrimStart: operation.trimStart,
+				requestedTrimEnd: operation.trimEnd,
 			});
 			return withRipple({
 				enabled: operation.ripple,
@@ -3631,11 +3625,11 @@ export class EditorAutomation {
 								resolvedAllocations: operation.resolvedAllocations,
 							}),
 							patch: {
-								startTime: mediaTime({ ticks: requestedStart }),
-								duration: mediaTime({ ticks: nextDuration }),
-								trimStart: operation.trimStart,
-								trimEnd: operation.trimEnd,
-								retime: nextRetime,
+								startTime: mediaTime({ ticks: plan.startTime }),
+								duration: mediaTime({ ticks: plan.duration }),
+								trimStart: mediaTime({ ticks: plan.trimStart }),
+								trimEnd: mediaTime({ ticks: plan.trimEnd }),
+								retime: { ...element.retime, timeMap: plan.timeMap },
 							},
 						},
 					],

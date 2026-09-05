@@ -21,10 +21,18 @@ pub use media_time::{
     round_to_frame, snapped_seek_time,
 };
 pub use time_map::{
-    AudioHoldPolicy, AudioTimeMapPolicy, EvaluateTimeMapOptions, FrameInterpolation,
-    FrameInterpolationPolicy, ResolveTimeMapSourceTimeOptions, SliceTimeMapOptions, TimeMap,
-    TimeMapDiagnostic, TimeMapEvaluation, TimeMapEvaluationResponse, TimeMapSegment,
-    TimeMapSourceReadback, evaluate_time_map, resolve_time_map_source_time, slice_time_map,
+    AudioHoldPolicy, AudioTimeMapPolicy, DescribeTimeMapOptions, EffectiveFrameInterpolation,
+    EvaluateTimeMapOptions, FrameInterpolation, FrameInterpolationPolicy,
+    MapTimeMapTrackingSamplesOptions, MappedTimeMapTrackingSample, PlanTimeMapAudioOptions,
+    PlanTimeMapSplitOptions, PlanTimeMapTrimOptions, ResolveTimeMapAudioSampleOptions,
+    ResolveTimeMapRateOptions, ResolveTimeMapSourceTimeOptions, SliceTimeMapOptions, TimeMap,
+    TimeMapAudioChunk, TimeMapAudioPlan, TimeMapAudioSample, TimeMapBoundaryReadback,
+    TimeMapDescription, TimeMapDiagnostic, TimeMapEvaluation, TimeMapEvaluationResponse,
+    TimeMapMappingPolicy, TimeMapSegment, TimeMapSourceReadback, TimeMapSplitPlan,
+    TimeMapTrackingBox, TimeMapTrackingPlan, TimeMapTrackingSample, TimeMapTrimPlan,
+    describe_time_map, evaluate_time_map, map_time_map_tracking_samples, plan_time_map_audio,
+    plan_time_map_split, plan_time_map_trim, resolve_time_map_audio_sample, resolve_time_map_rate,
+    resolve_time_map_source_time, slice_time_map,
 };
 pub use timecode::{
     FormatTimecodeOptions, GuessTimecodeFormatOptions, ParseTimecodeOptions, TimeCodeFormat,

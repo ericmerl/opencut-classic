@@ -1507,19 +1507,23 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 			.int()
 			.positive()
 			.describe(
-				"Optional visible timeline duration. Omit to derive it from the source trims and retime rate.",
+				"Optional visible timeline duration. Omit to derive it from source trims and constant retime; for a time map, this crops only the right timeline edge.",
 			)
 			.optional(),
 		trimStart: z
 			.number()
 			.int()
 			.nonnegative()
-			.describe("Amount removed from the beginning of the source, in ticks."),
+			.describe(
+				"Amount removed from the beginning of the source, in ticks. For a time-mapped clip this must equal the current trimStart because reverse and hold mappings make source-side trimming ambiguous.",
+			),
 		trimEnd: z
 			.number()
 			.int()
 			.nonnegative()
-			.describe("Amount removed from the end of the source, in ticks."),
+			.describe(
+				"Amount removed from the end of the source, in ticks. For a time-mapped clip this must equal the current trimEnd because reverse and hold mappings make source-side trimming ambiguous.",
+			),
 		ripple: z.boolean().default(false),
 		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),

@@ -693,7 +693,7 @@ Production parity MUST add a durable source-to-timeline time map for speed ramps
 
 The model MUST represent the exact Montage behavior required by the workflow, independent pitch policy, and frame interpolation mode. The Montage curve is a named treatment under section 18.2 and its reference and tolerance MUST be recorded before implementation. Frame blending and optical flow remain optional, but fallback and diagnostic behavior MUST be explicit.
 
-Implementation status (2026-09-04, issue #26): `opencut.time-map.v1` and `set_time_map` implement the general durable model, boundary semantics, independent audio policy, source-time readback, and explicit nearest-frame fallback. The named Montage treatment remains intentionally unspecified and unimplemented until the required owner reference and numeric tolerance are recorded.
+Implementation status (2026-09-04, issue #26): `opencut.time-map.v1` and `set_time_map` implement the general durable model, Rust-owned boundary/trim/split/query/tracker/audio semantics, independent dynamic pitch policy, source-time readback, and explicit nearest-frame fallback. `startTime` repositions a mapped clip without changing its map, `duration` crops only the right timeline edge, source trims remain fixed, and split slices/rebases both maps. Real Chrome evidence compares ramp, freeze, and reverse preview frames with export and compares the pitch-preserved preview audio with export. The named Montage treatment remains intentionally unspecified and unimplemented until the required owner reference and numeric tolerance are recorded.
 
 ### 18.6 Variant exports
 

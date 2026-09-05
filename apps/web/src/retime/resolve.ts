@@ -14,12 +14,14 @@ export function getSourceTimeAtClipTime({
 	retime?: RetimeConfig;
 }): number {
 	if (retime?.timeMap) {
-		return (
-			opencutWasm.resolveTimeMapSourceTime({
-				timeMap: retime.timeMap,
-				clipTime,
-			}) ?? clipTime
-		);
+		const sourceTime = opencutWasm.resolveTimeMapSourceTime({
+			timeMap: retime.timeMap,
+			clipTime,
+		});
+		if (sourceTime === undefined) {
+			throw new Error("Rust rejected the time-map source lookup");
+		}
+		return sourceTime;
 	}
 	return clipTime * getSafeRate({ rate: retime?.rate ?? 1 });
 }
@@ -47,20 +49,14 @@ export function getEffectiveRateAt({
 	retime?: RetimeConfig;
 }): number {
 	if (retime?.timeMap) {
-		const segment = retime.timeMap.segments.find(
-			(candidate) =>
-				(clipTime ?? 0) >= candidate.timelineStart &&
-				(clipTime ?? 0) <= candidate.timelineEnd,
-		);
-		if (!segment || segment.kind === "hold") return 0;
-		const duration = segment.timelineEnd - segment.timelineStart;
-		const position = Math.max(
-			0,
-			Math.min(1, ((clipTime ?? 0) - segment.timelineStart) / duration),
-		);
-		const magnitude =
-			segment.startRate + (segment.endRate - segment.startRate) * position;
-		return segment.direction === "reverse" ? -magnitude : magnitude;
+		const rate = opencutWasm.resolveTimeMapRate({
+			timeMap: retime.timeMap,
+			clipTime: clipTime ?? 0,
+		});
+		if (rate === undefined) {
+			throw new Error("Rust rejected the time-map rate lookup");
+		}
+		return rate;
 	}
 	return getSafeRate({ rate: retime?.rate ?? 1 });
 }
@@ -76,7 +72,14 @@ export function getTimelineDurationForSourceSpan({
 		return 0;
 	}
 	if (retime?.timeMap) {
-		return retime.timeMap.segments.at(-1)?.timelineEnd ?? 0;
+		const result = opencutWasm.evaluateTimeMap({
+			timeMap: retime.timeMap,
+			sampleClipTimes: [],
+		});
+		if (result.status !== "evaluated") {
+			throw new Error(`Rust rejected the time map: ${result.reason}`);
+		}
+		return result.duration;
 	}
 	return sourceSpan / getSafeRate({ rate: retime?.rate ?? 1 });
 }

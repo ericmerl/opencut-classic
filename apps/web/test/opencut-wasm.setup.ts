@@ -20,6 +20,12 @@ interface NativeProjectState {
 	captionStylePresets: () => unknown;
 	resolveCaptionStyle: (options: unknown) => unknown;
 	evaluateTimeMap: (options: unknown) => unknown;
+	describeTimeMap: (options: unknown) => unknown;
+	planTimeMapAudio: (options: unknown) => unknown;
+	planTimeMapSplit: (options: unknown) => unknown;
+	planTimeMapTrim: (options: unknown) => unknown;
+	resolveTimeMapAudioSample: (options: unknown) => unknown;
+	resolveTimeMapRate: (options: unknown) => number | undefined;
 	resolveTimeMapSourceTime: (options: unknown) => number | undefined;
 	sliceTimeMap: (options: unknown) => unknown;
 }
@@ -99,6 +105,18 @@ mock.module("opencut-wasm", () => ({
 		nativeProjectState().resolveCaptionStyle(options),
 	evaluateTimeMap: (options: unknown) =>
 		nativeProjectState().evaluateTimeMap(options),
+	describeTimeMap: (options: unknown) =>
+		nativeProjectState().describeTimeMap(options),
+	planTimeMapAudio: (options: unknown) =>
+		nativeProjectState().planTimeMapAudio(options),
+	planTimeMapSplit: (options: unknown) =>
+		nativeProjectState().planTimeMapSplit(options),
+	planTimeMapTrim: (options: unknown) =>
+		nativeProjectState().planTimeMapTrim(options),
+	resolveTimeMapAudioSample: (options: unknown) =>
+		nativeProjectState().resolveTimeMapAudioSample(options),
+	resolveTimeMapRate: (options: unknown) =>
+		nativeProjectState().resolveTimeMapRate(options),
 	resolveTimeMapSourceTime: (options: unknown) =>
 		nativeProjectState().resolveTimeMapSourceTime(options),
 	sliceTimeMap: (options: unknown) =>

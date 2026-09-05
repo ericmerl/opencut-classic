@@ -5609,31 +5609,29 @@ impl State {
         {
             let e = self.element_mut(track, id, index)?;
             if let Some(time_map) = e.time_map.clone() {
-                if trim_start != e.trim_start || trim_end != e.trim_end {
-                    return invalid(
+                let plan = time::plan_time_map_trim(time::PlanTimeMapTrimOptions {
+                    time_map,
+                    element_start_time: e.start_time,
+                    element_duration: e.duration,
+                    source_trim_start: e.trim_start,
+                    source_trim_end: e.trim_end,
+                    requested_start_time: effective_start,
+                    requested_duration: duration,
+                    requested_trim_start: trim_start,
+                    requested_trim_end: trim_end,
+                })
+                .ok_or_else(|| {
+                    invalid_error(
                         index,
-                        "time-map trim preserves source trimStart/trimEnd; crop with startTime and duration",
-                    );
-                }
-                let requested_start = start.unwrap_or(e.start_time);
-                let next_start = effective_start.unwrap_or(e.start_time);
-                if requested_start < e.start_time {
-                    return invalid(index, "time-map trim startTime cannot precede the clip");
-                }
-                let slice_start = sub(requested_start, e.start_time, index)?;
-                let available_duration = sub(e.duration, slice_start, index)?;
-                let next_duration = duration.unwrap_or(available_duration);
-                if next_duration > available_duration {
-                    return invalid(index, "time-map trim exceeds the clip interval");
-                }
-                let slice_end = add(slice_start, next_duration, index)?;
-                let next_time_map = time_map
-                    .slice(slice_start, slice_end)
-                    .map_err(|reason| invalid_error(index, &reason))?;
-                e.start_time = next_start;
-                e.duration = next_duration;
-                e.time_map = Some(next_time_map);
-                clamp_keyframes_to_duration(e, next_duration, resolved_allocations, index)?;
+                        "Rust rejected time-map trim: startTime repositions, duration crops the right timeline edge, and source trims remain fixed",
+                    )
+                })?;
+                e.start_time = plan.start_time;
+                e.duration = plan.duration;
+                e.trim_start = plan.trim_start;
+                e.trim_end = plan.trim_end;
+                e.time_map = Some(plan.time_map);
+                clamp_keyframes_to_duration(e, plan.duration, resolved_allocations, index)?;
                 return Ok(());
             }
             let source_duration = element_source_duration(e, index)?;
@@ -5744,17 +5742,16 @@ impl State {
         let right_duration = sub(end, at, index)?;
         let (left_time_map, right_time_map, left_source_span, right_source_span) =
             if let Some(time_map) = &source.time_map {
+                let plan = time::plan_time_map_split(time::PlanTimeMapSplitOptions {
+                    time_map: time_map.clone(),
+                    split_clip_time: left_duration,
+                    source_trim_start: source.trim_start,
+                    source_trim_end: source.trim_end,
+                })
+                .ok_or_else(|| invalid_error(index, "Rust rejected the time-map split"))?;
                 (
-                    Some(
-                        time_map
-                            .slice(MediaTime::ZERO, left_duration)
-                            .map_err(|reason| invalid_error(index, &reason))?,
-                    ),
-                    Some(
-                        time_map
-                            .slice(left_duration, source.duration)
-                            .map_err(|reason| invalid_error(index, &reason))?,
-                    ),
+                    Some(plan.left_time_map),
+                    Some(plan.right_time_map),
                     MediaTime::ZERO,
                     MediaTime::ZERO,
                 )

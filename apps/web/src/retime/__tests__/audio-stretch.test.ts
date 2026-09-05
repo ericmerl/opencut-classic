@@ -6,6 +6,38 @@ import {
 } from "../audio-stretch";
 
 describe("time-map audio", () => {
+	test("preserves ramp endpoints instead of averaging the curve", () => {
+		const timeMap: NonNullable<RetimeConfig["timeMap"]> = {
+			schemaVersion: "opencut.time-map.v1",
+			frameInterpolation: { requested: "nearest", fallback: "nearest" },
+			audioPolicy: { maintainPitch: true, hold: "mute" },
+			segments: [
+				{
+					kind: "speed",
+					timelineStart: 0,
+					timelineEnd: 120_000,
+					sourceStart: 0,
+					startRate: 0.5,
+					endRate: 1.5,
+					direction: "forward",
+				},
+			],
+		};
+
+		expect(planTimeMapAudioChunks({ timeMap })).toEqual([
+			{
+				kind: "speed",
+				timelineStart: 0,
+				timelineEnd: 120_000,
+				sourceStart: 0,
+				sourceEnd: 120_000,
+				startRate: 0.5,
+				endRate: 1.5,
+				direction: "forward",
+			},
+		]);
+	});
+
 	test("plans pitch-preserved ramp, hold, and reverse chunks on exact boundaries", () => {
 		const timeMap: NonNullable<RetimeConfig["timeMap"]> = {
 			schemaVersion: "opencut.time-map.v1",
@@ -40,41 +72,33 @@ describe("time-map audio", () => {
 			],
 		};
 
-		expect(planTimeMapAudioChunks({ timeMap, maxChunkTicks: 60_000 })).toEqual([
+		expect(planTimeMapAudioChunks({ timeMap })).toEqual([
 			{
 				kind: "speed",
 				timelineStart: 0,
-				timelineEnd: 60_000,
-				sourceStart: 0,
-				sourceEnd: 120_000,
-			},
-			{
-				kind: "speed",
-				timelineStart: 60_000,
 				timelineEnd: 120_000,
-				sourceStart: 120_000,
+				sourceStart: 0,
 				sourceEnd: 240_000,
+				startRate: 2,
+				endRate: 2,
+				direction: "forward",
 			},
 			{
 				kind: "hold",
 				timelineStart: 120_000,
 				timelineEnd: 240_000,
-				sourceStart: 240_000,
-				sourceEnd: 240_000,
+				sourceTime: 240_000,
+				muted: false,
 			},
 			{
 				kind: "speed",
 				timelineStart: 240_000,
-				timelineEnd: 300_000,
-				sourceStart: 240_000,
-				sourceEnd: 180_000,
-			},
-			{
-				kind: "speed",
-				timelineStart: 300_000,
 				timelineEnd: 360_000,
-				sourceStart: 180_000,
+				sourceStart: 240_000,
 				sourceEnd: 120_000,
+				startRate: 1,
+				endRate: 1,
+				direction: "reverse",
 			},
 		]);
 	});

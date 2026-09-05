@@ -9,6 +9,7 @@ declare module "soundtouchjs" {
 		tempo: number;
 		pitch: number;
 		connect(destination: AudioNode): void;
+		on(eventName: "play", callback: () => void): void;
 		off(): void;
 	}
 }
