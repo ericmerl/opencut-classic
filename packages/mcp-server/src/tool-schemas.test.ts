@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import {
 	attachCleanAudioInputSchema,
 	attachMatteInputSchema,
@@ -45,6 +46,9 @@ import {
 	undoInputSchema,
 } from "./tool-schemas";
 
+const fixturePath = (...segments: string[]) =>
+	resolve(import.meta.dir, "fixtures", ...segments);
+
 describe("OpenCut QC and delivery package contracts", () => {
 	test("accepts an explicit versioned QC policy and a complete package", () => {
 		expect(
@@ -63,7 +67,7 @@ describe("OpenCut QC and delivery package contracts", () => {
 			createDeliveryPackageInputSchema.safeParse({
 				operationId: "package-1",
 				packageName: "Delivery",
-				outputDirectory: "C:/deliveries",
+				outputDirectory: fixturePath("deliveries"),
 				master: { exportOperationId: "master", qcOperationId: "qc-master" },
 				variants: [
 					{
@@ -79,7 +83,9 @@ describe("OpenCut QC and delivery package contracts", () => {
 						qcOperationId: "qc-burned",
 					},
 				],
-				sidecars: [{ name: "captions", sourcePath: "C:/captions.vtt" }],
+				sidecars: [
+					{ name: "captions", sourcePath: fixturePath("captions.vtt") },
+				],
 			}).success,
 		).toBe(true);
 		expect(
@@ -138,7 +144,7 @@ describe("OpenCut lifecycle preflight contract", () => {
 				request: {
 					projectId: "project-1",
 					assetId: "asset-1",
-					path: "C:/media/replacement.mp4",
+					path: fixturePath("media", "replacement.mp4"),
 					expectedRevision: 3,
 					expectedProjectContentHash: "b".repeat(64),
 				},

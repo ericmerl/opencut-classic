@@ -1,18 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import {
-	mkdir,
-	mkdtemp,
-	readFile,
-	rm,
-	stat,
-	writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DeliveryPackageService } from "./delivery-package";
 import { ExportQcService } from "./export-qc";
 import { ExportReceiptStore } from "./export-receipts";
+import { removeTestDirectory } from "./test-filesystem";
 
 describe("durable delivery packages", () => {
 	let directory: string;
@@ -39,7 +33,7 @@ describe("durable delivery packages", () => {
 	});
 
 	afterEach(async () => {
-		await rm(directory, { recursive: true, force: true });
+		await removeTestDirectory(directory);
 	});
 
 	test("packages master, clean/burned variants, sidecars, covers, evidence, QC, and provenance", async () => {

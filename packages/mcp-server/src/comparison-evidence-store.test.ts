@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -7,6 +7,7 @@ import {
 	ComparisonEvidenceStore,
 	type ComparisonNativeAdapter,
 } from "./comparison-evidence-store";
+import { removeTestDirectory } from "./test-filesystem";
 
 describe("ComparisonEvidenceStore", () => {
 	let directory: string;
@@ -19,7 +20,7 @@ describe("ComparisonEvidenceStore", () => {
 	});
 
 	afterEach(async () => {
-		await rm(directory, { recursive: true, force: true });
+		await removeTestDirectory(directory);
 	});
 
 	test("durably links both source captures and publishes verified diff and side-by-side artifacts", async () => {
@@ -144,7 +145,7 @@ describe("ComparisonEvidenceStore", () => {
 				"receipt checksum",
 			);
 		} finally {
-			await rm(fresh.directory, { recursive: true, force: true });
+			await removeTestDirectory(fresh.directory);
 		}
 	});
 

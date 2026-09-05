@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -9,12 +10,13 @@ import {
 	EditPlanPreflightStore,
 	type EditPlanPreflightReceipt,
 } from "./edit-plan-preflight-store";
+import { removeTestDirectory } from "./test-filesystem";
 
 const directories: string[] = [];
 
 afterEach(async () => {
 	for (const directory of directories.splice(0)) {
-		await rm(directory, { recursive: true, force: true });
+		await removeTestDirectory(directory);
 	}
 });
 
@@ -47,8 +49,12 @@ describe("durable edit-plan preflight receipts", () => {
 			left.claim("shared", "b".repeat(64)),
 			right.claim("shared", "b".repeat(64)),
 		]);
-		expect(outcomes.filter(({ status }) => status === "claimed")).toHaveLength(1);
-		expect(outcomes.filter(({ status }) => status === "in-progress")).toHaveLength(1);
+		expect(outcomes.filter(({ status }) => status === "claimed")).toHaveLength(
+			1,
+		);
+		expect(
+			outcomes.filter(({ status }) => status === "in-progress"),
+		).toHaveLength(1);
 		await expect(right.claim("shared", "c".repeat(64))).rejects.toBeInstanceOf(
 			EditPlanPreflightReuseError,
 		);
@@ -84,7 +90,9 @@ describe("durable edit-plan preflight receipts", () => {
 		await store.complete(makeReceipt());
 		store.close();
 
-		const database = new Database(join(directory, "edit-plan-preflights.sqlite"));
+		const database = new Database(
+			join(directory, "edit-plan-preflights.sqlite"),
+		);
 		database.exec("DROP TRIGGER preflight_receipts_immutable");
 		database.query("UPDATE preflight_receipts SET receipt_json='{}'").run();
 		database.close();
@@ -103,7 +111,11 @@ describe("durable edit-plan preflight receipts", () => {
 			join(tailDirectory, "edit-plan-preflights.sqlite"),
 		);
 		tailDatabase.exec("DROP TRIGGER preflight_events_no_delete");
-		tailDatabase.query("DELETE FROM preflight_events WHERE sequence=(SELECT MAX(sequence) FROM preflight_events)").run();
+		tailDatabase
+			.query(
+				"DELETE FROM preflight_events WHERE sequence=(SELECT MAX(sequence) FROM preflight_events)",
+			)
+			.run();
 		tailDatabase.close();
 		const deletedTail = new EditPlanPreflightStore(tailDirectory);
 		await expect(deletedTail.readiness()).rejects.toBeInstanceOf(
@@ -119,9 +131,9 @@ describe("durable edit-plan preflight receipts", () => {
 			join(claimDirectory, "edit-plan-preflights.sqlite"),
 		);
 		claimDatabase.exec("DROP TRIGGER preflight_claim_identity_immutable");
-		claimDatabase.query("UPDATE preflight_claims SET request_fingerprint=?").run(
-			"f".repeat(64),
-		);
+		claimDatabase
+			.query("UPDATE preflight_claims SET request_fingerprint=?")
+			.run("f".repeat(64));
 		claimDatabase.close();
 		const corruptClaim = new EditPlanPreflightStore(claimDirectory);
 		await expect(corruptClaim.readiness()).rejects.toBeInstanceOf(
@@ -155,7 +167,8 @@ describe("durable edit-plan preflight receipts", () => {
 	test("serializes synchronized cross-process cold start and claims", async () => {
 		const directory = await testDirectory();
 		const gate = join(directory, "start.gate");
-		const script = `const { existsSync } = await import("node:fs"); const { EditPlanPreflightStore } = await import("./packages/mcp-server/src/edit-plan-preflight-store.ts"); while (!existsSync(${JSON.stringify(gate)})) await Bun.sleep(5); const store = new EditPlanPreflightStore(${JSON.stringify(directory)}); const result = await store.claim("shared", "${"b".repeat(64)}"); console.log(JSON.stringify(result)); await Bun.sleep(250); store.close();`;
+		const release = join(directory, "release.gate");
+		const script = `const { existsSync } = await import("node:fs"); const { EditPlanPreflightStore } = await import("./packages/mcp-server/src/edit-plan-preflight-store.ts"); while (!existsSync(${JSON.stringify(gate)})) await Bun.sleep(5); const store = new EditPlanPreflightStore(${JSON.stringify(directory)}); const result = await store.claim("shared", "${"b".repeat(64)}"); console.log(JSON.stringify(result)); while (!existsSync(${JSON.stringify(release)})) await Bun.sleep(5); store.close();`;
 		const children = [0, 1].map(() =>
 			Bun.spawn([process.execPath, "-e", script], {
 				cwd: resolve(import.meta.dir, "../../.."),
@@ -165,20 +178,28 @@ describe("durable edit-plan preflight receipts", () => {
 			}),
 		);
 		await writeFile(gate, "start", { flag: "wx" });
-		const outputs = await Promise.all(
-			children.map(async (child) => {
-				const output = await new Response(child.stdout).text();
-				expect(await child.exited).toBe(0);
-				return JSON.parse(output.trim()) as { status: string };
-			}),
-		);
-		expect(outputs.filter(({ status }) => status === "claimed")).toHaveLength(1);
-		expect(outputs.filter(({ status }) => status === "in-progress")).toHaveLength(1);
+		try {
+			const outputs = await Promise.all(
+				children.map((child) => readJsonLine(child.stdout)),
+			);
+			expect(outputs.filter(({ status }) => status === "claimed")).toHaveLength(
+				1,
+			);
+			expect(
+				outputs.filter(({ status }) => status === "in-progress"),
+			).toHaveLength(1);
+		} finally {
+			if (!existsSync(release))
+				await writeFile(release, "release", { flag: "wx" });
+			expect(await Promise.all(children.map((child) => child.exited))).toEqual([
+				0, 0,
+			]);
+		}
 
 		const changed = new EditPlanPreflightStore(directory);
-		await expect(changed.claim("shared", "c".repeat(64))).rejects.toBeInstanceOf(
-			EditPlanPreflightReuseError,
-		);
+		await expect(
+			changed.claim("shared", "c".repeat(64)),
+		).rejects.toBeInstanceOf(EditPlanPreflightReuseError);
 		changed.close();
 	});
 
@@ -187,7 +208,9 @@ describe("durable edit-plan preflight receipts", () => {
 		const store = new EditPlanPreflightStore(directory);
 		await store.readiness();
 		store.close();
-		const database = new Database(join(directory, "edit-plan-preflights.sqlite"));
+		const database = new Database(
+			join(directory, "edit-plan-preflights.sqlite"),
+		);
 		database.exec("PRAGMA user_version=99");
 		database.close();
 		const unsupported = new EditPlanPreflightStore(directory);
@@ -230,12 +253,34 @@ describe("durable edit-plan preflight receipts", () => {
 	});
 });
 
+async function readJsonLine(
+	stream: ReadableStream<Uint8Array>,
+): Promise<{ status: string }> {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	let output = "";
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) throw new Error("child exited before publishing its claim");
+			output += decoder.decode(value, { stream: true });
+			const newline = output.indexOf("\n");
+			if (newline >= 0) {
+				return JSON.parse(output.slice(0, newline).trim()) as {
+					status: string;
+				};
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}
+
 async function testDirectory(): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), "opencut-preflight-test-"));
 	directories.push(directory);
 	return directory;
 }
-
 
 function makeReceipt(index?: number): EditPlanPreflightReceipt {
 	const suffix = index ?? 1;

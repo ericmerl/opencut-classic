@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -13,6 +13,7 @@ import {
 	semanticComparisonInputHash,
 	type CompareProjectStatesInput,
 } from "./comparison-service";
+import { removeTestDirectory } from "./test-filesystem";
 
 describe("ComparisonService", () => {
 	let directory: string;
@@ -27,7 +28,7 @@ describe("ComparisonService", () => {
 	});
 
 	afterEach(async () => {
-		await rm(directory, { recursive: true, force: true });
+		await removeTestDirectory(directory);
 	});
 
 	test("captures capability once, validates two immutable sources, and replays", async () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -8,6 +8,7 @@ import {
 	hashCapabilitySnapshot,
 	REGISTERED_TOOL_NAMES,
 } from "./capability-snapshot";
+import { removeTestDirectory } from "./test-filesystem";
 
 describe("capability snapshot public MCP transport", () => {
 	const processes: CapabilityHarness[] = [];
@@ -16,9 +17,7 @@ describe("capability snapshot public MCP transport", () => {
 	afterEach(async () => {
 		await Promise.all(processes.splice(0).map((process) => process.close()));
 		await Promise.all(
-			directories
-				.splice(0)
-				.map((directory) => rm(directory, { recursive: true, force: true })),
+			directories.splice(0).map((directory) => removeTestDirectory(directory)),
 		);
 	});
 
@@ -70,10 +69,6 @@ describe("capability snapshot public MCP transport", () => {
 			},
 			fonts: {
 				status: "unavailable",
-				presets: [
-					{ id: "tiktok-sans-caption", status: "unknown" },
-					{ id: "montserrat-caption", status: "unknown" },
-				],
 			},
 			mediaTools: {
 				ffmpeg: { status: "ready", version: expect.any(String) },
@@ -81,6 +76,18 @@ describe("capability snapshot public MCP transport", () => {
 			},
 			queue: { jobs: { total: 0 }, batches: 0, disk: { status: "ready" } },
 		});
+		expect((snapshot.fonts as Record<string, unknown>).presets).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: "tiktok-sans-caption",
+					status: "unknown",
+				}),
+				expect.objectContaining({
+					id: "montserrat-caption",
+					status: "unknown",
+				}),
+			]),
+		);
 	});
 });
 

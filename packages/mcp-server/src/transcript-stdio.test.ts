@@ -1,19 +1,20 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeTranscriptFixture } from "./transcript-test-fixture";
 import { TranscriptStore } from "./transcript-store";
+import { removeTestDirectory } from "./test-filesystem";
 
 let child: ChildProcessWithoutNullStreams | null = null;
 let root: string | null = null;
 
 afterEach(async () => {
 	await stopServer();
-	if (root) await rm(root, { recursive: true, force: true });
+	if (root) await removeTestDirectory(root);
 	root = null;
 });
 

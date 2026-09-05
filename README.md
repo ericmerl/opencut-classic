@@ -78,6 +78,10 @@ workspace tests from the repository root with one command:
 bun run test
 ```
 
+See [Continuous integration](docs/ci.md) for the exact dependency setup,
+worker limits, environment, and local reproduction command for each of the six
+hosted-runner jobs.
+
 The real-video MCP milestone is included automatically when its local tools are
 configured. Its one manual prerequisite is to start the web editor first. Then
 set `OPENCUT_HEADLESS_INTEGRATION_URL` to that editor URL and
