@@ -12,7 +12,9 @@ import {
 
 const [directory, jobId] = process.argv.slice(2);
 if (!directory || !jobId) {
-	throw new Error("provider supervisor worker requires the job store directory and a job ID");
+	throw new Error(
+		"provider supervisor worker requires the job store directory and a job ID",
+	);
 }
 
 const store = new ProviderSupervisorStore(directory);
@@ -29,7 +31,10 @@ let activeChild: { kill: () => void } | null = null;
 const heartbeat = setInterval(() => {
 	try {
 		store.heartbeat(jobId, fence);
-		if (!cancellationRequested && store.jobs.get(jobId)?.cancellationRequestedAt) {
+		if (
+			!cancellationRequested &&
+			store.jobs.get(jobId)?.cancellationRequestedAt
+		) {
 			// The provider observes cancellation within one heartbeat interval.
 			cancellationRequested = true;
 			activeChild?.kill();
@@ -42,7 +47,9 @@ const heartbeat = setInterval(() => {
 
 try {
 	const terminal = await invoke(record);
-	const delay = Number(process.env.OPENCUT_PROVIDER_SUPERVISOR_TEST_COMMIT_DELAY_MS ?? 0);
+	const delay = Number(
+		process.env.OPENCUT_PROVIDER_SUPERVISOR_TEST_COMMIT_DELAY_MS ?? 0,
+	);
 	if (Number.isSafeInteger(delay) && delay > 0) {
 		await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
 	}
@@ -121,12 +128,18 @@ async function normalizeProviderResult(
 	responseValue: unknown,
 ): Promise<{ result: unknown; provenance: ProviderSupervisorProvenance }> {
 	const response = requireRecord(responseValue, "provider response");
-	if (response.protocolVersion !== 1 || response.status !== "completed") {
+	if (
+		(response.protocolVersion !== 1 && response.protocolVersion !== 2) ||
+		response.status !== "completed"
+	) {
 		throw new Error("provider response has an unsupported protocol or status");
 	}
 	const model = requireRecord(response.model, "provider model");
 	const modelId = requireString(model.id, "provider model id");
-	const modelVersion = requireString(model.version, "provider model version");
+	const modelVersion = requireString(
+		response.protocolVersion === 2 ? model.revision : model.version,
+		"provider model version",
+	);
 	const warnings =
 		response.warnings === undefined
 			? []
@@ -138,8 +151,21 @@ async function normalizeProviderResult(
 		if (response.coordinateSpace !== "normalized-source") {
 			throw new Error("tracker coordinate space must be normalized-source");
 		}
-		const samples = validateSamples(response.samples, request);
-		result = { samples, modelId, modelVersion, warnings };
+		if (response.protocolVersion === 2) {
+			const normalized = await normalizeV2Tracker(
+				request,
+				response,
+				modelId,
+				modelVersion,
+				warnings,
+			);
+			result = normalized.result;
+			artifactSha256 = normalized.artifactSha256;
+			artifactBytes = normalized.artifactBytes;
+		} else {
+			const samples = validateSamples(response.samples, request);
+			result = { samples, modelId, modelVersion, warnings };
+		}
 	} else {
 		const artifact = requireRecord(response.artifact, "provider artifact");
 		const outputDirectory = requireString(
@@ -171,7 +197,7 @@ async function normalizeProviderResult(
 		result,
 		provenance: {
 			provider,
-			providerProtocolVersion: 1,
+			providerProtocolVersion: response.protocolVersion,
 			supervisorProtocolVersion: 2,
 			modelId,
 			modelVersion,
@@ -179,6 +205,182 @@ async function normalizeProviderResult(
 			artifactBytes,
 		},
 	};
+}
+
+async function normalizeV2Tracker(
+	request: Record<string, unknown>,
+	response: Record<string, unknown>,
+	modelId: string,
+	modelVersion: string,
+	warnings: string[],
+): Promise<{
+	result: unknown;
+	artifactSha256: string | null;
+	artifactBytes: number | null;
+}> {
+	if (request.protocolVersion !== 2) {
+		throw new Error("tracker returned protocol v2 for a non-v2 request");
+	}
+	const model = requireRecord(response.model, "provider model");
+	const requested = requireRecord(
+		request.requestedModel,
+		"requested tracker model",
+	);
+	for (const [responseKey, requestKey] of [
+		["id", "id"],
+		["revision", "revision"],
+		["sha256", "artifactSha256"],
+		["codeRevision", "codeRevision"],
+	] as const) {
+		if (model[responseKey] !== requested[requestKey]) {
+			throw new Error(
+				`tracker ${responseKey} does not match the immutable request`,
+			);
+		}
+	}
+	if (
+		model.artifact !== "model.safetensors" ||
+		model.license !== "Apache-2.0"
+	) {
+		throw new Error("tracker model artifact or license is not approved");
+	}
+	const coverage = requireRecord(response.coverage, "tracker coverage");
+	const requestedCoverage = requireRecord(
+		request.coverage,
+		"requested tracker coverage",
+	);
+	if (
+		coverage.startTicks !== requestedCoverage.startTicks ||
+		coverage.endTicks !== requestedCoverage.endTicks
+	) {
+		throw new Error("tracker coverage does not match the request");
+	}
+	if (!Array.isArray(response.subjects) || response.subjects.length === 0) {
+		throw new Error("tracker subjects must be a non-empty array");
+	}
+	const subjects = response.subjects.map((candidate, subjectIndex) => {
+		const subject = requireRecord(candidate, `tracker subject ${subjectIndex}`);
+		const samples = validateSamplesV2(
+			subject.samples,
+			request,
+			requestedCoverage,
+		);
+		const corrections = Array.isArray(subject.corrections)
+			? subject.corrections
+			: [];
+		return {
+			subjectId: requireString(subject.subjectId, "tracker subject ID"),
+			...(subject.label === undefined
+				? {}
+				: { label: requireString(subject.label, "tracker subject label") }),
+			samples,
+			corrections,
+		};
+	});
+	if (!Array.isArray(response.artifacts)) {
+		throw new Error("tracker artifacts must be an array");
+	}
+	const outputDirectory = requireString(
+		request.outputDirectory,
+		"tracker output directory",
+	);
+	const artifacts = await Promise.all(
+		response.artifacts.map(async (candidate, index) => {
+			const artifact = requireRecord(candidate, `tracker artifact ${index}`);
+			if (artifact.kind !== "binary-mask-sequence") {
+				throw new Error("tracker returned an unsupported artifact kind");
+			}
+			const artifactPath = resolveContainedPath(
+				outputDirectory,
+				requireString(artifact.path, "tracker artifact path"),
+			);
+			const info = await stat(artifactPath).catch(() => null);
+			const bytes = requireNumber(artifact.bytes, "tracker artifact bytes");
+			if (!info?.isFile() || info.size !== bytes || bytes <= 0) {
+				throw new Error("tracker artifact is missing or has the wrong size");
+			}
+			const contentSha256 = requireString(
+				artifact.contentSha256,
+				"tracker artifact SHA-256",
+			);
+			if ((await hashFile(artifactPath)) !== contentSha256) {
+				throw new Error("tracker artifact SHA-256 does not match its bytes");
+			}
+			return {
+				artifactId: requireString(artifact.artifactId, "tracker artifact ID"),
+				kind: "binary-mask-sequence" as const,
+				path: artifactPath,
+				contentSha256,
+				bytes,
+			};
+		}),
+	);
+	const runtime = requireRecord(response.runtime, "tracker runtime");
+	if (
+		(runtime.device !== "cpu" && runtime.device !== "cuda") ||
+		runtime.framework !== "facebookresearch/sam2" ||
+		runtime.deterministic !== true
+	) {
+		throw new Error("tracker runtime provenance is invalid");
+	}
+	const firstArtifact = artifacts[0] ?? null;
+	const primarySamples = subjects[0]!.samples.map((sample) => ({
+		sourceTime: sample.sourceTimeTicks,
+		box: sample.box,
+		confidence: sample.confidence,
+		occlusion: sample.occlusion,
+		sampleId: sample.sampleId,
+	}));
+	return {
+		result: {
+			samples: primarySamples,
+			modelId,
+			modelVersion,
+			modelArtifactSha256: model.sha256,
+			codeRevision: model.codeRevision,
+			device: runtime.device,
+			subjects,
+			artifacts,
+			warnings,
+		},
+		artifactSha256: firstArtifact?.contentSha256 ?? null,
+		artifactBytes: firstArtifact?.bytes ?? null,
+	};
+}
+
+function validateSamplesV2(
+	value: unknown,
+	request: Record<string, unknown>,
+	coverage: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+	if (!Array.isArray(value) || value.length < 2) {
+		throw new Error("tracker subject requires first and last samples");
+	}
+	const legacyShape = value.map((candidate, index) => {
+		const sample = requireRecord(candidate, `tracker sample ${index}`);
+		return { ...sample, sourceTime: sample.sourceTimeTicks };
+	});
+	const samples = validateSamples(legacyShape, request);
+	if (
+		samples[0]?.sourceTime !== coverage.startTicks ||
+		samples.at(-1)?.sourceTime !== coverage.endTicks
+	) {
+		throw new Error(
+			"tracker subject does not cover exact first and last ticks",
+		);
+	}
+	for (const sample of samples) {
+		requireString(sample.sampleId, "tracker sample ID");
+		requireNumber(sample.confidence, "tracker sample confidence");
+		if (
+			!["visible", "partial", "occluded", "unknown"].includes(
+				String(sample.occlusion),
+			)
+		) {
+			throw new Error("tracker sample occlusion is invalid");
+		}
+	}
+	return value as Array<Record<string, unknown>>;
 }
 
 function providerCwd(
@@ -196,18 +398,31 @@ function validateSamples(
 	value: unknown,
 	request: Record<string, unknown>,
 ): Array<Record<string, unknown>> {
-	if (!Array.isArray(value)) throw new Error("tracker samples must be an array");
+	if (!Array.isArray(value))
+		throw new Error("tracker samples must be an array");
 	const source = requireRecord(request.source, "tracker source");
-	const duration = requireNumber(source.durationTicks, "tracker source duration");
+	const duration = requireNumber(
+		source.durationTicks,
+		"tracker source duration",
+	);
 	const sampling = requireRecord(request.sampling, "tracker sampling");
-	const maxSamples = requireNumber(sampling.maxSamples, "tracker maximum samples");
-	if (value.length > maxSamples) throw new Error("tracker returned too many samples");
+	const maxSamples = requireNumber(
+		sampling.maxSamples,
+		"tracker maximum samples",
+	);
+	if (value.length > maxSamples)
+		throw new Error("tracker returned too many samples");
 	let previous = -1;
 	return value.map((candidate, index) => {
 		const sample = requireRecord(candidate, `tracker sample ${index}`);
-		const sourceTime = requireNumber(sample.sourceTime, "tracker sample source time");
+		const sourceTime = requireNumber(
+			sample.sourceTime,
+			"tracker sample source time",
+		);
 		if (sourceTime <= previous || sourceTime < 0 || sourceTime > duration) {
-			throw new Error("tracker sample times must be strictly increasing and in range");
+			throw new Error(
+				"tracker sample times must be strictly increasing and in range",
+			);
 		}
 		previous = sourceTime;
 		const box = requireRecord(sample.box, "tracker sample box");
@@ -235,7 +450,10 @@ function validateSamples(
 	});
 }
 
-function resolveContainedPath(outputDirectory: string, artifactPath: string): string {
+function resolveContainedPath(
+	outputDirectory: string,
+	artifactPath: string,
+): string {
 	const root = resolve(outputDirectory);
 	const path = resolve(root, artifactPath);
 	const child = relative(root, path);
@@ -273,7 +491,10 @@ function requireNumber(value: unknown, label: string): number {
 }
 
 function requireStrings(value: unknown, label: string): string[] {
-	if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+	if (
+		!Array.isArray(value) ||
+		value.some((entry) => typeof entry !== "string")
+	) {
 		throw new Error(`${label} must be an array of strings`);
 	}
 	return value;

@@ -2470,6 +2470,17 @@ export const trackSubjectInputSchema = z.object({
 	trackingMode: z.enum(["focal-point", "crop"]).default("focal-point"),
 	subjectPrompt: z.string().trim().min(1).optional(),
 	initialBox: normalizedRectSchema.optional(),
+	corrections: z
+		.array(
+			z.object({
+				correctionId: z.string().trim().min(1),
+				sourceTimeTicks: z.number().int().nonnegative(),
+				box: normalizedRectSchema,
+				note: z.string().trim().min(1).max(4_096),
+			}),
+		)
+		.max(10_000)
+		.default([]),
 	sampleIntervalTicks: z
 		.number()
 		.int()

@@ -25,6 +25,7 @@ import { JobStore } from "./job-store";
 import { stableSerialize } from "./matte-generation-data";
 import { DurableProviderSupervisor } from "./provider-supervisor";
 import { ApprovedModelCache } from "./approved-model-cache";
+import { readApprovedSam21Runtime } from "./approved-sam21-runtime";
 import { ExportJobQueue } from "./export-jobs";
 import { ExportProjectService } from "./export-project";
 import { ExportReceiptStore } from "./export-receipts";
@@ -32,6 +33,7 @@ import { ExportValidator } from "./export-validator";
 import { ExportQcService } from "./export-qc";
 import { DeliveryPackageService } from "./delivery-package";
 import { MatteGenerationService } from "./generate-matte";
+import { SubjectTrackingService } from "./track-subject";
 import { ManagedEditorWorker } from "./managed-editor-worker";
 import { NormalizeAudioOperation } from "./normalize-audio-operation";
 import { SubtitleFiles } from "./subtitle-files";
@@ -386,6 +388,10 @@ const approvedModelCache = new ApprovedModelCache(
 	process.env.OPENCUT_MODEL_CACHE_DIRECTORY ??
 		join(exportReceipts.directory, "models", "approved"),
 );
+const subjectTrackerReadiness = async () =>
+	readApprovedSam21Runtime(
+		await approvedModelCache.readiness("opencut.task.subject-tracking.v1"),
+	);
 capabilitySnapshots = new CapabilitySnapshotService({
 	bridge,
 	worker: editorWorker,
@@ -399,9 +405,7 @@ capabilitySnapshots = new CapabilitySnapshotService({
 		stemSeparation: await approvedModelCache.readiness(
 			"opencut.task.stem-separation.v1",
 		),
-		subjectTracking: await approvedModelCache.readiness(
-			"opencut.task.subject-tracking.v1",
-		),
+		subjectTracking: await subjectTrackerReadiness(),
 		voiceActivityDetection: await approvedModelCache.readiness(
 			"opencut.task.voice-activity-detection.v1",
 		),
@@ -445,6 +449,12 @@ const matteGeneration = new MatteGenerationService(
 	bridge,
 	undefined,
 	join(exportReceipts.directory, "provider-operations", "matte-generation"),
+	jobStoreDirectory,
+);
+const subjectTracking = new SubjectTrackingService(
+	bridge,
+	undefined,
+	join(exportReceipts.directory, "provider-operations", "subject-tracking"),
 	jobStoreDirectory,
 );
 const subtitleFiles = new SubtitleFiles();
@@ -2110,19 +2120,42 @@ function createServer(): McpServer {
 		"opencut_track_subject",
 		{
 			description:
-				"Reserved subject-tracking execution surface. Returns MODEL_SELECTION_REQUIRED without provider execution until the owner approves an exact model identity, source, license, and artifact hash; persist external tracking data with opencut_create_media_analysis.",
+				"Run the approved hash-pinned SAM 2.1 Hiera Small command provider as a durable job, retain source-time boxes, confidence, occlusion, corrections and masks, then atomically apply reframe keyframes. Requires the exact configured CPU runtime; CUDA remains gated on WSL2 golden conformance.",
 			inputSchema: withProjectMutationSafety(trackSubjectInputSchema),
 		},
 		async (input) =>
 			toolResult(
-				await ledgerBoundary.execute(
-					"opencut_track_subject",
-					input,
-					async () =>
-						modelSelectionRequired("opencut.task.subject-tracking.v1"),
-					async () =>
-						modelSelectionRequired("opencut.task.subject-tracking.v1"),
-				),
+				await (async () => {
+					const readiness = await subjectTrackerReadiness();
+					if (readiness.canExecute !== true) {
+						return {
+							status: "rejected",
+							code: readiness.code ?? "SUBJECT_TRACKER_NOT_READY",
+							reason: readiness.reason,
+							providerExecution: "forbidden",
+							affectedObjects: [] as [],
+						};
+					}
+					return ledgerBoundary.execute(
+						"opencut_track_subject",
+						input,
+						(context) =>
+							subjectTracking.track(
+								input,
+								observeProvider(context, input.operationId),
+							),
+						async (context) => {
+							const recovery = providerCheckpointTracking(context);
+							return recovery
+								? subjectTracking.applyRecovered(
+										input,
+										recovery,
+										observeProvider(context, input.operationId),
+									)
+								: null;
+						},
+					);
+				})(),
 			),
 	);
 
@@ -3353,6 +3386,59 @@ function providerCheckpointChannel(
 		if (channel === "alpha" || channel === "red") return channel;
 	}
 	return null;
+}
+
+function providerCheckpointTracking(context: OperationExecutionContext): {
+	samples: Array<{
+		sourceTime: number;
+		box: { x: number; y: number; width: number; height: number };
+		confidence?: number;
+	}>;
+	modelId: string;
+	modelVersion: string;
+} | null {
+	const provenance = context
+		.record()
+		.providerProvenance.find(
+			(candidate) => candidate.provider === "subject-tracker-command",
+		);
+	const candidates = provenance?.metadata?.samples;
+	if (
+		!provenance?.modelId ||
+		!provenance.modelVersion ||
+		!Array.isArray(candidates)
+	) {
+		return null;
+	}
+	const samples = candidates.flatMap((candidate) => {
+		if (!isRecord(candidate) || !isRecord(candidate.box)) return [];
+		const { sourceTime, confidence } = candidate;
+		const { x, y, width, height } = candidate.box;
+		if (
+			typeof sourceTime !== "number" ||
+			typeof x !== "number" ||
+			typeof y !== "number" ||
+			typeof width !== "number" ||
+			typeof height !== "number" ||
+			(confidence !== undefined && typeof confidence !== "number")
+		) {
+			return [];
+		}
+		return [
+			{
+				sourceTime,
+				box: { x, y, width, height },
+				...(confidence === undefined ? {} : { confidence }),
+			},
+		];
+	});
+	return samples.length === candidates.length
+		? {
+				samples,
+				modelId: provenance.modelId,
+				modelVersion: provenance.modelVersion,
+			}
+		: null;
 }
 
 async function runProjectOperation({

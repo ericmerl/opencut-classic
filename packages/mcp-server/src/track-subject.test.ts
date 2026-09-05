@@ -47,6 +47,17 @@ describe("SubjectTrackingService", () => {
 			async track(job) {
 				trackerCalls += 1;
 				expect((await stat(job.source.path)).size).toBe(3);
+				expect(job).toMatchObject({
+					protocolVersion: 2,
+					coverage: { startTicks: 0, endTicks: 1_200_000 },
+					requestedModel: {
+						id: "facebook/sam2.1-hiera-small",
+						revision: "ee5bba1d82bb8749febdf90f45e84b687142ba03",
+						artifactSha256:
+							"0a4067b11ce1e23d5229203f11c718a823060d15a4b23fa2372a7d4b77cbbc60",
+						codeRevision: "2b90b9f5ceec907a1c18123530e92e794ad901a4",
+					},
+				});
 				expect(job.clip).toMatchObject({
 					trimStart: 120_000,
 					duration: 240_000,
@@ -286,6 +297,7 @@ function input(): TrackSubjectInput {
 		minConfidence: 0.25,
 		smoothing: 0,
 		padding: 0.25,
+		corrections: [],
 		options: {},
 		timeoutSeconds: 30,
 	};

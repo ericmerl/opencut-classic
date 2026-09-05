@@ -43,7 +43,7 @@ export interface ProviderSupervisorSubmission {
 
 export interface ProviderSupervisorProvenance {
 	provider: ProviderSupervisorKind;
-	providerProtocolVersion: 1;
+	providerProtocolVersion: 1 | 2;
 	supervisorProtocolVersion: 2;
 	modelId: string;
 	modelVersion: string;
@@ -148,8 +148,14 @@ export class ProviderSupervisorStore {
 			});
 			return toProviderRecord(record);
 		} catch (error) {
-			if (error instanceof JobStoreError && error.code === "JOB_IDENTITY_REUSED") {
-				throw new ProviderSupervisorReuseError(input.provider, input.operationId);
+			if (
+				error instanceof JobStoreError &&
+				error.code === "JOB_IDENTITY_REUSED"
+			) {
+				throw new ProviderSupervisorReuseError(
+					input.provider,
+					input.operationId,
+				);
 			}
 			throw error;
 		}
@@ -322,7 +328,9 @@ export function providerState(state: JobState): ProviderSupervisorState {
 
 function validateSubmission(input: ProviderSupervisorSubmission): void {
 	if (!input.operationId || !input.semanticFingerprint || !input.command) {
-		throw new Error("provider, operation ID, fingerprint, and command are required");
+		throw new Error(
+			"provider, operation ID, fingerprint, and command are required",
+		);
 	}
 	if (!/^[a-f0-9]{64}$/.test(input.semanticFingerprint)) {
 		throw new Error("provider semantic fingerprint must be lowercase SHA-256");
@@ -334,16 +342,24 @@ function validateSubmission(input: ProviderSupervisorSubmission): void {
 }
 
 function assertJsonValue(value: unknown, path: string): void {
-	if (value === null || typeof value === "string" || typeof value === "boolean") {
+	if (
+		value === null ||
+		typeof value === "string" ||
+		typeof value === "boolean"
+	) {
 		return;
 	}
 	if (typeof value === "number" && Number.isFinite(value)) return;
 	if (Array.isArray(value)) {
-		value.forEach((child, index) => assertJsonValue(child, `${path}[${index}]`));
+		value.forEach((child, index) =>
+			assertJsonValue(child, `${path}[${index}]`),
+		);
 		return;
 	}
 	if (value && typeof value === "object") {
-		for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+		for (const [key, child] of Object.entries(
+			value as Record<string, unknown>,
+		)) {
 			assertJsonValue(child, `${path}.${key}`);
 		}
 		return;
