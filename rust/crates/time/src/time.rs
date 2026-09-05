@@ -35,8 +35,9 @@ pub use time_map::{
     TimeMapTrackingSample, TimeMapTrimPlan, TimeMapTrimPolicy, TimeMapTrimRange, describe_time_map,
     evaluate_time_map, map_retime_tracking_samples, map_time_map_tracking_samples,
     plan_retime_split, plan_time_map_audio, plan_time_map_split, plan_time_map_trim,
-    resolve_time_map_audio_sample, resolve_time_map_rate, resolve_time_map_source_time,
-    retime_config_for_time_map, slice_time_map, time_map_retime_config,
+    resolve_time_map_audio_sample, resolve_time_map_audio_tempo, resolve_time_map_rate,
+    resolve_time_map_source_time, retime_config_for_time_map, slice_time_map,
+    time_map_retime_config,
 };
 pub use timecode::{
     FormatTimecodeOptions, GuessTimecodeFormatOptions, ParseTimecodeOptions, TimeCodeFormat,

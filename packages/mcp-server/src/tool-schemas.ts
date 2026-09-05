@@ -5,11 +5,12 @@ import { QC_CHECK_IDS } from "./export-qc";
 import { BOOTSTRAP_PROJECT_ID } from "./managed-editor-worker";
 import { operationIdSchema } from "./operation-tool-schemas";
 
-// This schema owns the JSON transport shape only: the wire-format version tag
-// and field layout that MCP clients see in the published tool schema. Rust
-// validates all canonical time-map semantics, including tick integrality/range,
-// rates, fallback policy, continuity, and non-empty identities/segments.
-const timeMapTickSchema = z.number();
+// This schema owns the JSON transport shape only: the wire-format version tag,
+// integer tick fields, and the field layout that MCP clients see in the
+// published tool schema. Rust validates all canonical time-map semantics,
+// including tick ranges, rates, fallback policy, continuity, and non-empty
+// identities/segments.
+const timeMapTickSchema = z.number().int();
 const timeMapRateSchema = z.number();
 
 const timeMapSpeedSegmentSchema = z.object({

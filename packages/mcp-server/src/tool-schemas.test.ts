@@ -60,7 +60,7 @@ describe("time-map transport schema", () => {
 					{
 						kind: "speed",
 						timelineStart: -1,
-						timelineEnd: 0.5,
+						timelineEnd: 1,
 						sourceStart: -1,
 						startRate: 100,
 						endRate: 100,

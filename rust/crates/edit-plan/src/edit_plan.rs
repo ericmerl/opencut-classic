@@ -5638,6 +5638,12 @@ impl State {
                 clamp_keyframes_to_duration(e, plan.duration, resolved_allocations, index)?;
                 return Ok(());
             }
+            if time_map_range.is_some() {
+                return invalid(
+                    index,
+                    "timeMapRange applies only to time-mapped clips; use trimStart/trimEnd for rate-based clips",
+                );
+            }
             let source_duration = element_source_duration(e, index)?;
             let remaining_source_ticks = source_duration
                 .as_ticks()

@@ -17,6 +17,32 @@ export function planTimeMapAudioChunks({
 	return plan.chunks;
 }
 
+/**
+ * SoundTouch tempo for a speed chunk at a fractional render position. Rust
+ * owns the curve and returns it unsigned: direction is already carried by the
+ * chunk, so a reverse ramp never reaches the stretcher as a negative tempo.
+ */
+export function timeMapTempoAt({
+	timeMap,
+	chunk,
+	position,
+}: {
+	timeMap: TimeMap;
+	chunk: Extract<TimeMapAudioChunk, { kind: "speed" }>;
+	position: number;
+}): number {
+	const chunkTicks = chunk.timelineEnd - chunk.timelineStart;
+	const clipTime = Math.min(
+		chunk.timelineEnd - 1,
+		Math.round(chunk.timelineStart + position * chunkTicks),
+	);
+	const tempo = opencutWasm.resolveTimeMapAudioTempo({ timeMap, clipTime });
+	if (tempo === undefined) {
+		throw new Error("Rust rejected the time-map audio tempo lookup");
+	}
+	return tempo;
+}
+
 function sampleLinear({
 	channelData,
 	position,
@@ -261,35 +287,19 @@ async function buildPitchPreservedTimeMapBuffer({
 
 		const clipSeconds =
 			(chunk.timelineEnd - chunk.timelineStart) / TICKS_PER_SECOND;
-		if (chunk.startRate < RATE_EPSILON || chunk.endRate < RATE_EPSILON)
-			continue;
 		// Rust already resolved the chunk: its source span runs from sourceStart
-		// to sourceEnd (descending when reversed) and its effective rate curve is
-		// read back from Rust per SoundTouch block instead of re-derived here.
+		// to sourceEnd (descending when reversed) and its tempo curve is read
+		// back from Rust per SoundTouch block instead of re-derived here.
 		const reverse = chunk.direction === "reverse";
 		const sourceSpanStartTicks = reverse ? chunk.sourceEnd : chunk.sourceStart;
 		const sourceSpanTicks = Math.abs(chunk.sourceEnd - chunk.sourceStart);
-		const chunkTicks = chunk.timelineEnd - chunk.timelineStart;
 		const rendered = await buildPitchPreservedBuffer({
 			sourceBuffer,
 			trimStart: trimStart + sourceSpanStartTicks / TICKS_PER_SECOND,
 			sourceDuration: sourceSpanTicks / TICKS_PER_SECOND,
 			clipDuration: clipSeconds,
 			rate: chunk.startRate,
-			tempoAt: (position) => {
-				const clipTime = Math.min(
-					chunk.timelineEnd - 1,
-					Math.round(chunk.timelineStart + position * chunkTicks),
-				);
-				const effectiveRate = opencutWasm.resolveTimeMapRate({
-					timeMap,
-					clipTime,
-				});
-				if (effectiveRate === undefined) {
-					throw new Error("Rust rejected the time-map rate lookup");
-				}
-				return effectiveRate;
-			},
+			tempoAt: (position) => timeMapTempoAt({ timeMap, chunk, position }),
 			reverse,
 			targetSampleRate,
 		});

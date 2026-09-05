@@ -849,6 +849,14 @@ pub fn evaluate_time_map(
     })
 }
 
+/// Unsigned playback tempo for pitch-preserving audio: the magnitude of the
+/// effective rate. Direction is carried separately by the audio chunk plan, so
+/// a reverse segment must never reach a time-stretcher as a negative tempo.
+#[export]
+pub fn resolve_time_map_audio_tempo(options: ResolveTimeMapRateOptions) -> Option<f64> {
+    resolve_time_map_rate(options).map(f64::abs)
+}
+
 #[export]
 pub fn resolve_time_map_source_time(
     ResolveTimeMapSourceTimeOptions {
@@ -1605,6 +1613,52 @@ mod retime_planner_tests {
                 .map(|sample| (sample.time.as_ticks(), sample.box_value.x))
                 .collect::<Vec<_>>(),
             vec![(0, 0.2), (51, 0.3), (100, 0.4)]
+        );
+    }
+}
+
+#[cfg(test)]
+mod audio_tempo_tests {
+    use super::*;
+
+    fn reverse_map() -> TimeMap {
+        TimeMap {
+            schema_version: TIME_MAP_SCHEMA_VERSION.into(),
+            frame_interpolation: FrameInterpolationPolicy {
+                requested: FrameInterpolation::Nearest,
+                fallback: FrameInterpolation::Nearest,
+            },
+            audio_policy: AudioTimeMapPolicy {
+                maintain_pitch: true,
+                hold: AudioHoldPolicy::Mute,
+            },
+            segments: vec![TimeMapSegment::Speed {
+                timeline_start: MediaTime::ZERO,
+                timeline_end: MediaTime::from_ticks(120_000),
+                source_start: MediaTime::from_ticks(60_000),
+                start_rate: 0.5,
+                end_rate: 0.5,
+                direction: TimeMapDirection::Reverse,
+            }],
+        }
+    }
+
+    #[test]
+    fn audio_tempo_is_the_unsigned_effective_rate() {
+        let options = || ResolveTimeMapRateOptions {
+            time_map: reverse_map(),
+            clip_time: MediaTime::from_ticks(60_000),
+        };
+        assert_eq!(resolve_time_map_rate(options()), Some(-0.5));
+        assert_eq!(resolve_time_map_audio_tempo(options()), Some(0.5));
+        let mut invalid = reverse_map();
+        invalid.segments.clear();
+        assert_eq!(
+            resolve_time_map_audio_tempo(ResolveTimeMapRateOptions {
+                time_map: invalid,
+                clip_time: MediaTime::ZERO,
+            }),
+            None
         );
     }
 }

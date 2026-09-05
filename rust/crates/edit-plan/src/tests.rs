@@ -3900,3 +3900,31 @@ fn scalar_string_of<'a>(params: &'a CanonicalValue, key: &str) -> Option<&'a str
         _ => None,
     }
 }
+
+#[test]
+fn time_map_range_is_rejected_on_rate_based_clips() {
+    let error = evaluate(options_with_before(
+        full_snapshot(),
+        vec![EditOperation::Trim {
+            track_id: "track-main".into(),
+            element_id: "video-1".into(),
+            start_time: None,
+            duration: None,
+            trim_start: MediaTime::ZERO,
+            trim_end: MediaTime::ZERO,
+            time_map_range: Some(time::TimeMapTrimRange {
+                start: MediaTime::ZERO,
+                end: MediaTime::from_ticks(60_000),
+            }),
+            ripple: false,
+            resolved_allocations: None,
+        }],
+    ))
+    .unwrap_err();
+    assert!(matches!(error.code, ErrorCode::InvalidValue));
+    assert!(
+        error
+            .message
+            .contains("timeMapRange applies only to time-mapped clips")
+    );
+}

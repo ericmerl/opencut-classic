@@ -32,6 +32,7 @@ interface NativeProjectState {
 	planRetimeSplit: (options: unknown) => unknown;
 	timeMapRetimeConfig: (options: unknown) => unknown;
 	mapRetimeTrackingSamples: (options: unknown) => unknown;
+	resolveTimeMapAudioTempo: (options: unknown) => number | undefined;
 }
 
 /**
@@ -128,6 +129,8 @@ mock.module("opencut-wasm", () => ({
 		nativeProjectState().timeMapRetimeConfig(options),
 	mapRetimeTrackingSamples: (options: unknown) =>
 		nativeProjectState().mapRetimeTrackingSamples(options),
+	resolveTimeMapAudioTempo: (options: unknown) =>
+		nativeProjectState().resolveTimeMapAudioTempo(options),
 	scheduleFrameRange: (options: unknown) =>
 		nativeProjectState().scheduleFrameRange(options),
 	guessTimecodeFormat: () => "HH:MM:SS",

@@ -3,9 +3,49 @@ import type { RetimeConfig } from "@/timeline";
 import {
 	planTimeMapAudioChunks,
 	sampleRetimedAudioChannel,
+	timeMapTempoAt,
 } from "../audio-stretch";
 
 describe("time-map audio", () => {
+	test("reads an unsigned SoundTouch tempo from Rust for ramps and reverse", () => {
+		const timeMap: NonNullable<RetimeConfig["timeMap"]> = {
+			schemaVersion: "opencut.time-map.v1",
+			frameInterpolation: { requested: "nearest", fallback: "nearest" },
+			audioPolicy: { maintainPitch: true, hold: "mute" },
+			segments: [
+				{
+					kind: "speed",
+					timelineStart: 0,
+					timelineEnd: 120_000,
+					sourceStart: 0,
+					startRate: 0.5,
+					endRate: 1.5,
+					direction: "forward",
+				},
+				{
+					kind: "speed",
+					timelineStart: 120_000,
+					timelineEnd: 240_000,
+					sourceStart: 120_000,
+					startRate: 0.5,
+					endRate: 0.5,
+					direction: "reverse",
+				},
+			],
+		};
+		const [ramp, reverse] = planTimeMapAudioChunks({ timeMap });
+		if (ramp?.kind !== "speed" || reverse?.kind !== "speed") {
+			throw new Error("expected two speed chunks");
+		}
+
+		expect(timeMapTempoAt({ timeMap, chunk: ramp, position: 0 })).toBe(0.5);
+		expect(timeMapTempoAt({ timeMap, chunk: ramp, position: 0.5 })).toBe(1);
+		// The reverse segment's effective rate is -0.5; the stretcher gets +0.5.
+		expect(timeMapTempoAt({ timeMap, chunk: reverse, position: 0.5 })).toBe(
+			0.5,
+		);
+	});
+
 	test("preserves ramp endpoints instead of averaging the curve", () => {
 		const timeMap: NonNullable<RetimeConfig["timeMap"]> = {
 			schemaVersion: "opencut.time-map.v1",
