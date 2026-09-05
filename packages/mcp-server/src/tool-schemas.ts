@@ -573,6 +573,30 @@ const captionStyleSchema = z
 			.describe(
 				"Word-by-word emphasis: the spoken word, by character share of the caption's duration, takes this colour in preview and export (the tiktok-karaoke preset enables it).",
 			),
+		outline: z
+			.object({
+				enabled: z.boolean(),
+				color: z.string().min(1).optional(),
+				width: z.number().optional(),
+			})
+			.strict()
+			.optional()
+			.describe(
+				"Stroke drawn around every glyph behind the fill. width is a fraction of the font size (Rust bounds it to 0 through 0.5; default 0.08).",
+			),
+		shadow: z
+			.object({
+				enabled: z.boolean(),
+				color: z.string().min(1).optional(),
+				offsetX: z.number().optional(),
+				offsetY: z.number().optional(),
+				blur: z.number().optional(),
+			})
+			.strict()
+			.optional()
+			.describe(
+				"Drop shadow behind the glyphs and their outline. Offsets (-1 through 1) and blur (0 through 1) are fractions of the font size; Rust bounds them.",
+			),
 	})
 	.strict();
 
@@ -2694,6 +2718,14 @@ const exportRenderOverlaySchema = z
 						backgroundPerLine: z.boolean().optional(),
 						highlightEnabled: z.boolean().optional(),
 						highlightColor: z.string().trim().min(1).optional(),
+						outlineEnabled: z.boolean().optional(),
+						outlineColor: z.string().trim().min(1).optional(),
+						outlineWidth: z.number().finite().optional(),
+						shadowEnabled: z.boolean().optional(),
+						shadowColor: z.string().trim().min(1).optional(),
+						shadowOffsetX: z.number().finite().optional(),
+						shadowOffsetY: z.number().finite().optional(),
+						shadowBlur: z.number().finite().optional(),
 					})
 					.strict()
 					.optional(),

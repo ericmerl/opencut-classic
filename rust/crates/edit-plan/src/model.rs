@@ -671,6 +671,45 @@ pub struct SubtitleHighlight {
     pub color: Option<String>,
 }
 
+/// Largest text outline, as a fraction of the font size (half an em).
+pub const TEXT_OUTLINE_MAX_WIDTH: f64 = 0.5;
+/// Largest drop-shadow blur radius, as a fraction of the font size.
+pub const TEXT_SHADOW_MAX_BLUR: f64 = 1.0;
+/// Largest drop-shadow offset magnitude, as a fraction of the font size.
+pub const TEXT_SHADOW_MAX_OFFSET: f64 = 1.0;
+
+/// A stroke drawn around every glyph, behind the fill. `width` is a fraction
+/// of the rendered font size so the outline keeps its weight across canvas
+/// sizes and font sizes; ASS `Outline` (pixels at PlayRes) converts through
+/// the font's pixel size.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubtitleOutline {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+}
+
+/// A drop shadow painted behind the glyphs and their outline. Offsets and
+/// blur are fractions of the rendered font size, like the outline width.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubtitleShadow {
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset_x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset_y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blur: Option<f64>,
+}
+
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -705,6 +744,10 @@ pub struct SubtitleStyleOverrides {
     pub placement: Option<SubtitlePlacementStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<SubtitleHighlight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<SubtitleOutline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<SubtitleShadow>,
 }
 
 /// A reusable social-caption style. The table lives in Rust so the editor,
@@ -765,6 +808,8 @@ pub fn caption_style_presets() -> CaptionStylePresetList {
             margin_vertical_ratio: Some(0.12),
         }),
         highlight: None,
+        outline: None,
+        shadow: None,
     };
     CaptionStylePresetList {
         presets: vec![
@@ -818,6 +863,8 @@ pub fn caption_style_presets() -> CaptionStylePresetList {
                         margin_vertical_ratio: Some(0.12),
                     }),
                     highlight: None,
+                    outline: None,
+                    shadow: None,
                 },
             },
         ],
@@ -881,6 +928,26 @@ pub fn resolve_caption_style(
             color: override_.color.clone().or_else(|| base.color.clone()),
         }),
     };
+    let outline = match (&base.outline, &style.outline) {
+        (_, None) => base.outline.clone(),
+        (None, Some(override_)) => Some(override_.clone()),
+        (Some(base), Some(override_)) => Some(SubtitleOutline {
+            enabled: override_.enabled,
+            color: override_.color.clone().or_else(|| base.color.clone()),
+            width: override_.width.or(base.width),
+        }),
+    };
+    let shadow = match (&base.shadow, &style.shadow) {
+        (_, None) => base.shadow.clone(),
+        (None, Some(override_)) => Some(override_.clone()),
+        (Some(base), Some(override_)) => Some(SubtitleShadow {
+            enabled: override_.enabled,
+            color: override_.color.clone().or_else(|| base.color.clone()),
+            offset_x: override_.offset_x.or(base.offset_x),
+            offset_y: override_.offset_y.or(base.offset_y),
+            blur: override_.blur.or(base.blur),
+        }),
+    };
     Ok(SubtitleStyleOverrides {
         preset: None,
         font_size: style.font_size.or(base.font_size),
@@ -898,7 +965,23 @@ pub fn resolve_caption_style(
         line_height: style.line_height.or(base.line_height),
         placement,
         highlight,
+        outline,
+        shadow,
     })
+}
+
+fn bounded_style_number(
+    key: &str,
+    value: Option<f64>,
+    min: f64,
+    max: f64,
+) -> Result<Option<f64>, String> {
+    match value {
+        Some(value) if !value.is_finite() || value < min || value > max => Err(format!(
+            "{key} must be between {min} and {max} (a fraction of the font size)"
+        )),
+        value => Ok(value),
+    }
 }
 
 /// The text element params a caption style sets. Placement and play-height
@@ -982,6 +1065,47 @@ pub fn caption_style_params(style: &SubtitleStyleOverrides) -> Result<Params, St
             Scalar::Boolean(highlight.enabled),
         );
         put_string(&mut params, "highlight.color", highlight.color.clone());
+    }
+    if let Some(outline) = &style.outline {
+        params.insert(
+            "outline.enabled".to_owned(),
+            Scalar::Boolean(outline.enabled),
+        );
+        put_string(&mut params, "outline.color", outline.color.clone());
+        put_number(
+            &mut params,
+            "outline.width",
+            bounded_style_number("outline.width", outline.width, 0.0, TEXT_OUTLINE_MAX_WIDTH)?,
+        );
+    }
+    if let Some(shadow) = &style.shadow {
+        params.insert("shadow.enabled".to_owned(), Scalar::Boolean(shadow.enabled));
+        put_string(&mut params, "shadow.color", shadow.color.clone());
+        put_number(
+            &mut params,
+            "shadow.offsetX",
+            bounded_style_number(
+                "shadow.offsetX",
+                shadow.offset_x,
+                -TEXT_SHADOW_MAX_OFFSET,
+                TEXT_SHADOW_MAX_OFFSET,
+            )?,
+        );
+        put_number(
+            &mut params,
+            "shadow.offsetY",
+            bounded_style_number(
+                "shadow.offsetY",
+                shadow.offset_y,
+                -TEXT_SHADOW_MAX_OFFSET,
+                TEXT_SHADOW_MAX_OFFSET,
+            )?,
+        );
+        put_number(
+            &mut params,
+            "shadow.blur",
+            bounded_style_number("shadow.blur", shadow.blur, 0.0, TEXT_SHADOW_MAX_BLUR)?,
+        );
     }
     if params.is_empty() {
         return Err("restyle sets no caption params".into());

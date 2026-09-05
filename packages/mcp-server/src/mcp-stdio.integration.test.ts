@@ -1420,6 +1420,17 @@ integrationTest(
 				style: {
 					preset: "tiktok-classic-red",
 					highlight: { enabled: true, color: "#ffd400" },
+					// A black glyph outline and a hard drop shadow, both as fractions
+					// of the font size, so the reference "white type over black" look
+					// no longer needs stacked duplicate elements.
+					outline: { enabled: true, color: "#000000", width: 0.1 },
+					shadow: {
+						enabled: true,
+						color: "#000000",
+						offsetX: 0.06,
+						offsetY: 0.06,
+						blur: 0,
+					},
 				},
 			},
 			{
@@ -1491,6 +1502,14 @@ integrationTest(
 				"background.color": "#ff0000",
 				"highlight.enabled": true,
 				"highlight.color": "#ffd400",
+				"outline.enabled": true,
+				"outline.color": "#000000",
+				"outline.width": 0.1,
+				"shadow.enabled": true,
+				"shadow.color": "#000000",
+				"shadow.offsetX": 0.06,
+				"shadow.offsetY": 0.06,
+				"shadow.blur": 0,
 			},
 		});
 		// Rust re-segments both halves into word-timed chunks under the budget
@@ -1552,6 +1571,10 @@ integrationTest(
 				"caption.speaker": "host",
 				"highlight.enabled": true,
 				"highlight.color": "#ffd400",
+				"outline.enabled": true,
+				"outline.width": 0.1,
+				"shadow.enabled": true,
+				"shadow.offsetX": 0.06,
 			});
 		}
 		expect(
@@ -1561,9 +1584,142 @@ integrationTest(
 		).toBe(
 			requireString(restructureEvaluation.predictedProjectHash, "predicted"),
 		);
+
+		// The outlined, shadowed captions must render identically in preview and
+		// export, and the outline must actually be painted: inside the red
+		// caption block only the black stroke and shadow can produce dark pixels.
+		const restructuredSnapshot = requireRecord(
+			restructured.snapshot,
+			"snapshot",
+		);
+		const restructuredHash = requireProjectContentHash(restructuredSnapshot);
+		const parityCanvas = { width: 540, height: 960 } as const;
+		const paritySave = await harness.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: `caption-outline-parity-save-${runId}`,
+			expectedRevision: requireNumber(restructured.revision, "revision"),
+			expectedContentHash: restructuredHash,
+		});
+		expect(paritySave).toMatchObject({ status: "saved" });
+		const parityTicks = 30_000;
+		const outlinePreview = await harness.callTool(
+			"opencut_render_preview_frame",
+			{
+				...affinity(identity),
+				contractVersion: 2,
+				operationId: `caption-outline-preview-${runId}`,
+				projectId,
+				sceneId,
+				expectedRevision: requireNumber(restructured.revision, "revision"),
+				expectedProjectContentHash: restructuredHash,
+				expectedWriteVersion: requireNumber(
+					paritySave.writeVersion,
+					"writeVersion",
+				),
+				saveReceiptOperationId: `caption-outline-parity-save-${runId}`,
+				expectedSaveReceiptId: requireString(paritySave.receiptId, "receiptId"),
+				time: { kind: "media-time", ticks: parityTicks, rounding: "exact" },
+				canvasSize: parityCanvas,
+				format: "png",
+			},
+			5 * 60_000,
+		);
+		expect(outlinePreview.status).toBe("rendered");
+		const outlineExportPath = join(directory, "caption-outline.webm");
+		const outlineExport = await harness.callTool(
+			"opencut_export_project",
+			{
+				...affinity(identity),
+				projectId,
+				operationId: `caption-outline-export-${runId}`,
+				expectedRevision: requireNumber(restructured.revision, "revision"),
+				expectedProjectContentHash: restructuredHash,
+				outputPath: outlineExportPath,
+				format: "webm",
+				quality: "very_high",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: false,
+				canvasSize: parityCanvas,
+			},
+			5 * 60_000,
+		);
+		expect(outlineExport.status).toBe("exported");
+		const previewRgba = await extractRgba(
+			requireString(outlinePreview.outputPath, "preview path"),
+		);
+		const exportRgba = await extractRgba(
+			outlineExportPath,
+			parityTicks / MEDIA_TICKS_PER_SECOND,
+		);
+		assertMetricAtMost({
+			label: "caption outline preview/export RGBA MAE",
+			actual: rgbaComparisonMetrics(previewRgba, exportRgba).meanAbsoluteError,
+			maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+		});
+		for (const [label, rgba] of [
+			["preview", previewRgba],
+			["export", exportRgba],
+		] as const) {
+			const dark = darkPixelsInsideRedBlock({ rgba, ...parityCanvas });
+			expect({ label, redPixels: dark.redPixels > 500 }).toEqual({
+				label,
+				redPixels: true,
+			});
+			expect({ label, outlinePixels: dark.darkPixels > 50 }).toEqual({
+				label,
+				outlinePixels: true,
+			});
+		}
 	},
-	120_000,
+	8 * 60_000,
 );
+
+/**
+ * The bounding box of the strongly red pixels (the tiktok-classic-red caption
+ * block) and the count of near-black pixels inside it. White glyphs and a
+ * yellow highlight never produce those; only the outline and shadow do.
+ */
+function darkPixelsInsideRedBlock({
+	rgba,
+	width,
+	height,
+}: {
+	rgba: Buffer;
+	width: number;
+	height: number;
+}): { redPixels: number; darkPixels: number } {
+	let left = width;
+	let top = height;
+	let right = -1;
+	let bottom = -1;
+	let redPixels = 0;
+	const at = (x: number, y: number) => {
+		const offset = (y * width + x) * 4;
+		return [rgba[offset]!, rgba[offset + 1]!, rgba[offset + 2]!] as const;
+	};
+	for (let y = 0; y < height; y += 1) {
+		for (let x = 0; x < width; x += 1) {
+			const [r, g, b] = at(x, y);
+			if (r > 180 && g < 90 && b < 90) {
+				redPixels += 1;
+				left = Math.min(left, x);
+				top = Math.min(top, y);
+				right = Math.max(right, x);
+				bottom = Math.max(bottom, y);
+			}
+		}
+	}
+	let darkPixels = 0;
+	for (let y = top; y <= bottom; y += 1) {
+		for (let x = left; x <= right; x += 1) {
+			const [r, g, b] = at(x, y);
+			if (r < 60 && g < 60 && b < 60) darkPixels += 1;
+		}
+	}
+	return { redPixels, darkPixels };
+}
 
 integrationTest(
 	"records structured review evidence and human sign-off through managed Chrome",

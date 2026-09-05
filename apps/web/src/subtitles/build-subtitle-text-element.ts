@@ -13,6 +13,7 @@ import { mediaTimeFromSeconds } from "@/wasm";
 import type { CreateTextElement } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import type { TextHighlight } from "@/text/highlight";
+import type { TextOutline, TextShadow } from "@/text/outline-shadow";
 import type {
 	TextAlign,
 	TextDecoration,
@@ -41,7 +42,11 @@ export function resolveSubtitleFontParams({
 	style,
 }: {
 	style: SubtitleStyleOverrides | undefined;
-}): { fontFamily: string; fontWeight: TextFontWeight; fontStyle: TextFontStyle } {
+}): {
+	fontFamily: string;
+	fontWeight: TextFontWeight;
+	fontStyle: TextFontStyle;
+} {
 	const resolved = resolveSubtitleStyle({ style });
 	return {
 		fontFamily: resolved.fontFamily,
@@ -62,6 +67,8 @@ type ResolvedSubtitleStyle = {
 	lineHeight: number;
 	background: TextBackground;
 	highlight: TextHighlight;
+	outline: TextOutline;
+	shadow: TextShadow;
 	placement: NonNullable<SubtitleStyleOverrides["placement"]>;
 };
 
@@ -95,6 +102,8 @@ function resolveSubtitleStyle({
 			enabled: style?.highlight?.enabled ?? DEFAULTS.text.highlight.enabled,
 			color: style?.highlight?.color ?? DEFAULTS.text.highlight.color,
 		},
+		outline: { ...DEFAULTS.text.outline, ...(style?.outline ?? {}) },
+		shadow: { ...DEFAULTS.text.shadow, ...(style?.shadow ?? {}) },
 		placement: {
 			verticalAlign: style?.placement?.verticalAlign ?? "bottom",
 			marginLeftRatio: style?.placement?.marginLeftRatio,
@@ -264,6 +273,14 @@ function buildElement({
 				style.background.offsetY ?? DEFAULTS.text.background.offsetY,
 			"highlight.enabled": style.highlight.enabled,
 			"highlight.color": style.highlight.color,
+			"outline.enabled": style.outline.enabled,
+			"outline.color": style.outline.color,
+			"outline.width": style.outline.width,
+			"shadow.enabled": style.shadow.enabled,
+			"shadow.color": style.shadow.color,
+			"shadow.offsetX": style.shadow.offsetX,
+			"shadow.offsetY": style.shadow.offsetY,
+			"shadow.blur": style.shadow.blur,
 			...(caption.speaker ? { "caption.speaker": caption.speaker } : {}),
 			"transform.positionX": positionX,
 			"transform.positionY": positionY,
@@ -323,6 +340,8 @@ export function measureSubtitleCaption({
 	const local = measureCaptionLocalLayout({
 		text: { ...text, content },
 		background: style.background,
+		outline: style.outline,
+		shadow: style.shadow,
 		canvasHeight: canvasSize.height,
 		ctx,
 	});

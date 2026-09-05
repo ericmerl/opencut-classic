@@ -59,6 +59,8 @@ export function renderTextToContext({
 			highlight.enabled && highlight.wordIndex !== null
 				? { color: highlight.color, wordIndex: highlight.wordIndex }
 				: null,
+		outline: resolved.measuredText.outline,
+		shadow: resolved.measuredText.shadow,
 		textBaseline: baseline,
 	});
 

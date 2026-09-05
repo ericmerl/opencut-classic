@@ -10,6 +10,13 @@ import {
 	type TextCanvasContext,
 } from "./layout";
 import {
+	resolveTextOutline,
+	resolveTextShadow,
+	textDecorationExtents,
+	type TextOutline,
+	type TextShadow,
+} from "./outline-shadow";
+import {
 	measureTextLayout,
 	type MeasuredTextLayout,
 	type TextLayoutParams,
@@ -141,16 +148,43 @@ export function wrapTextToWidth({
 export function measureCaptionLocalLayout({
 	text,
 	background,
+	outline,
+	shadow,
 	canvasHeight,
 	ctx,
 }: {
 	text: TextLayoutParams;
 	background: TextBackground;
+	/** Outline and shadow widen the visual rect; omitted means bare glyphs. */
+	outline?: TextOutline;
+	shadow?: TextShadow;
 	canvasHeight: number;
 	ctx: TextCanvasContext;
 }): CaptionLocalLayout {
 	const layout = measureTextLayout({ text, canvasHeight, ctx });
-	const block = getTextRect({ textAlign: layout.textAlign, block: layout.block });
+	const extents =
+		outline || shadow
+			? textDecorationExtents({
+					outline: resolveTextOutline({
+						outline: outline ?? { enabled: false, color: "", width: 0 },
+						scaledFontSize: layout.scaledFontSize,
+					}),
+					shadow: resolveTextShadow({
+						shadow: shadow ?? {
+							enabled: false,
+							color: "",
+							offsetX: 0,
+							offsetY: 0,
+							blur: 0,
+						},
+						scaledFontSize: layout.scaledFontSize,
+					}),
+				})
+			: undefined;
+	const block = getTextRect({
+		textAlign: layout.textAlign,
+		block: layout.block,
+	});
 	const bubbleRect = getTextBackgroundRect({
 		textAlign: layout.textAlign,
 		block: layout.block,
@@ -184,10 +218,12 @@ export function measureCaptionLocalLayout({
 		block: layout.block,
 		background,
 		fontSizeRatio: layout.fontSizeRatio,
+		extents,
 	});
 	const lines = layout.lines.map((line, index) => {
 		const metrics = layout.lineMetrics[index]!;
-		const anchorY = index * layout.lineHeightPx - layout.block.visualCenterOffset;
+		const anchorY =
+			index * layout.lineHeightPx - layout.block.visualCenterOffset;
 		const ascent = getMetricAscent({
 			metrics,
 			fallbackFontSize: layout.scaledFontSize,

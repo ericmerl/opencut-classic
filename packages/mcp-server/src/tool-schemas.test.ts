@@ -37,6 +37,7 @@ import {
 	startEditorWorkerInputSchema,
 	stopEditorWorkerInputSchema,
 	timelineQueryInputSchema,
+	editOperationSchema,
 	syncAudioInputSchema,
 	trackSubjectInputSchema,
 	transcribeTimelineInputSchema,
@@ -1891,5 +1892,37 @@ describe("OpenCut project-lifecycle MCP contract", () => {
 		});
 
 		expect(result.success).toBe(false);
+	});
+});
+
+describe("caption outline and shadow transport", () => {
+	test("accepts typed outline and shadow style on restyle_captions", () => {
+		expect(
+			editOperationSchema.safeParse({
+				kind: "restyle_captions",
+				trackId: "captions",
+				style: {
+					preset: "tiktok-classic",
+					outline: { enabled: true, color: "#000000", width: 0.08 },
+					shadow: {
+						enabled: true,
+						color: "rgba(0, 0, 0, 0.8)",
+						offsetX: 0.05,
+						offsetY: 0.05,
+						blur: 0.1,
+					},
+				},
+			}),
+		).toMatchObject({ success: true });
+	});
+
+	test("rejects unknown outline fields at the transport boundary", () => {
+		expect(
+			editOperationSchema.safeParse({
+				kind: "restyle_captions",
+				trackId: "captions",
+				style: { outline: { enabled: true, thickness: 2 } },
+			}).success,
+		).toBe(false);
 	});
 });

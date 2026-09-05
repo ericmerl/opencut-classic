@@ -252,7 +252,7 @@ export function parseAss({ input }: { input: string }): ParseSubtitleResult {
 
 	if (usesHeavilyUnsupportedStyles) {
 		warnings.add(
-			"Ignored unsupported ASS style features such as outline, shadow, rotation, or scaling.",
+			"Ignored unsupported ASS style features such as boxed outline or shadow, rotation, or scaling.",
 		);
 	}
 
@@ -368,7 +368,16 @@ function mapAssStyleToSubtitleStyle({
 } {
 	const fontSize = parseFloat(style.fontsize ?? "");
 	const primaryColor = parseAssColor({ input: style.primarycolour });
+	const outlineColor = parseAssColor({ input: style.outlinecolour });
 	const backColor = parseAssColor({ input: style.backcolour });
+	const outlinePx = parseFloat(style.outline ?? "") || 0;
+	const shadowPx = parseFloat(style.shadow ?? "") || 0;
+	// ASS Outline and Shadow are pixels at PlayRes; the app stores them as
+	// fractions of the font size, which is also in PlayRes pixels here.
+	const emOf = (px: number) =>
+		Number.isFinite(fontSize) && fontSize > 0
+			? Math.round((px / fontSize) * 10_000) / 10_000
+			: null;
 	const bold = parseAssBoolean({ input: style.bold });
 	const italic = parseAssBoolean({ input: style.italic });
 	const underline = parseAssBoolean({ input: style.underline });
@@ -434,13 +443,42 @@ function mapAssStyleToSubtitleStyle({
 					},
 				}
 			: {}),
+		// With BorderStyle 1 the outline is a glyph stroke in OutlineColour and
+		// the shadow is a hard-edged copy in BackColour, offset equally right
+		// and down by Shadow pixels.
+		...(Math.round(borderStyle) === 1 &&
+		outlinePx > 0 &&
+		outlineColor?.cssColor &&
+		emOf(outlinePx) !== null
+			? {
+					outline: {
+						enabled: true,
+						color: outlineColor.cssColor,
+						width: emOf(outlinePx)!,
+					},
+				}
+			: {}),
+		...(Math.round(borderStyle) === 1 &&
+		shadowPx > 0 &&
+		backColor?.cssColor &&
+		emOf(shadowPx) !== null
+			? {
+					shadow: {
+						enabled: true,
+						color: backColor.cssColor,
+						offsetX: emOf(shadowPx)!,
+						offsetY: emOf(shadowPx)!,
+						blur: 0,
+					},
+				}
+			: {}),
 	};
 
+	const boxedBorder = Math.round(borderStyle) === 3;
 	const hasUnsupportedFeatures =
-		Math.round(borderStyle) !== 1 && Math.round(borderStyle) !== 3
+		Math.round(borderStyle) !== 1 && !boxedBorder
 			? true
-			: (parseFloat(style.outline ?? "") || 0) > 0 ||
-				(parseFloat(style.shadow ?? "") || 0) > 0 ||
+			: (boxedBorder && (outlinePx > 0 || shadowPx > 0)) ||
 				(parseFloat(style.angle ?? "") || 0) !== 0 ||
 				(Number.isFinite(parseFloat(style.scalex ?? "")) &&
 					parseFloat(style.scalex ?? "") !== 100) ||

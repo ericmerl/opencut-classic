@@ -9,6 +9,7 @@ import {
 	measureTextBlock,
 	setCanvasLetterSpacing,
 } from "./layout";
+import type { ResolvedTextOutline, ResolvedTextShadow } from "./outline-shadow";
 import { FONT_SIZE_SCALE_REFERENCE } from "./typography";
 
 export type TextAlign = "left" | "center" | "right";
@@ -55,7 +56,11 @@ export interface ResolvedTextBackgroundLike {
 	cornerRadius: number;
 }
 
-export function quoteFontFamily({ fontFamily }: { fontFamily: string }): string {
+export function quoteFontFamily({
+	fontFamily,
+}: {
+	fontFamily: string;
+}): string {
 	return `"${fontFamily.replace(/"/g, '\\"')}"`;
 }
 
@@ -221,6 +226,8 @@ export function drawMeasuredTextLayout({
 	background,
 	backgroundColor,
 	highlight,
+	outline,
+	shadow,
 	textBaseline = "middle",
 }: {
 	ctx: TextCanvasContext;
@@ -230,6 +237,10 @@ export function drawMeasuredTextLayout({
 	backgroundColor?: string;
 	/** The word to paint in `color` instead of `textColor`, if any. */
 	highlight?: { color: string; wordIndex: number } | null;
+	/** Stroke around every glyph, painted behind the fill. */
+	outline?: ResolvedTextOutline | null;
+	/** Drop shadow cast by the (stroked) glyphs, painted first. */
+	shadow?: ResolvedTextShadow | null;
 	textBaseline?: CanvasTextBaseline;
 }): void {
 	ctx.font = layout.fontString;
@@ -279,11 +290,40 @@ export function drawMeasuredTextLayout({
 		ctx.fillStyle = textColor;
 	}
 
+	const lineYAt = (index: number) =>
+		index * layout.lineHeightPx - layout.block.visualCenterOffset;
+	const strokeLines = () => {
+		ctx.strokeStyle = outline!.color;
+		ctx.lineWidth = outline!.widthPx;
+		ctx.lineJoin = "round";
+		ctx.lineCap = "round";
+		for (let index = 0; index < layout.lines.length; index++) {
+			ctx.strokeText(layout.lines[index], 0, lineYAt(index));
+		}
+	};
+	const hasOutline = Boolean(outline?.enabled && outline.widthPx > 0);
+
+	// The shadow is cast once by the stroked glyphs, then the outline and the
+	// fill are painted sharp on top so neither carries a second shadow.
+	if (shadow?.enabled) {
+		ctx.save();
+		ctx.shadowColor = shadow.color;
+		ctx.shadowOffsetX = shadow.offsetXPx;
+		ctx.shadowOffsetY = shadow.offsetYPx;
+		ctx.shadowBlur = shadow.blurPx;
+		if (hasOutline) strokeLines();
+		for (let index = 0; index < layout.lines.length; index++) {
+			ctx.fillText(layout.lines[index], 0, lineYAt(index));
+		}
+		ctx.restore();
+	}
+	if (hasOutline) strokeLines();
+
 	const highlighted = highlight
 		? locateTextWord({ layout, wordIndex: highlight.wordIndex })
 		: null;
 	for (let index = 0; index < layout.lines.length; index++) {
-		const lineY = index * layout.lineHeightPx - layout.block.visualCenterOffset;
+		const lineY = lineYAt(index);
 		if (highlight && highlighted && highlighted.lineIndex === index) {
 			drawHighlightedLine({
 				ctx,
