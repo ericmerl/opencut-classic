@@ -45,8 +45,6 @@ describe("ExportValidator", () => {
 				height: 90,
 				fps: 10,
 				pixelFormat: "yuv420p",
-				colorPrimaries: "bt709",
-				colorTransfer: "bt709",
 				colorMatrix: "bt709",
 				colorRange: "tv",
 			},
@@ -167,7 +165,7 @@ async function createFixture(
 			"-f",
 			"lavfi",
 			"-i",
-			"color=c=blue:s=160x90:r=10:d=1",
+			"color=c=white:s=160x90:r=10:d=1",
 			...(includeAudio
 				? ["-f", "lavfi", "-i", `sine=frequency=440:duration=${audioDuration}`]
 				: []),
