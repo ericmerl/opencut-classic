@@ -3326,6 +3326,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "media-foundation"
+version = "0.1.0"
+dependencies = [
+ "bridge",
+ "canonical-json",
+ "serde",
+ "serde_json",
+ "tsify-next",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3901,6 +3913,7 @@ dependencies = [
  "gpu",
  "js-sys",
  "masks",
+ "media-foundation",
  "num-traits",
  "project-state",
  "review-evidence",

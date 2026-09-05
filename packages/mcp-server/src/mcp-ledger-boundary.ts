@@ -741,6 +741,7 @@ function operationUsesProjectPreconditions(
 		"opencut_transcribe_source",
 		"opencut_correct_transcript",
 		"opencut_analyze_speech",
+		"opencut_create_media_analysis",
 		"opencut_create_editorial_decision",
 		"opencut_reapply_editorial_decision",
 		"opencut_export_editorial_decision_json",
@@ -799,12 +800,20 @@ function projectLifecycleTarget(
 	projectId?: string;
 	sceneId?: string;
 } {
+	const analysis = isRecord(input.analysis) ? input.analysis : null;
 	return PROJECT_TARGET_TOOLS.has(toolName)
 		? {
-				projectId: stringField(input, "projectId") ?? undefined,
-				...(REVIEW_EVIDENCE_TOOLS.has(toolName)
+				projectId:
+					stringField(input, "projectId") ??
+					(analysis ? stringField(analysis, "projectId") : null) ??
+					undefined,
+				...(REVIEW_EVIDENCE_TOOLS.has(toolName) ||
+				toolName === "opencut_create_media_analysis"
 					? {
-							sceneId: stringField(input, "sceneId") ?? undefined,
+							sceneId:
+								stringField(input, "sceneId") ??
+								(analysis ? stringField(analysis, "sceneId") : null) ??
+								undefined,
 						}
 					: {}),
 			}
@@ -820,6 +829,7 @@ const PROJECT_TARGET_TOOLS = new Set<MutatingToolName>([
 	"opencut_update_review_annotation_status",
 	"opencut_record_watermark_inspection",
 	"opencut_sign_off_export_review",
+	"opencut_create_media_analysis",
 ]);
 
 const REVIEW_EVIDENCE_TOOLS = new Set<MutatingToolName>([
@@ -1090,7 +1100,12 @@ function verifiedAffectedObjects(
 	const analysis = isRecord(result.analysis) ? result.analysis : null;
 	const decision = isRecord(result.decision) ? result.decision : null;
 	add("transcript", transcript?.transcriptId, action);
-	add("speech-analysis", analysis?.analysisId, action);
+	if (toolName === "opencut_analyze_speech") {
+		add("speech-analysis", analysis?.analysisId, action);
+	}
+	if (toolName === "opencut_create_media_analysis") {
+		add("media-analysis", analysis?.analysisId, action);
+	}
 	add(
 		"editorial-decision",
 		decision?.decisionId ??
@@ -1209,6 +1224,7 @@ function operationAction(
 		return "cancelled";
 	if (toolName === "opencut_record_export_inspection") return "inspected";
 	if (toolName === "opencut_create_review_annotation") return "created";
+	if (toolName === "opencut_create_media_analysis") return "created";
 	if (toolName === "opencut_update_review_annotation_status") return "updated";
 	if (toolName === "opencut_record_watermark_inspection") return "inspected";
 	if (toolName === "opencut_sign_off_export_review") return "created";
@@ -1844,6 +1860,7 @@ const MUTATOR_RESULT_CONTRACTS = {
 	opencut_transcribe_source: contract(["transcribed", "replayed"], rejected),
 	opencut_correct_transcript: contract(["corrected", "replayed"], rejected),
 	opencut_analyze_speech: contract(["analyzed", "replayed"], rejected),
+	opencut_create_media_analysis: contract(["created", "replayed"], rejected),
 	opencut_create_editorial_decision: contract(
 		["created", "replayed"],
 		rejected,

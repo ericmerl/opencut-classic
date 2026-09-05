@@ -327,6 +327,7 @@ function successValue(toolName: MutatingToolName, operationId: string) {
 		opencut_correct_transcript: "corrected",
 		opencut_analyze_speech: "analyzed",
 		opencut_create_editorial_decision: "created",
+		opencut_create_media_analysis: "created",
 		opencut_reapply_editorial_decision: "created",
 		opencut_export_editorial_decision_json: "exported",
 		opencut_import_editorial_decision_json: "imported",

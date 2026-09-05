@@ -54,6 +54,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_create_checkpoint",
 	"opencut_create_delivery_package",
 	"opencut_create_editorial_decision",
+	"opencut_create_media_analysis",
 	"opencut_create_project",
 	"opencut_create_review_annotation",
 	"opencut_create_scene",
@@ -76,6 +77,8 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_get_export_receipt",
 	"opencut_get_history_state",
 	"opencut_get_job",
+	"opencut_get_media_analysis",
+	"opencut_get_media_capability_catalog",
 	"opencut_get_operation",
 	"opencut_get_preview_frame",
 	"opencut_get_preview_range",
@@ -108,6 +111,7 @@ export const REGISTERED_TOOL_NAMES = [
 	"opencut_list_visual_assets",
 	"opencut_normalize_audio",
 	"opencut_open_project",
+	"opencut_plan_audio_post",
 	"opencut_preflight_edit_plan",
 	"opencut_preflight_lifecycle_mutation",
 	"opencut_preflight_media_relink",
@@ -244,6 +248,7 @@ export interface CapabilitySnapshotServiceOptions {
 		modelArtifactPath: string | null;
 		workflowScriptPath: string | null;
 	}>;
+	mediaCapabilityCatalog?: () => Record<string, unknown>;
 }
 
 export class CapabilitySnapshotService {
@@ -276,6 +281,7 @@ export class CapabilitySnapshotService {
 			queues,
 			disk,
 			wasm,
+			mediaFoundation,
 		] = await Promise.all([
 			this.readBuildIdentity(),
 			this.readEditorRuntime(bridgeStatus),
@@ -285,6 +291,12 @@ export class CapabilitySnapshotService {
 			this.options.queueState(),
 			readDiskCapacity(this.options.stateDirectory),
 			this.readWasmArtifact(),
+			Promise.resolve(
+				this.options.mediaCapabilityCatalog?.() ?? {
+					status: "unavailable",
+					reason: "Rust media capability catalog is unavailable.",
+				},
+			),
 		]);
 		const capturedAt = this.now().toISOString();
 		const previewRangeLimits = readPreviewRangeLimits(this.environment);
@@ -329,6 +341,7 @@ export class CapabilitySnapshotService {
 				projectStorage: 31,
 				transcript: 1,
 				speechAnalysis: 1,
+				mediaAnalysis: 1,
 				editorialDecision: 1,
 				reviewAnnotation: 1,
 				watermarkInspection: 1,
@@ -463,6 +476,7 @@ export class CapabilitySnapshotService {
 				wasm,
 			},
 			mediaTools,
+			mediaFoundation,
 			fonts: readRecordField(editorRuntime, "fonts") ?? {
 				status: bridgeStatus.connected ? "unknown" : "unavailable",
 				reason: bridgeStatus.connected

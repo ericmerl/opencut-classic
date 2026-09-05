@@ -20,6 +20,7 @@ edit-plan = { version = "0.1.0", path = "../crates/edit-plan", features = ["wasm
 gpu = { version = "0.1.0", path = "../crates/gpu", features = ["wasm"] }
 js-sys = "0.3.93"
 masks = { version = "0.1.0", path = "../crates/masks" }
+media-foundation = { version = "0.1.0", path = "../crates/media-foundation", features = ["wasm"] }
 num-traits = "0.2.19"
 project-state = { version = "0.1.0", path = "../crates/project-state", features = ["wasm"] }
 review-evidence = { version = "0.1.0", path = "../crates/review-evidence", features = ["wasm"] }

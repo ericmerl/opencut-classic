@@ -62,6 +62,11 @@ import {
 	readParakeetReadiness,
 } from "./parakeet-transcriber";
 import { SpeechAnalysisService } from "./speech-analysis";
+import {
+	getMediaCapabilityCatalog,
+	planAudioPost,
+} from "./native-media-foundation";
+import { MediaAnalysisStore } from "./media-analysis-store";
 import { EditorialDecisionService } from "./editorial-decision";
 import { parseJsonValue, type JsonValue } from "./operation-ledger-schema";
 import {
@@ -199,6 +204,10 @@ import {
 	correctTranscriptInputSchema,
 	analyzeSpeechInputSchema,
 	getSpeechAnalysisInputSchema,
+	getMediaCapabilityCatalogInputSchema,
+	createMediaAnalysisInputSchema,
+	getMediaAnalysisInputSchema,
+	planAudioPostInputSchema,
 	createEditorialDecisionInputSchema,
 	getEditorialDecisionInputSchema,
 	listEditorialDecisionsInputSchema,
@@ -304,6 +313,11 @@ const transcripts = new TranscriptService(
 	parakeetTranscriberFromEnvironment,
 );
 const speechAnalysis = new SpeechAnalysisService(transcriptStore);
+const mediaAnalysisStore = new MediaAnalysisStore(
+	process.env.OPENCUT_MEDIA_ANALYSIS_DIR ??
+		join(exportReceipts.directory, "media-analysis"),
+);
+await mediaAnalysisStore.readiness();
 const editorialDecisions = new EditorialDecisionService(
 	transcriptStore,
 	speechAnalysis,
@@ -374,6 +388,7 @@ capabilitySnapshots = new CapabilitySnapshotService({
 	worker: editorWorker,
 	stateDirectory: exportReceipts.directory,
 	parakeetReadiness: readParakeetReadiness,
+	mediaCapabilityCatalog: () => getMediaCapabilityCatalog({}),
 	queueState: async () => {
 		await exportJobs.store.initialize();
 		const summary = exportJobs.store.jobs.summary();
@@ -475,6 +490,70 @@ function createServer(): McpServer {
 				"Return a hashable build, instance, tool, editor, renderer, provider, font, media-tool, queue, and disk readiness snapshot without starting the editor or spending provider credits.",
 		},
 		async () => toolResult(await capabilitySnapshots.capture()),
+	);
+
+	server.registerTool(
+		"opencut_get_media_capability_catalog",
+		{
+			description:
+				"Discover the Rust-owned tracker, cleanup, stem, and VAD task contracts and their truthful model-selection readiness without provider execution or cost.",
+			inputSchema: getMediaCapabilityCatalogInputSchema,
+		},
+		async (input) => toolResult(getMediaCapabilityCatalog(input)),
+	);
+
+	server.registerTool(
+		"opencut_create_media_analysis",
+		{
+			description:
+				"Persist a Rust-validated external tracking or voice-activity result with canonical source-time data, corrections, provenance, semantic input hash, and deterministic cache identity. This never executes a provider or approves its model.",
+			inputSchema: createMediaAnalysisInputSchema,
+		},
+		async (input) =>
+			toolResult(
+				await ledgerBoundary.execute(
+					"opencut_create_media_analysis",
+					input,
+					() => mediaAnalysisStore.create(input.operationId, input.analysis),
+					() => mediaAnalysisStore.create(input.operationId, input.analysis),
+				),
+			),
+	);
+
+	server.registerTool(
+		"opencut_get_media_analysis",
+		{
+			description:
+				"Read one durable tracking or voice-activity analysis after Rust-owned integrity and source-binding verification.",
+			inputSchema: getMediaAnalysisInputSchema,
+		},
+		async ({ analysisId }) => {
+			const analysis = await mediaAnalysisStore.get(analysisId);
+			return toolResult(
+				analysis
+					? { status: "found", analysis }
+					: { status: "not-found", analysisId },
+			);
+		},
+	);
+
+	server.registerTool(
+		"opencut_plan_audio_post",
+		{
+			description:
+				"Deterministically plan a Rust-owned ordered clip/track/master audio graph and non-destructive ducking envelopes from a durable VAD object. Rejects stale source or analysis identity and never executes a provider.",
+			inputSchema: planAudioPostInputSchema,
+		},
+		async (input) => {
+			const analysis = await mediaAnalysisStore.get(input.analysisId);
+			if (!analysis) {
+				return toolResult({
+					status: "not-found",
+					analysisId: input.analysisId,
+				});
+			}
+			return toolResult(planAudioPost({ ...input, analysis }));
+		},
 	);
 
 	server.registerTool(
