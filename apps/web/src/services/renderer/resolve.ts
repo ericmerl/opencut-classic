@@ -57,7 +57,12 @@ type ResolveContext = {
 	time: number;
 };
 
-type TreatmentAdjustments = {
+type ResolvedTreatmentRender = Extract<
+	OpenCutWasm.ResolveMediaTreatmentRenderResponse,
+	{ status: "resolved" }
+>;
+
+type ResolvedTreatmentEffects = {
 	motion: {
 		scaleX: number;
 		scaleY: number;
@@ -67,9 +72,10 @@ type TreatmentAdjustments = {
 		opacityMultiplier: number;
 	};
 	sourceProgress?: number;
+	rendersByEffectId: Map<string, ResolvedTreatmentRender>;
 };
 
-function resolveTreatmentAdjustments({
+function resolveTreatmentEffects({
 	effects,
 	animations,
 	localTime,
@@ -83,8 +89,8 @@ function resolveTreatmentAdjustments({
 	duration: number;
 	canvasWidth: number;
 	canvasHeight: number;
-}): TreatmentAdjustments {
-	const adjustments: TreatmentAdjustments = {
+}): ResolvedTreatmentEffects {
+	const resolved: ResolvedTreatmentEffects = {
 		motion: {
 			scaleX: 1,
 			scaleY: 1,
@@ -93,6 +99,7 @@ function resolveTreatmentAdjustments({
 			rotationDegrees: 0,
 			opacityMultiplier: 1,
 		},
+		rendersByEffectId: new Map(),
 	};
 	for (const effect of effects ?? []) {
 		if (!effect.enabled) continue;
@@ -112,17 +119,18 @@ function resolveTreatmentAdjustments({
 		});
 		if (treatment.status === "rejected") throw new Error(treatment.reason);
 		if (treatment.status !== "resolved") continue;
-		adjustments.motion.scaleX *= treatment.motion.scaleX;
-		adjustments.motion.scaleY *= treatment.motion.scaleY;
-		adjustments.motion.positionX += treatment.motion.positionX;
-		adjustments.motion.positionY += treatment.motion.positionY;
-		adjustments.motion.rotationDegrees += treatment.motion.rotationDegrees;
-		adjustments.motion.opacityMultiplier *= treatment.motion.opacityMultiplier;
+		resolved.rendersByEffectId.set(effect.id, treatment);
+		resolved.motion.scaleX *= treatment.motion.scaleX;
+		resolved.motion.scaleY *= treatment.motion.scaleY;
+		resolved.motion.positionX += treatment.motion.positionX;
+		resolved.motion.positionY += treatment.motion.positionY;
+		resolved.motion.rotationDegrees += treatment.motion.rotationDegrees;
+		resolved.motion.opacityMultiplier *= treatment.motion.opacityMultiplier;
 		if (typeof treatment.sourceProgress === "number") {
-			adjustments.sourceProgress = treatment.sourceProgress;
+			resolved.sourceProgress = treatment.sourceProgress;
 		}
 	}
-	return adjustments;
+	return resolved;
 }
 
 export async function resolveRenderTree({
@@ -234,16 +242,16 @@ function resolveEffectPassGroups({
 	effects,
 	animations,
 	localTime,
-	duration,
 	width,
 	height,
+	treatmentEffects,
 }: {
 	effects: Effect[] | undefined;
 	animations: VisualNodeParams["animations"];
 	localTime: number;
-	duration: number;
 	width: number;
 	height: number;
+	treatmentEffects: ResolvedTreatmentEffects;
 }): EffectPass[][] {
 	return (effects ?? [])
 		.filter((effect) => effect.enabled)
@@ -254,18 +262,8 @@ function resolveEffectPassGroups({
 				animations,
 				localTime,
 			});
-			const treatment = OpenCutWasm.resolveMediaTreatmentRender({
-				treatmentId: effect.type,
-				params: resolvedParams,
-				localTime,
-				duration,
-				canvasWidth: width,
-				canvasHeight: height,
-			});
-			if (treatment.status === "rejected") {
-				throw new Error(treatment.reason);
-			}
-			if (treatment.status === "resolved") {
+			const treatment = treatmentEffects.rendersByEffectId.get(effect.id);
+			if (treatment) {
 				return treatment.passes;
 			}
 			const definition = effectsRegistry.get(effect.type);
@@ -347,11 +345,13 @@ function resolveVisualState({
 	context,
 	sourceWidth,
 	sourceHeight,
+	treatmentEffects: suppliedTreatmentEffects,
 }: {
 	params: VisualNodeParams;
 	context: ResolveContext;
 	sourceWidth: number;
 	sourceHeight: number;
+	treatmentEffects?: ResolvedTreatmentEffects;
 }): ResolvedVisualNodeState | null {
 	const clipTime = context.time - params.timeOffset;
 	if (getVisualSampleClipTime({ params, clipTime }) === null) {
@@ -373,24 +373,26 @@ function resolveVisualState({
 		animations: params.animations,
 		localTime,
 	});
-	const treatmentAdjustments = resolveTreatmentAdjustments({
-		effects: params.effects,
-		animations: params.animations,
-		localTime,
-		duration: params.duration,
-		canvasWidth: context.renderer.width,
-		canvasHeight: context.renderer.height,
-	});
+	const treatmentEffects =
+		suppliedTreatmentEffects ??
+		resolveTreatmentEffects({
+			effects: params.effects,
+			animations: params.animations,
+			localTime,
+			duration: params.duration,
+			canvasWidth: context.renderer.width,
+			canvasHeight: context.renderer.height,
+		});
 	transform = {
 		position: {
-			x: transform.position.x + treatmentAdjustments.motion.positionX,
-			y: transform.position.y + treatmentAdjustments.motion.positionY,
+			x: transform.position.x + treatmentEffects.motion.positionX,
+			y: transform.position.y + treatmentEffects.motion.positionY,
 		},
-		scaleX: transform.scaleX * treatmentAdjustments.motion.scaleX,
-		scaleY: transform.scaleY * treatmentAdjustments.motion.scaleY,
-		rotate: transform.rotate + treatmentAdjustments.motion.rotationDegrees,
+		scaleX: transform.scaleX * treatmentEffects.motion.scaleX,
+		scaleY: transform.scaleY * treatmentEffects.motion.scaleY,
+		rotate: transform.rotate + treatmentEffects.motion.rotationDegrees,
 	};
-	opacity *= treatmentAdjustments.motion.opacityMultiplier;
+	opacity *= treatmentEffects.motion.opacityMultiplier;
 	const reframe = resolveReframeAtTime({
 		baseReframe: params.reframe ?? DEFAULT_REFRAME,
 		animations: params.animations,
@@ -430,9 +432,9 @@ function resolveVisualState({
 			effects: params.effects,
 			animations: params.animations,
 			localTime,
-			duration: params.duration,
 			width: effectWidth,
 			height: effectHeight,
+			treatmentEffects,
 		}),
 	};
 }
@@ -453,26 +455,23 @@ async function resolveVideoNode({
 		return null;
 	}
 
+	const treatmentEffects = resolveTreatmentEffects({
+		effects: node.params.effects,
+		animations: node.params.animations,
+		localTime: sampleClipTime,
+		duration: node.params.duration,
+		canvasWidth: context.renderer.width,
+		canvasHeight: context.renderer.height,
+	});
 	const sourceTimeTicks =
 		node.params.trimStart +
-		(() => {
-			const treatment = resolveTreatmentAdjustments({
-				effects: node.params.effects,
-				animations: node.params.animations,
-				localTime: sampleClipTime,
-				duration: node.params.duration,
-				canvasWidth: context.renderer.width,
-				canvasHeight: context.renderer.height,
-			});
-			const sourceClipTime =
-				treatment.sourceProgress === undefined
+		getSourceTimeAtClipTime({
+			clipTime:
+				treatmentEffects.sourceProgress === undefined
 					? sampleClipTime
-					: treatment.sourceProgress * node.params.duration;
-			return getSourceTimeAtClipTime({
-				clipTime: sourceClipTime,
-				retime: node.params.retime,
-			});
-		})();
+					: treatmentEffects.sourceProgress * node.params.duration,
+			retime: node.params.retime,
+		});
 	const cache = context.renderer.videoCache ?? videoCache;
 	const frame = await cache.getFrameAt({
 		mediaId: node.params.mediaId,
@@ -497,6 +496,7 @@ async function resolveVideoNode({
 		context,
 		sourceWidth: frame.canvas.width,
 		sourceHeight: frame.canvas.height,
+		treatmentEffects,
 	});
 	if (!visualState) {
 		return null;
@@ -648,7 +648,7 @@ function resolveTextNode({
 		elementDuration: node.params.duration,
 	});
 	const background = buildTextBackgroundFromElement({ element: node.params });
-	const treatmentAdjustments = resolveTreatmentAdjustments({
+	const treatmentEffects = resolveTreatmentEffects({
 		effects: node.params.effects,
 		animations: node.params.animations,
 		localTime,
@@ -665,20 +665,19 @@ function resolveTextNode({
 	return {
 		transform: {
 			position: {
-				x: baseTransform.position.x + treatmentAdjustments.motion.positionX,
-				y: baseTransform.position.y + treatmentAdjustments.motion.positionY,
+				x: baseTransform.position.x + treatmentEffects.motion.positionX,
+				y: baseTransform.position.y + treatmentEffects.motion.positionY,
 			},
-			scaleX: baseTransform.scaleX * treatmentAdjustments.motion.scaleX,
-			scaleY: baseTransform.scaleY * treatmentAdjustments.motion.scaleY,
-			rotate:
-				baseTransform.rotate + treatmentAdjustments.motion.rotationDegrees,
+			scaleX: baseTransform.scaleX * treatmentEffects.motion.scaleX,
+			scaleY: baseTransform.scaleY * treatmentEffects.motion.scaleY,
+			rotate: baseTransform.rotate + treatmentEffects.motion.rotationDegrees,
 		},
 		opacity:
 			resolveOpacityAtTime({
 				baseOpacity: node.params.opacity,
 				animations: node.params.animations,
 				localTime,
-			}) * treatmentAdjustments.motion.opacityMultiplier,
+			}) * treatmentEffects.motion.opacityMultiplier,
 		textColor: resolveColorAtTime({
 			baseColor:
 				typeof node.params.params.color === "string"
@@ -698,9 +697,9 @@ function resolveTextNode({
 			effects: node.params.effects,
 			animations: node.params.animations,
 			localTime,
-			duration: node.params.duration,
 			width: context.renderer.width,
 			height: context.renderer.height,
+			treatmentEffects,
 		}),
 		measuredText: measureTextElement({
 			element: node.params,

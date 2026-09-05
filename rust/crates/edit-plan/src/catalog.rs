@@ -362,152 +362,230 @@ fn duration_parameter() -> CatalogParameter {
     }
 }
 
-fn treatment(
-    id: &str,
-    name: &str,
+#[derive(Clone, Copy)]
+enum TreatmentParameterProfile {
+    Mix,
+    Timed,
+}
+
+#[derive(Clone, Copy)]
+enum TreatmentRenderKind {
+    Shader(f64),
+    Pendulum,
+    PullIn,
+    PullOut,
+    SwipeLeft,
+    MontageCurve,
+}
+
+#[derive(Clone, Copy)]
+struct MediaTreatmentDescriptor {
+    id: &'static str,
+    name: &'static str,
     kind: TreatmentKind,
-    element_types: &[&str],
-    parameters: Vec<CatalogParameter>,
-) -> MediaTreatmentDefinition {
-    let track_types = element_types
-        .iter()
-        .map(|element_type| match *element_type {
-            "text" => "text",
-            "graphic" | "sticker" => "graphic",
-            _ => "video",
-        })
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    MediaTreatmentDefinition {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        kind,
-        behavior: treatment_behavior(id).to_owned(),
-        parameters,
-        applicability: TreatmentApplicability {
-            element_types: element_types.iter().map(|value| (*value).to_owned()).collect(),
-            track_types,
-        },
-        readiness: TreatmentReadiness {
-            status: TreatmentReadinessStatus::Ready,
-            reason: "Deterministic OpenCut-defined renderer behavior is available; external Simple Media pixel equivalence is not claimed.".to_owned(),
-            implementation: TreatmentImplementation::OpenCutDefinedV1,
-            external_equivalence: ExternalEquivalence::NotClaimed,
-            reference: None,
-            tolerance: None,
-        },
+    behavior: &'static str,
+    element_types: &'static [&'static str],
+    parameters: TreatmentParameterProfile,
+    render: TreatmentRenderKind,
+}
+
+impl MediaTreatmentDescriptor {
+    fn definition(self) -> MediaTreatmentDefinition {
+        let track_types = self
+            .element_types
+            .iter()
+            .map(|element_type| match *element_type {
+                "text" => "text",
+                "graphic" | "sticker" => "graphic",
+                _ => "video",
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let mut parameters = vec![mix_parameter()];
+        if matches!(self.parameters, TreatmentParameterProfile::Timed) {
+            parameters.push(duration_parameter());
+        }
+        MediaTreatmentDefinition {
+            id: self.id.to_owned(),
+            name: self.name.to_owned(),
+            kind: self.kind,
+            behavior: self.behavior.to_owned(),
+            parameters,
+            applicability: TreatmentApplicability {
+                element_types: self
+                    .element_types
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect(),
+                track_types,
+            },
+            readiness: TreatmentReadiness {
+                status: TreatmentReadinessStatus::Ready,
+                reason: "Deterministic OpenCut-defined renderer behavior is available; external Simple Media pixel equivalence is not claimed.".to_owned(),
+                implementation: TreatmentImplementation::OpenCutDefinedV1,
+                external_equivalence: ExternalEquivalence::NotClaimed,
+                reference: None,
+                tolerance: None,
+            },
+        }
     }
 }
 
-fn treatment_behavior(id: &str) -> &'static str {
-    match id {
-        "simple-media.film-frame" => {
-            "Adds a dark film gate, vignette, deterministic grain, and a time-varying vertical scratch."
-        }
-        "simple-media.play-pendulum" => {
-            "Rotates around center through one damp-free 12-degree sinusoidal pendulum cycle over durationTicks, then rests."
-        }
-        "simple-media.technicolor-flash" => {
-            "Adds a time-varying three-channel exposure flash with alternating red, green, and blue emphasis."
-        }
-        "simple-media.scanner-bar" => {
-            "Moves a narrow cyan-white luminance bar from top to bottom while slightly cooling the underlying image."
-        }
-        "simple-media.glitch" => {
-            "Applies deterministic horizontal scan-band displacement, RGB separation, and intermittent luminance blocks."
-        }
-        "simple-media.chromatic" => {
-            "Separates red and blue channels horizontally while preserving the green channel."
-        }
-        "simple-media.dark-night" => {
-            "Applies a low-exposure blue night grade with center-weighted illumination."
-        }
-        "simple-media.mirror" => {
-            "Reflects the left half of the frame across the vertical center line."
-        }
-        "simple-media.body-treatment" => {
-            "Applies a warm center spotlight, increased contrast, and edge falloff intended for a centered subject."
-        }
-        "simple-media.meme-treatment" => {
-            "Applies high contrast, boosted saturation, a bright center, and a dark caption-safe frame."
-        }
-        "simple-media.pull-in" => {
-            "Animates scale from 1.18 to 1.0 with smoothstep easing over durationTicks, then rests."
-        }
-        "simple-media.pull-out" => {
-            "Animates scale from 0.82 to 1.0 with smoothstep easing over durationTicks, then rests."
-        }
-        "simple-media.swipe-left" => {
-            "Animates from one canvas width right to the resting position with smoothstep easing and a matching fade-in over durationTicks."
-        }
-        "simple-media.montage-curve" => {
-            "Maps normalized source time through smoothstep; mix interpolates from linear time to the monotonic endpoint-preserving curve."
-        }
-        _ => "",
-    }
-}
+const VISUAL_ELEMENT_TYPES: &[&str] = &["video", "image", "text", "sticker", "graphic"];
+const VIDEO_IMAGE_ELEMENT_TYPES: &[&str] = &["video", "image"];
+const VIDEO_ELEMENT_TYPES: &[&str] = &["video"];
+
+const MEDIA_TREATMENTS: &[MediaTreatmentDescriptor] = &[
+    MediaTreatmentDescriptor {
+        id: "simple-media.film-frame",
+        name: "Film Frame",
+        kind: TreatmentKind::VisualEffect,
+        behavior: "Adds a dark film gate, vignette, deterministic grain, and a time-varying vertical scratch.",
+        element_types: VIDEO_IMAGE_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::Shader(0.0),
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.play-pendulum",
+        name: "Play Pendulum",
+        kind: TreatmentKind::MotionPreset,
+        behavior: "Rotates around center through one damp-free 12-degree sinusoidal pendulum cycle over durationTicks, then rests.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Timed,
+        render: TreatmentRenderKind::Pendulum,
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.technicolor-flash",
+        name: "Technicolor Flash",
+        kind: TreatmentKind::VisualEffect,
+        behavior: "Adds a time-varying three-channel exposure flash with alternating red, green, and blue emphasis.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::Shader(1.0),
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.scanner-bar",
+        name: "Scanner Bar",
+        kind: TreatmentKind::VisualEffect,
+        behavior: "Moves a narrow cyan-white luminance bar from top to bottom while slightly cooling the underlying image.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::Shader(2.0),
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.glitch",
+        name: "Glitch",
+        kind: TreatmentKind::VisualEffect,
+        behavior: "Applies deterministic horizontal scan-band displacement, RGB separation, and intermittent luminance blocks.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::Shader(3.0),
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.chromatic",
+        name: "Chromatic",
+        kind: TreatmentKind::VisualEffect,
+        behavior: "Separates red and blue channels horizontally while preserving the green channel.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::Shader(4.0),
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.dark-night",
+        name: "Dark Night",
+        kind: TreatmentKind::VisualEffect,
+        behavior: "Applies a low-exposure blue night grade with center-weighted illumination.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::Shader(5.0),
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.mirror",
+        name: "Mirror",
+        kind: TreatmentKind::VisualEffect,
+        behavior: "Reflects the left half of the frame across the vertical center line.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::Shader(6.0),
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.body-treatment",
+        name: "Body Treatment",
+        kind: TreatmentKind::VisualEffect,
+        behavior: "Applies a warm center spotlight, increased contrast, and edge falloff intended for a centered subject.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::Shader(7.0),
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.meme-treatment",
+        name: "Meme Treatment",
+        kind: TreatmentKind::VisualEffect,
+        behavior: "Applies high contrast, boosted saturation, a bright center, and a dark caption-safe frame.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::Shader(8.0),
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.pull-in",
+        name: "Pull In",
+        kind: TreatmentKind::MotionPreset,
+        behavior: "Animates scale from 1.18 to 1.0 with smoothstep easing over durationTicks, then rests.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Timed,
+        render: TreatmentRenderKind::PullIn,
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.pull-out",
+        name: "Pull Out",
+        kind: TreatmentKind::MotionPreset,
+        behavior: "Animates scale from 0.82 to 1.0 with smoothstep easing over durationTicks, then rests.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Timed,
+        render: TreatmentRenderKind::PullOut,
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.swipe-left",
+        name: "Swipe Left",
+        kind: TreatmentKind::MotionPreset,
+        behavior: "Animates from one canvas width right to the resting position with smoothstep easing and a matching fade-in over durationTicks.",
+        element_types: VISUAL_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Timed,
+        render: TreatmentRenderKind::SwipeLeft,
+    },
+    MediaTreatmentDescriptor {
+        id: "simple-media.montage-curve",
+        name: "Montage Curve",
+        kind: TreatmentKind::RetimeCurve,
+        behavior: "Maps normalized source time through smoothstep; mix interpolates from linear time to the monotonic endpoint-preserving curve.",
+        element_types: VIDEO_ELEMENT_TYPES,
+        parameters: TreatmentParameterProfile::Mix,
+        render: TreatmentRenderKind::MontageCurve,
+    },
+];
 
 fn mix_parameter() -> CatalogParameter {
     number_parameter("mix", "Mix", 1.0, 0.0, 1.0)
 }
 
 pub fn media_treatment_definitions() -> Vec<MediaTreatmentDefinition> {
-    const VISUAL: &[&str] = &["video", "image", "text", "sticker", "graphic"];
-    const VIDEO_IMAGE: &[&str] = &["video", "image"];
-    let visual = |id: &str, name: &str| {
-        treatment(
-            id,
-            name,
-            TreatmentKind::VisualEffect,
-            VISUAL,
-            vec![mix_parameter()],
-        )
-    };
-    let timed = |id: &str, name: &str| {
-        treatment(
-            id,
-            name,
-            TreatmentKind::MotionPreset,
-            VISUAL,
-            vec![mix_parameter(), duration_parameter()],
-        )
-    };
-    vec![
-        treatment(
-            "simple-media.film-frame",
-            "Film Frame",
-            TreatmentKind::VisualEffect,
-            VIDEO_IMAGE,
-            vec![mix_parameter()],
-        ),
-        timed("simple-media.play-pendulum", "Play Pendulum"),
-        visual("simple-media.technicolor-flash", "Technicolor Flash"),
-        visual("simple-media.scanner-bar", "Scanner Bar"),
-        visual("simple-media.glitch", "Glitch"),
-        visual("simple-media.chromatic", "Chromatic"),
-        visual("simple-media.dark-night", "Dark Night"),
-        visual("simple-media.mirror", "Mirror"),
-        visual("simple-media.body-treatment", "Body Treatment"),
-        visual("simple-media.meme-treatment", "Meme Treatment"),
-        timed("simple-media.pull-in", "Pull In"),
-        timed("simple-media.pull-out", "Pull Out"),
-        timed("simple-media.swipe-left", "Swipe Left"),
-        treatment(
-            "simple-media.montage-curve",
-            "Montage Curve",
-            TreatmentKind::RetimeCurve,
-            &["video"],
-            vec![mix_parameter()],
-        ),
-    ]
+    MEDIA_TREATMENTS
+        .iter()
+        .copied()
+        .map(MediaTreatmentDescriptor::definition)
+        .collect()
 }
 
 pub fn media_treatment_definition(id: &str) -> Option<MediaTreatmentDefinition> {
-    media_treatment_definitions()
-        .into_iter()
-        .find(|definition| definition.id == id)
+    media_treatment_descriptor(id).map(|descriptor| descriptor.definition())
+}
+
+fn media_treatment_descriptor(id: &str) -> Option<&'static MediaTreatmentDescriptor> {
+    MEDIA_TREATMENTS
+        .iter()
+        .find(|descriptor| descriptor.id == id)
 }
 
 pub fn resolve_treatment_parameters(
@@ -618,9 +696,10 @@ pub fn resolve_media_treatment(
 pub fn resolve_media_treatment_render(
     options: ResolveMediaTreatmentRenderOptions,
 ) -> ResolveMediaTreatmentRenderResponse {
-    let Some(definition) = media_treatment_definition(&options.treatment_id) else {
+    let Some(descriptor) = media_treatment_descriptor(&options.treatment_id) else {
         return ResolveMediaTreatmentRenderResponse::NotTreatment;
     };
+    let definition = descriptor.definition();
     if options.local_time < 0
         || options.duration <= 0
         || !options.canvas_width.is_finite()
@@ -658,49 +737,33 @@ pub fn resolve_media_treatment_render(
     let eased = timed_progress * timed_progress * (3.0 - 2.0 * timed_progress);
     let mut motion = TreatmentMotion::default();
     let mut source_progress = None;
-    let visual_mode = match options.treatment_id.as_str() {
-        "simple-media.film-frame" => Some(0.0),
-        "simple-media.technicolor-flash" => Some(1.0),
-        "simple-media.scanner-bar" => Some(2.0),
-        "simple-media.glitch" => Some(3.0),
-        "simple-media.chromatic" => Some(4.0),
-        "simple-media.dark-night" => Some(5.0),
-        "simple-media.mirror" => Some(6.0),
-        "simple-media.body-treatment" => Some(7.0),
-        "simple-media.meme-treatment" => Some(8.0),
-        "simple-media.play-pendulum" => {
+    let visual_mode = match descriptor.render {
+        TreatmentRenderKind::Shader(mode) => Some(mode),
+        TreatmentRenderKind::Pendulum => {
             motion.rotation_degrees = (timed_progress * std::f64::consts::TAU).sin() * 12.0 * mix;
             None
         }
-        "simple-media.pull-in" => {
+        TreatmentRenderKind::PullIn => {
             let scale = 1.0 + (1.0 - eased) * 0.18 * mix;
             motion.scale_x = scale;
             motion.scale_y = scale;
             None
         }
-        "simple-media.pull-out" => {
+        TreatmentRenderKind::PullOut => {
             let scale = 1.0 - (1.0 - eased) * 0.18 * mix;
             motion.scale_x = scale;
             motion.scale_y = scale;
             None
         }
-        "simple-media.swipe-left" => {
+        TreatmentRenderKind::SwipeLeft => {
             motion.position_x = options.canvas_width * (1.0 - eased) * mix;
             motion.opacity_multiplier = 1.0 - (1.0 - timed_progress) * mix;
             None
         }
-        "simple-media.montage-curve" => {
+        TreatmentRenderKind::MontageCurve => {
             let curved = progress * progress * (3.0 - 2.0 * progress);
             source_progress = Some(progress + (curved - progress) * mix);
             None
-        }
-        _ => {
-            return ResolveMediaTreatmentRenderResponse::Rejected {
-                reason: format!(
-                    "treatment {} has no renderer behavior",
-                    options.treatment_id
-                ),
-            };
         }
     };
     let passes = visual_mode
