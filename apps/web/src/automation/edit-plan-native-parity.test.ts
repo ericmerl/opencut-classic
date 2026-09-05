@@ -18,6 +18,7 @@ import type {
 	EvaluateEditPlanOptions,
 } from "opencut-wasm";
 import type { AutomationEditOperation } from "./types";
+import { nativeWasm } from "../../test/native-wasm";
 
 let activeEditor: EditorCore;
 mock.module("opencut-wasm", () => ({
@@ -25,6 +26,9 @@ mock.module("opencut-wasm", () => ({
 	evaluateEditPlan: () => {
 		throw new Error("native parity tests use the Rust JSON evaluator");
 	},
+	planRetimeSplit: (options: unknown) => nativeWasm().planRetimeSplit(options),
+	timeMapRetimeConfig: (options: unknown) =>
+		nativeWasm().timeMapRetimeConfig(options),
 	evaluateTimeMap: ({
 		timeMap,
 	}: {

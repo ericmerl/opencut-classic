@@ -9,10 +9,14 @@ import type {
 	VideoElement,
 } from "@/timeline";
 import { isLeafChannelData } from "@/animation/channel-data";
+import { nativeWasm } from "../../test/native-wasm";
 
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
 	lastFrameTime: () => 0,
+	planRetimeSplit: (options: unknown) => nativeWasm().planRetimeSplit(options),
+	timeMapRetimeConfig: (options: unknown) =>
+		nativeWasm().timeMapRetimeConfig(options),
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) =>
 		Math.round(seconds * 120000),
 	mediaTimeToSeconds: ({ time }: { time: number }) => time / 120000,
@@ -36,9 +40,8 @@ mock.module("@/core", () => ({
 }));
 
 const { buildCompoundCommand } = await import("./compound-control");
-const { DuplicateElementsCommand, SplitElementsCommand } = await import(
-	"@/commands/timeline"
-);
+const { DuplicateElementsCommand, SplitElementsCommand } =
+	await import("@/commands/timeline");
 const { mediaTime } = await import("@/wasm");
 
 function base({
@@ -261,9 +264,9 @@ describe("compound clip control", () => {
 				(element) => element.id,
 			),
 		).toContain("restored-text");
-		expect(activeTracks.audio[0]?.elements.map((element) => element.id)).toContain(
-			"restored-audio",
-		);
+		expect(
+			activeTracks.audio[0]?.elements.map((element) => element.id),
+		).toContain("restored-audio");
 	});
 
 	test("gives a split compound half an independent nested identity graph", () => {
@@ -356,7 +359,9 @@ describe("compound clip control", () => {
 				(nested) => [...nested.elements] as TimelineElement[],
 			),
 		].map((element) => element.id);
-		expect(rightIds).toEqual(nestedElements.map((element) => `right-${element.id}`));
+		expect(rightIds).toEqual(
+			nestedElements.map((element) => `right-${element.id}`),
+		);
 		expect(rightIds.every((id) => !leftIds.has(id))).toBe(true);
 		expect(halves[1].id).toBe("compound-right");
 		const rightNested = [
@@ -448,7 +453,9 @@ describe("compound clip control", () => {
 			],
 		}).execute();
 
-		const left = activeTracks.main.elements.find((element) => element.id === "video-1");
+		const left = activeTracks.main.elements.find(
+			(element) => element.id === "video-1",
+		);
 		const right = activeTracks.main.elements.find(
 			(element) => element.id === "video-right",
 		);
