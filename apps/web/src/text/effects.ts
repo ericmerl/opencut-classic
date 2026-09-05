@@ -58,8 +58,8 @@ export function resolveTextEffectStyle({
 }): ResolvedTextEffectGeometry {
 	const contract = getTextStyleContract();
 	const response = nativeWasm.resolveTextEffectGeometry({
-		outline: outline ?? contract.outline.default,
-		shadow: shadow ?? contract.shadow.default,
+		...(outline === undefined ? {} : { outline }),
+		...(shadow === undefined ? {} : { shadow }),
 		pixelsPerUnit: canvasHeight / contract.scaleReference,
 	});
 	if (response.status === "rejected") {

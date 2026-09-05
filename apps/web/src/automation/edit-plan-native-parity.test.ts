@@ -20,8 +20,13 @@ import type {
 import type { AutomationEditOperation } from "./types";
 
 let activeEditor: EditorCore;
+const projectState = await import(
+	"../../../../rust/wasm/pkg-node/opencut_wasm.js"
+);
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120_000,
+	mapAssTextEffects: projectState.mapAssTextEffects,
+	mapTextEffectsToAss: projectState.mapTextEffectsToAss,
 	textStyleContract: () => ({
 		scaleReference: 90,
 		outline: {
@@ -43,6 +48,7 @@ mock.module("opencut-wasm", () => ({
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) => seconds * 120_000,
 	mediaTimeToSeconds: ({ time }: { time: number }) => time / 120_000,
 	parseTimecode: () => 0,
+	resolveCaptionStyleParams: projectState.resolveCaptionStyleParams,
 	roundToFrame: ({ time }: { time: number }) => time,
 	snappedSeekTime: ({ time }: { time: number }) => time,
 }));
@@ -90,6 +96,16 @@ const parityCases: NativeParityCase[] = [
 			content: "Predicted title",
 			startTime: mediaTime({ ticks: 0 }),
 			duration: mediaTime({ ticks: 120_000 }),
+		},
+	},
+	{
+		name: "insert_text outline-shadow preset",
+		operation: {
+			kind: "insert_text",
+			content: "Predicted styled title",
+			startTime: mediaTime({ ticks: 0 }),
+			duration: mediaTime({ ticks: 120_000 }),
+			style: { preset: "tiktok-outline-shadow" },
 		},
 	},
 	{

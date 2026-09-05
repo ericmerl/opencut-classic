@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseAss } from "./ass";
-import { serializeAss, toAssColor } from "./ass-export";
+import { serializeAss } from "./ass-export";
 import type { SubtitleCue } from "./types";
 
 const PLAY_RES = { width: 1080, height: 1920 };
@@ -128,10 +128,19 @@ describe("ASS export", () => {
 	});
 
 	test("converts CSS colours to ASS BGR with inverted alpha", () => {
-		expect(toAssColor("#ff8000")).toBe("&H000080FF");
-		expect(toAssColor("#ff800080")).toBe("&H7F0080FF");
-		expect(toAssColor("rgba(0, 128, 255, 0.5)")).toBe("&H80FF8000");
-		expect(() => toAssColor("red")).toThrow("unsupported colour");
+		const content = serializeAss({
+			captions: [
+				{ ...PLAIN, style: { color: "rgba(0, 128, 255, 0.5)" } },
+			],
+			playRes: PLAY_RES,
+		}).content;
+		expect(content).toContain("&H80ff8000,&H80ff8000");
+		expect(() =>
+			serializeAss({
+				captions: [{ ...PLAIN, style: { color: "red" } }],
+				playRes: PLAY_RES,
+			}),
+		).toThrow("unsupported colour");
 	});
 
 	test("imports ASS outline and shadow through the Rust style mapper", () => {

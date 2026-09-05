@@ -3858,6 +3858,7 @@ fn ass_text_effect_fields_map_through_the_rust_contract() {
 #[test]
 fn ass_text_effect_export_mapping_and_losses_are_rust_owned() {
     let response = map_text_effects_to_ass(MapTextEffectsToAssOptions {
+        primary_color: Some("rgba(255, 128, 0, 0.5)".into()),
         outline: Some(TextOutline {
             color: "#112233".into(),
             width: 2.0,
@@ -3884,6 +3885,7 @@ fn ass_text_effect_export_mapping_and_losses_are_rust_owned() {
     let MapTextEffectsToAssResponse::Mapped { mapping } = response else {
         panic!("valid effects should map")
     };
+    assert_eq!(mapping.primary_colour, "&H800080ff");
     assert_eq!(mapping.outline_colour, "&H00332211");
     assert_eq!(mapping.back_colour, "&H00efcdab");
     assert_eq!(mapping.border_style, 3);
@@ -3899,6 +3901,7 @@ fn ass_text_effect_export_mapping_and_losses_are_rust_owned() {
     );
 
     let rgba_background = map_text_effects_to_ass(MapTextEffectsToAssOptions {
+        primary_color: None,
         outline: None,
         shadow: None,
         background: Some(SubtitleBackground {
@@ -3916,6 +3919,7 @@ fn ass_text_effect_export_mapping_and_losses_are_rust_owned() {
     let MapTextEffectsToAssResponse::Mapped { mapping } = rgba_background else {
         panic!("rgba background should map")
     };
+    assert_eq!(mapping.primary_colour, "&H00ffffff");
     assert_eq!(mapping.back_colour, "&H80ff8000");
 }
 

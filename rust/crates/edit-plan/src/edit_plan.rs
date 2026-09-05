@@ -356,9 +356,7 @@ pub fn resolve_caption_style(options: ResolveCaptionStyleOptions) -> ResolveCapt
 pub fn resolve_caption_style_params(
     options: ResolveCaptionStyleOptions,
 ) -> ResolveCaptionStyleParamsResponse {
-    match model::resolve_caption_style(&options.style)
-        .and_then(|style| model::caption_style_params(&style))
-    {
+    match model::caption_style_params(&options.style) {
         Ok(params) => ResolveCaptionStyleParamsResponse::Resolved { params },
         Err(reason) => ResolveCaptionStyleParamsResponse::Rejected { reason },
     }

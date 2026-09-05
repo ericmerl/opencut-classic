@@ -165,8 +165,8 @@ function mapStyleFields({
 		(style.fontSize !== undefined
 			? style.fontSize / FONT_SIZE_SCALE_REFERENCE
 			: undefined);
-	const primary = toAssColor(style.color ?? "#ffffff");
 	const effectResponse = nativeWasm.mapTextEffectsToAss({
+		primaryColor: style.color,
 		outline: style.outline,
 		shadow: style.shadow,
 		background: style.background,
@@ -178,6 +178,7 @@ function mapStyleFields({
 		);
 	}
 	const effects = effectResponse.mapping;
+	const primary = effects.primaryColour;
 	const verticalAlign = style.placement?.verticalAlign ?? "bottom";
 	const textAlign = style.textAlign ?? "center";
 	const alignment = ALIGNMENT_CODES[verticalAlign]?.[textAlign] ?? 2;
@@ -256,54 +257,6 @@ function reportUnmappable(
 			);
 		}
 	}
-}
-
-/** CSS `#rrggbb`, `#rrggbbaa`, or `rgba()` to ASS `&HAABBGGRR`. */
-export function toAssColor(input: string): string {
-	const hex = input.trim().match(/^#([0-9a-f]{6})([0-9a-f]{2})?$/i);
-	if (hex) {
-		const rgb = hex[1]!.toLowerCase();
-		const alpha = hex[2] ? Number.parseInt(hex[2], 16) / 255 : 1;
-		return assColor({
-			red: Number.parseInt(rgb.slice(0, 2), 16),
-			green: Number.parseInt(rgb.slice(2, 4), 16),
-			blue: Number.parseInt(rgb.slice(4, 6), 16),
-			alpha,
-		});
-	}
-	const rgba = input
-		.trim()
-		.match(
-			/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i,
-		);
-	if (rgba) {
-		return assColor({
-			red: Number(rgba[1]),
-			green: Number(rgba[2]),
-			blue: Number(rgba[3]),
-			alpha: rgba[4] === undefined ? 1 : Number(rgba[4]),
-		});
-	}
-	throw new Error(`unsupported colour for ASS export: ${input}`);
-}
-
-function assColor({
-	red,
-	green,
-	blue,
-	alpha,
-}: {
-	red: number;
-	green: number;
-	blue: number;
-	alpha: number;
-}): string {
-	const byte = (value: number) =>
-		Math.max(0, Math.min(255, Math.round(value)))
-			.toString(16)
-			.padStart(2, "0")
-			.toUpperCase();
-	return `&H${byte((1 - alpha) * 255)}${byte(blue)}${byte(green)}${byte(red)}`;
 }
 
 function formatAssTimestamp(seconds: number): string {

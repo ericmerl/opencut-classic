@@ -815,6 +815,8 @@ pub enum MapAssTextEffectsResponse {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MapTextEffectsToAssOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outline: Option<TextOutline>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadow: Option<TextShadow>,
@@ -835,6 +837,7 @@ pub struct AssTextEffectLoss {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AssTextEffectMapping {
+    pub primary_colour: String,
     pub outline_colour: String,
     pub back_colour: String,
     pub border_style: u8,
@@ -1140,6 +1143,7 @@ pub fn compute_text_effects_to_ass(
         .as_ref()
         .filter(|background| background.enabled && css_color_is_visible(&background.color));
     let scale = options.play_res_y / TEXT_STYLE_SCALE_REFERENCE;
+    let primary_colour = css_color_to_ass(options.primary_color.as_deref().unwrap_or("#ffffff"))?;
     let mut losses = Vec::new();
     if outline
         .as_ref()
@@ -1187,6 +1191,7 @@ pub fn compute_text_effects_to_ass(
         "&H00000000".into()
     };
     Ok(AssTextEffectMapping {
+        primary_colour,
         outline_colour,
         back_colour,
         border_style: if visible_background.is_some() { 3 } else { 1 },
