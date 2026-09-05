@@ -16,7 +16,7 @@ import {
 	subMediaTime,
 } from "@/wasm";
 import { cloneCompoundTracks } from "./duplicate-elements";
-import type { ObjectIdAllocation } from "opencut-wasm";
+import { resolveSplitTransition, type ObjectIdAllocation } from "opencut-wasm";
 import { ResolvedObjectIds } from "@/automation/resolved-object-ids";
 
 export class SplitElementsCommand extends Command {
@@ -160,12 +160,36 @@ export class SplitElementsCommand extends Command {
 					a: element.trimStart,
 					b: leftSourceSpan,
 				});
+				const rightElementId = this.requireRightElementId({
+					trackId: track.id,
+					elementId: element.id,
+				});
+				const transitionResolution = resolveSplitTransition({
+					retainSide: this.retainSide,
+					sourceElementId: element.id,
+					rightElementId,
+				});
+				const transitionInFor = (resultElementId: string) => ({
+					transitionIn:
+						transitionResolution.incomingTargetElementId === resultElementId &&
+						"transitionIn" in element
+							? element.transitionIn
+							: undefined,
+				});
+				if (transitionResolution.outgoingSourceElementId === null) {
+					removedTransitionSourceIds.add(element.id);
+				} else {
+					replacedSourceIds.set(
+						element.id,
+						transitionResolution.outgoingSourceElementId,
+					);
+				}
 
 				if (this.retainSide === "left") {
-					removedTransitionSourceIds.add(element.id);
 					splitResult = [
 						{
 							...element,
+							...transitionInFor(element.id),
 							duration: leftVisibleDuration,
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
@@ -174,15 +198,10 @@ export class SplitElementsCommand extends Command {
 						},
 					];
 				} else if (this.retainSide === "right") {
-					const newId = this.requireRightElementId({
-						trackId: track.id,
-						elementId: element.id,
-					});
 					this.rightSideElements.push({
 						trackId: track.id,
-						elementId: newId,
+						elementId: rightElementId,
 					});
-					replacedSourceIds.set(element.id, newId);
 					const rightOwned = cloneSplitRightOwnedIdentities({
 						element,
 						resolvedIds: this.resolvedIds,
@@ -190,26 +209,21 @@ export class SplitElementsCommand extends Command {
 					splitResult = [
 						{
 							...rightOwned,
-							id: newId,
+							...transitionInFor(rightElementId),
+							id: rightElementId,
 							startTime: this.splitTime,
 							duration: rightVisibleDuration,
 							trimStart: rightTrimStart,
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
-							transitionIn: undefined,
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
 						},
 					];
 				} else {
-					const secondElementId = this.requireRightElementId({
-						trackId: track.id,
-						elementId: element.id,
-					});
 					this.rightSideElements.push({
 						trackId: track.id,
-						elementId: secondElementId,
+						elementId: rightElementId,
 					});
-					replacedSourceIds.set(element.id, secondElementId);
 					const rightOwned = cloneSplitRightOwnedIdentities({
 						element,
 						resolvedIds: this.resolvedIds,
@@ -217,6 +231,7 @@ export class SplitElementsCommand extends Command {
 					splitResult = [
 						{
 							...element,
+							...transitionInFor(element.id),
 							duration: leftVisibleDuration,
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
@@ -225,13 +240,13 @@ export class SplitElementsCommand extends Command {
 						},
 						{
 							...rightOwned,
-							id: secondElementId,
+							...transitionInFor(rightElementId),
+							id: rightElementId,
 							startTime: this.splitTime,
 							duration: rightVisibleDuration,
 							trimStart: rightTrimStart,
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
-							transitionIn: undefined,
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
 						},
 					];

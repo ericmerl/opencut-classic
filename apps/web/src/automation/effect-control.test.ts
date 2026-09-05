@@ -43,6 +43,7 @@ describe("effect control", () => {
 		const element = buildElement();
 		const created = buildEffectControlPatch({
 			element,
+			trackType: "video",
 			operation: {
 				kind: "upsert_effect",
 				trackId: "main",
@@ -63,6 +64,7 @@ describe("effect control", () => {
 		expect(() =>
 			buildEffectControlPatch({
 				element,
+				trackType: "video",
 				operation: {
 					kind: "upsert_effect",
 					trackId: "main",
@@ -73,12 +75,26 @@ describe("effect control", () => {
 				},
 			}),
 		).toThrow("outside supported bounds");
+		expect(() =>
+			buildEffectControlPatch({
+				element,
+				trackType: "text",
+				operation: {
+					kind: "upsert_effect",
+					trackId: "main",
+					elementId: element.id,
+					effectId: "film-frame-3",
+					effectType: "simple-media.film-frame",
+				},
+			}),
+		).toThrow("not applicable to text tracks");
 	});
 
 	test("creates and updates a stable-ID effect with validated params", () => {
 		const element = buildElement();
 		const created = buildEffectControlPatch({
 			element,
+			trackType: "video",
 			operation: {
 				kind: "upsert_effect",
 				trackId: "main",
@@ -97,6 +113,7 @@ describe("effect control", () => {
 		});
 		const updated = buildEffectControlPatch({
 			element: { ...element, effects: created.effects },
+			trackType: "video",
 			operation: {
 				kind: "upsert_effect",
 				trackId: "main",
@@ -114,6 +131,7 @@ describe("effect control", () => {
 		expect(() =>
 			buildEffectControlPatch({
 				element,
+				trackType: "video",
 				operation: {
 					kind: "upsert_effect",
 					trackId: "main",
@@ -153,6 +171,7 @@ describe("effect control", () => {
 		};
 		const patch = buildEffectControlPatch({
 			element,
+			trackType: "video",
 			operation: {
 				kind: "remove_effect",
 				trackId: "main",

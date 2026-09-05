@@ -280,6 +280,25 @@ pub enum ErrorCode {
     ArithmeticOverflow,
 }
 
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolveSplitTransitionOptions {
+    pub retain_side: RetainSide,
+    pub source_element_id: String,
+    pub right_element_id: String,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, missing_as_null))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SplitTransitionResolution {
+    pub incoming_target_element_id: Option<String>,
+    pub outgoing_source_element_id: Option<String>,
+}
+
 /// The reusable caption style presets, exported so every shell resolves the
 /// same style for a preset id.
 #[export]
@@ -293,6 +312,28 @@ pub fn resolve_caption_style(options: ResolveCaptionStyleOptions) -> ResolveCapt
     match model::resolve_caption_style(&options.style) {
         Ok(style) => ResolveCaptionStyleResponse::Resolved { style },
         Err(reason) => ResolveCaptionStyleResponse::Rejected { reason },
+    }
+}
+
+/// Resolves how a split changes transition endpoints so every shell applies
+/// the same transition-integrity policy.
+#[export]
+pub fn resolve_split_transition(
+    options: ResolveSplitTransitionOptions,
+) -> SplitTransitionResolution {
+    match options.retain_side {
+        RetainSide::Left => SplitTransitionResolution {
+            incoming_target_element_id: Some(options.source_element_id),
+            outgoing_source_element_id: None,
+        },
+        RetainSide::Right => SplitTransitionResolution {
+            incoming_target_element_id: None,
+            outgoing_source_element_id: Some(options.right_element_id),
+        },
+        RetainSide::Both => SplitTransitionResolution {
+            incoming_target_element_id: Some(options.source_element_id),
+            outgoing_source_element_id: Some(options.right_element_id),
+        },
     }
 }
 
@@ -1936,8 +1977,14 @@ impl State {
                 auto_track_id,
                 resolved_allocations,
             } => {
-                let resolved_params =
-                    effect_params(effect_type, "effect", None, params.as_ref(), index)?;
+                let resolved_params = effect_params(
+                    effect_type,
+                    "effect",
+                    "effect",
+                    None,
+                    params.as_ref(),
+                    index,
+                )?;
                 let resolved_name = name
                     .clone()
                     .unwrap_or_else(|| capitalize_first(effect_type));
@@ -2798,6 +2845,7 @@ impl State {
                 if params.is_empty() {
                     return invalid(index, "params cannot be empty");
                 }
+                let track_type = self.track_type(track_id, index)?.to_owned();
                 let element = self.element_mut(track_id, element_id, index)?;
                 let definition_id = element.definition_id.as_deref();
                 let effect_type = element.effect_type.as_deref();
@@ -2805,6 +2853,7 @@ impl State {
                     effect_params(
                         effect_type,
                         &element.element_type,
+                        &track_type,
                         Some(&element.params),
                         Some(params),
                         index,
@@ -3036,6 +3085,7 @@ impl State {
                 params,
                 enabled,
             } => {
+                let track_type = self.track_type(track_id, index)?.to_owned();
                 let element = self.element_mut(track_id, element_id, index)?;
                 if !matches!(
                     element.element_type.as_str(),
@@ -3054,6 +3104,7 @@ impl State {
                     effect.params = effect_params(
                         effect_type,
                         &element.element_type,
+                        &track_type,
                         Some(&effect.params),
                         params.as_ref(),
                         index,
@@ -3069,6 +3120,7 @@ impl State {
                         params: effect_params(
                             effect_type,
                             &element.element_type,
+                            &track_type,
                             None,
                             params.as_ref(),
                             index,
@@ -3421,6 +3473,22 @@ impl State {
             .tracks
             .iter_mut()
             .find(|t| t.track_id == id)
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::UnknownReference,
+                    "unknown track",
+                    Some(index),
+                    Some("trackId"),
+                )
+            })
+    }
+
+    fn track_type(&self, id: &str, index: usize) -> Result<&str, EditPlanError> {
+        self.snapshot
+            .tracks
+            .iter()
+            .find(|track| track.track_id == id)
+            .map(|track| track.track_type.as_str())
             .ok_or_else(|| {
                 error(
                     ErrorCode::UnknownReference,
@@ -5358,8 +5426,9 @@ impl State {
         if path.trim().is_empty() {
             return invalid(index, "propertyPath is empty");
         }
+        let track_type = self.track_type(track, index)?.to_owned();
         let element = self.element_mut(track, id, index)?;
-        let value = coerce_animation_value(element, path, value, index)?;
+        let value = coerce_animation_value(element, &track_type, path, value, index)?;
         if time > element.duration {
             return bounds(index, "time");
         }
@@ -5696,22 +5765,30 @@ impl State {
         }
         self.snapshot.elements.splice(pos..pos, split_elements);
 
-        if retain == "left" {
+        let transition_resolution = resolve_split_transition(ResolveSplitTransitionOptions {
+            retain_side: match retain {
+                "left" => RetainSide::Left,
+                "right" => RetainSide::Right,
+                _ => RetainSide::Both,
+            },
+            source_element_id: id.to_owned(),
+            right_element_id: right_id.unwrap_or_default().to_owned(),
+        });
+        if transition_resolution.incoming_target_element_id.is_none() {
+            self.snapshot
+                .transitions
+                .retain(|transition| transition.to_element_id != id);
+        }
+        if let Some(outgoing_source_element_id) = transition_resolution.outgoing_source_element_id {
+            for transition in &mut self.snapshot.transitions {
+                if transition.from_element_id == id {
+                    transition.from_element_id = outgoing_source_element_id.clone();
+                }
+            }
+        } else {
             self.snapshot
                 .transitions
                 .retain(|transition| transition.from_element_id != id);
-        } else {
-            let right_id = right_id.expect("right-side ID was validated before insertion");
-            if retain == "right" {
-                self.snapshot
-                    .transitions
-                    .retain(|transition| transition.to_element_id != id);
-            }
-            for transition in &mut self.snapshot.transitions {
-                if transition.from_element_id == id {
-                    transition.from_element_id = right_id.into();
-                }
-            }
         }
         Ok(())
     }
@@ -5763,9 +5840,22 @@ fn validate_catalog_state(
     operation_index: Option<usize>,
 ) -> Result<(), EditPlanError> {
     for element in elements {
+        let track_type = tracks
+            .iter()
+            .find(|track| track.track_id == element.track_id)
+            .map(|track| track.track_type.as_str())
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::UnknownReference,
+                    "element references an unknown track",
+                    operation_index,
+                    Some("element.trackId"),
+                )
+            })?;
         for effect in &element.effects {
             if let Err(mut effect_error) = validate_effect_attachment(
                 &element.element_type,
+                track_type,
                 &effect.effect_type,
                 &effect.params,
                 operation_index.unwrap_or(0),
@@ -6824,12 +6914,20 @@ fn sticker_default_name(sticker_id: &str) -> String {
 fn effect_params(
     effect_type: &str,
     element_type: &str,
+    track_type: &str,
     existing: Option<&Params>,
     requested: Option<&Params>,
     index: usize,
 ) -> Result<Params, EditPlanError> {
     if media_treatment_definition(effect_type).is_some() {
-        return treatment_params(effect_type, element_type, existing, requested, index);
+        return treatment_params(
+            effect_type,
+            element_type,
+            track_type,
+            existing,
+            requested,
+            index,
+        );
     }
     let mut params = if let Some(existing) = existing {
         existing.clone()
@@ -6894,6 +6992,7 @@ fn effect_params(
 
 fn validate_effect_attachment(
     element_type: &str,
+    track_type: &str,
     effect_type: &str,
     params: &Params,
     index: usize,
@@ -6909,17 +7008,26 @@ fn validate_effect_attachment(
         }
         return Ok(());
     }
-    effect_params(effect_type, element_type, None, Some(params), index).map(|_| ())
+    effect_params(
+        effect_type,
+        element_type,
+        track_type,
+        None,
+        Some(params),
+        index,
+    )
+    .map(|_| ())
 }
 
 fn treatment_params(
     treatment_id: &str,
     element_type: &str,
+    track_type: &str,
     existing: Option<&Params>,
     requested: Option<&Params>,
     index: usize,
 ) -> Result<Params, EditPlanError> {
-    resolve_treatment_parameters(treatment_id, element_type, existing, requested)
+    resolve_treatment_parameters(treatment_id, element_type, track_type, existing, requested)
         .map_err(|failure| treatment_error(failure, index))
 }
 
@@ -7206,6 +7314,7 @@ fn sync_element_control_params(element: &mut Element) {
 
 fn coerce_animation_value(
     element: &Element,
+    track_type: &str,
     property_path: &str,
     value: &Scalar,
     index: usize,
@@ -7262,6 +7371,7 @@ fn coerce_animation_value(
         return effect_params(
             &effect.effect_type,
             &element.element_type,
+            track_type,
             Some(&effect.params),
             Some(&requested),
             index,

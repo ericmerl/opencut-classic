@@ -120,6 +120,7 @@ pub struct TreatmentValidationError {
 pub struct ResolveMediaTreatmentOptions {
     pub treatment_id: String,
     pub element_type: String,
+    pub track_type: String,
     pub existing_params: Option<Params>,
     pub requested_params: Option<Params>,
 }
@@ -375,6 +376,7 @@ pub fn media_treatment_definition(id: &str) -> Option<MediaTreatmentDefinition> 
 pub fn resolve_treatment_parameters(
     treatment_id: &str,
     element_type: &str,
+    track_type: &str,
     existing: Option<&Params>,
     requested: Option<&Params>,
 ) -> Result<Params, TreatmentValidationError> {
@@ -396,6 +398,18 @@ pub fn resolve_treatment_parameters(
                 "treatment {treatment_id} is not applicable to {element_type} elements"
             ),
             path: "elementId".to_owned(),
+        });
+    }
+    if !definition
+        .applicability
+        .track_types
+        .iter()
+        .any(|candidate| candidate == track_type)
+    {
+        return Err(TreatmentValidationError {
+            kind: TreatmentValidationKind::Inapplicable,
+            reason: format!("treatment {treatment_id} is not applicable to {track_type} tracks"),
+            path: "trackId".to_owned(),
         });
     }
     let mut params = definition
@@ -446,6 +460,7 @@ pub fn resolve_media_treatment(
     match resolve_treatment_parameters(
         &options.treatment_id,
         &options.element_type,
+        &options.track_type,
         options.existing_params.as_ref(),
         options.requested_params.as_ref(),
     ) {

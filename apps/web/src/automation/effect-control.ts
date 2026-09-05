@@ -61,9 +61,11 @@ function coerceEffectParams({
 
 function buildUpsertPatch({
 	element,
+	trackType,
 	operation,
 }: {
 	element: TimelineElement;
+	trackType: string;
 	operation: Extract<EffectOperation, { kind: "upsert_effect" }>;
 }): Partial<VisualElement> {
 	if (!isVisualElement(element)) {
@@ -80,6 +82,7 @@ function buildUpsertPatch({
 	const treatment = resolveMediaTreatment({
 		treatmentId: operation.effectType,
 		elementType: element.type,
+		trackType,
 		existingParams: existing?.params,
 		requestedParams: operation.params,
 	});
@@ -175,12 +178,14 @@ function buildReorderPatch({
 
 export function buildEffectControlCommand({
 	element,
+	trackType,
 	operation,
 }: {
 	element: TimelineElement;
+	trackType: string;
 	operation: EffectOperation;
 }): Command {
-	const patch = buildEffectControlPatch({ element, operation });
+	const patch = buildEffectControlPatch({ element, trackType, operation });
 	return new UpdateElementsCommand({
 		updates: [
 			{
@@ -194,13 +199,15 @@ export function buildEffectControlCommand({
 
 export function buildEffectControlPatch({
 	element,
+	trackType,
 	operation,
 }: {
 	element: TimelineElement;
+	trackType: string;
 	operation: EffectOperation;
 }): Partial<VisualElement> {
 	return operation.kind === "upsert_effect"
-		? buildUpsertPatch({ element, operation })
+		? buildUpsertPatch({ element, trackType, operation })
 		: operation.kind === "remove_effect"
 			? buildRemovePatch({ element, effectId: operation.effectId })
 			: buildReorderPatch({ element, effectIds: operation.effectIds });
