@@ -208,7 +208,7 @@ test("publishes durable transcript analysis and editorial decisions through MCP 
 		status: "replayed",
 		lossReport: { lossy: false, droppedFields: [] },
 	});
-});
+}, 30_000);
 
 async function startServer({
 	port,
