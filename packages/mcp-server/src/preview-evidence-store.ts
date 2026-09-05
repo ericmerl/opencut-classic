@@ -300,10 +300,14 @@ function validatePreviewReceiptBindings(
 					fontFamiliesEqual(face.family, descriptor.family) &&
 					normalizeFontStyle(face.style) ===
 						normalizeFontStyle(descriptor.style) &&
-					normalizeFontWeight(face.weight) ===
-						normalizeFontWeight(descriptor.weight) &&
-					normalizeFontStretch(face.stretch) ===
+					axisCovers(
+						normalizeFontWeight(face.weight),
+						normalizeFontWeight(descriptor.weight),
+					) &&
+					axisCovers(
+						normalizeFontStretch(face.stretch),
 						normalizeFontStretch(descriptor.stretch),
+					),
 			);
 			const expectedFaceIdentities = matchedFaces
 				.map(({ identitySha256: faceIdentity }) => faceIdentity)
@@ -384,6 +388,20 @@ function normalizeFontStretch(value: string): string {
 		"ultra-expanded": "200%",
 	};
 	return named[normalized] ?? normalized;
+}
+
+function axisCovers(faceValue: string, requestedValue: string): boolean {
+	const requested = Number.parseFloat(requestedValue);
+	const parts = faceValue.split(/\s+/).filter(Boolean);
+	if (parts.length !== 2) return faceValue === requestedValue;
+	const [low, high] = parts.map((part) => Number.parseFloat(part));
+	return (
+		Number.isFinite(low) &&
+		Number.isFinite(high) &&
+		Number.isFinite(requested) &&
+		requested >= Math.min(low, high) &&
+		requested <= Math.max(low, high)
+	);
 }
 
 export type PreviewFrameReceipt = z.infer<typeof previewReceiptSchema>;

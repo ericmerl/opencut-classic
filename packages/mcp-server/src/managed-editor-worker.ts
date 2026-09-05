@@ -44,6 +44,7 @@ export class ManagedEditorWorker {
 			profileDirectory: string;
 			connectionTimeoutMs?: number;
 			spawnProcess?: typeof spawn;
+			terminateProcessTree?: typeof spawn;
 			browserArguments?: string[];
 			rendererClass?: "software" | "hardware";
 			testDropResponseOperationId?: string;
@@ -106,7 +107,7 @@ export class ManagedEditorWorker {
 		this.child = null;
 		this.projectId = null;
 		if (child) {
-			await stopChild(child);
+			await stopChild(child, this.options.terminateProcessTree);
 			await this.bridge.waitForDisconnection?.(5_000);
 		}
 		return this.getStatus();
@@ -179,7 +180,7 @@ export class ManagedEditorWorker {
 				error instanceof Error ? error.message : "managed editor launch failed";
 			const child = this.child;
 			this.child = null;
-			if (child) await stopChild(child);
+			if (child) await stopChild(child, this.options.terminateProcessTree);
 			throw error;
 		}
 	}
@@ -284,12 +285,27 @@ function readTimeout(value: string | undefined): number | undefined {
 	return parsed;
 }
 
-async function stopChild(child: ChildProcess): Promise<void> {
+async function stopChild(
+	child: ChildProcess,
+	terminateProcessTree: typeof spawn = spawn,
+): Promise<void> {
 	if (child.exitCode !== null) return;
 	const exited = new Promise<void>((resolve) => {
 		child.once("exit", () => resolve());
 	});
-	child.kill();
+	if (process.platform === "win32" && child.pid) {
+		const killer = terminateProcessTree(
+			"taskkill.exe",
+			["/PID", String(child.pid), "/T", "/F"],
+			{ stdio: "ignore", windowsHide: true },
+		);
+		await Promise.race([
+			new Promise<void>((resolve) => killer.once("exit", () => resolve())),
+			delay(5_000),
+		]);
+	} else {
+		child.kill();
+	}
 	await Promise.race([exited, delay(5_000)]);
 	if (child.exitCode === null) {
 		child.kill("SIGKILL");

@@ -61,6 +61,62 @@ afterEach(async () => {
 });
 
 integrationTest(
+	"re-establishes the transient editor when a completed start operation is replayed",
+	async () => {
+		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
+		if (!baseUrl)
+			throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		const browserPath = process.env.OPENCUT_HEADLESS_BROWSER_PATH;
+		if (!browserPath)
+			throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
+		const mcp = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort: await availablePort(),
+			profileDirectory: join(directory, "worker-replay-profile"),
+			receiptDirectory: join(directory, "worker-replay-receipts"),
+		});
+		const request = { operationId: "replayed-worker-start" };
+		await mcp.callTool("opencut_start_editor_worker", request);
+		await mcp.callTool("opencut_stop_editor_worker", {
+			operationId: "stop-before-worker-start-replay",
+		});
+		expect(await mcp.callTool("opencut_connection_status", {})).toMatchObject({
+			connected: false,
+		});
+
+		const replayed = await mcp.callTool("opencut_start_editor_worker", request);
+		expect(replayed).toMatchObject({
+			durableOperationStatus: "replayed",
+			connected: true,
+		});
+		expect(await mcp.callTool("opencut_connection_status", {})).toMatchObject({
+			connected: true,
+		});
+		const stopRequest = { operationId: "replayed-worker-stop" };
+		await mcp.callTool("opencut_stop_editor_worker", stopRequest);
+		await mcp.callTool("opencut_start_editor_worker", {
+			operationId: "start-before-worker-stop-replay",
+		});
+		expect(await mcp.callTool("opencut_connection_status", {})).toMatchObject({
+			connected: true,
+		});
+		const replayedStop = await mcp.callTool(
+			"opencut_stop_editor_worker",
+			stopRequest,
+		);
+		expect(replayedStop).toMatchObject({
+			durableOperationStatus: "replayed",
+			running: false,
+		});
+		expect(await mcp.callTool("opencut_connection_status", {})).toMatchObject({
+			connected: false,
+		});
+	},
+	120_000,
+);
+
+integrationTest(
 	"flushes every WebM Opus audio frame through the public export path",
 	async () => {
 		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
