@@ -14,6 +14,8 @@ const webPreload = join(
 	"opencut-wasm.setup.ts",
 );
 const mcpRoot = join(repositoryRoot, "packages", "mcp-server", "src");
+/** Windows hosted runners can take more than Bun's five-second default. */
+const mcpTestTimeoutMs = 30_000;
 /**
  * wasm-pack's profiling profile compiles with the same release codegen the
  * published package uses, so tested behaviour matches what ships, but
@@ -114,7 +116,10 @@ function runMcpTests(): Promise<void> {
 		.sort(mcpTestOrder);
 	const workers = Math.max(
 		1,
-		Math.min(workerLimit(process.env.OPENCUT_TEST_MCP_WORKERS), testPaths.length),
+		Math.min(
+			workerLimit(process.env.OPENCUT_TEST_MCP_WORKERS),
+			testPaths.length,
+		),
 	);
 	console.log(
 		`\n==> MCP server tests (${testPaths.length} isolated processes, ${workers} at a time)`,
@@ -123,14 +128,13 @@ function runMcpTests(): Promise<void> {
 		suite: "MCP server tests",
 		testPaths,
 		workers,
-		args: (path) => ["test", path],
+		args: (path) => ["test", "--timeout", String(mcpTestTimeoutMs), path],
 		env: process.env,
 	});
 }
 
 function mcpTestOrder(left: string, right: string): number {
-	const ranked =
-		Number(isSlowMcpTest(right)) - Number(isSlowMcpTest(left));
+	const ranked = Number(isSlowMcpTest(right)) - Number(isSlowMcpTest(left));
 	return ranked === 0 ? left.localeCompare(right, "en") : ranked;
 }
 
@@ -489,7 +493,6 @@ interface PendingPhase {
 	finished: Promise<{ exitCode: number; stdout: string; stderr: string }>;
 }
 
-
 /**
  * Starts a phase without waiting for it. Its output is captured rather than
  * inherited so that a phase running beside another cannot interleave with it.
@@ -531,7 +534,8 @@ async function collect(phases: PendingPhase[]): Promise<void> {
 		console.log(`\n==> ${phase.label}`);
 		process.stdout.write(stdout);
 		process.stderr.write(stderr);
-		if (exitCode !== 0) failures.push(`${phase.label}: exited with status ${exitCode}`);
+		if (exitCode !== 0)
+			failures.push(`${phase.label}: exited with status ${exitCode}`);
 	}
 	if (failures.length > 0) fail(failures.join("\n  "));
 }
