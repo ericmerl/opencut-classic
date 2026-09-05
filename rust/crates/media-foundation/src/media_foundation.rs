@@ -57,9 +57,59 @@ pub struct ProviderTaskRequirements {
     pub durable_job_type: &'static str,
     pub source_identity: &'static [&'static str],
     pub output_contract: &'static str,
+    pub semantic_input_contract: &'static str,
+    pub option_requirements: ProviderOptionRequirements,
     pub provenance_identity: &'static [&'static str],
     pub deterministic_cache_required: bool,
     pub cpu_fallback_required: bool,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ProviderOptionRequirements {
+    SubjectTracking {
+        sample_interval_ticks: IntegerBounds,
+        max_samples: IntegerBounds,
+        max_subjects: IntegerBounds,
+        prompt_max_chars: u32,
+        normalized_initial_box: bool,
+    },
+    AudioCleanup {
+        noise_reduction: NumberBounds,
+        de_reverb: NumberBounds,
+        de_ess: NumberBounds,
+        high_pass_hz: NumberBounds,
+    },
+    StemSeparation {
+        allowed_stem_sets: &'static [&'static str],
+        sample_aligned_outputs_required: bool,
+    },
+    VoiceActivityDetection {
+        threshold: NumberBounds,
+        minimum_duration_ticks: IntegerBounds,
+        padding_ticks: IntegerBounds,
+    },
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegerBounds {
+    pub minimum: i64,
+    pub maximum: i64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NumberBounds {
+    pub minimum: f64,
+    pub maximum: f64,
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -103,6 +153,26 @@ pub enum MediaCapabilityCatalogResponse {
     Rejected { code: String, reason: String },
 }
 
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MediaExecutionBlockerInput {
+    pub task_id: String,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaExecutionBlocker {
+    pub status: &'static str,
+    pub code: &'static str,
+    pub reason: &'static str,
+    pub task_id: String,
+    pub provider_execution: &'static str,
+}
+
 #[export]
 pub fn media_capability_catalog(
     input: MediaCapabilityCatalogInput,
@@ -141,6 +211,29 @@ pub fn media_capability_catalog(
     })
 }
 
+#[export]
+pub fn media_execution_blocker(input: MediaExecutionBlockerInput) -> MediaExecutionBlocker {
+    let known = tasks()
+        .into_iter()
+        .any(|task| task.task_id == input.task_id);
+    if !known {
+        return MediaExecutionBlocker {
+            status: "rejected",
+            code: "UNKNOWN_MEDIA_TASK_ID",
+            reason: "unknown media task ID",
+            task_id: input.task_id,
+            provider_execution: "forbidden",
+        };
+    }
+    MediaExecutionBlocker {
+        status: "rejected",
+        code: "MODEL_SELECTION_REQUIRED",
+        reason: "Owner approval of an exact model ID, immutable version, canonical source, license, and SHA-256 is required before provider execution.",
+        task_id: input.task_id,
+        provider_execution: "forbidden",
+    }
+}
+
 fn tasks() -> Vec<MediaCapabilityTask> {
     [
         (
@@ -173,7 +266,7 @@ fn tasks() -> Vec<MediaCapabilityTask> {
         ),
     ]
     .into_iter()
-    .map(|(task_id, input_media, outputs, request_kind, output_contract)| MediaCapabilityTask {
+        .map(|(task_id, input_media, outputs, request_kind, output_contract)| MediaCapabilityTask {
         task_id,
         input_media,
         outputs,
@@ -183,9 +276,19 @@ fn tasks() -> Vec<MediaCapabilityTask> {
             durable_job_type: "provider",
             source_identity: &["assetId", "contentSha256", "bytes", "durationTicks"],
             output_contract,
+            semantic_input_contract: match request_kind {
+                ProviderTaskKind::SubjectTracking => "opencut.subject-tracking-request.v1",
+                ProviderTaskKind::AudioCleanup => "opencut.audio-cleanup-request.v1",
+                ProviderTaskKind::StemSeparation => "opencut.stem-separation-request.v1",
+                ProviderTaskKind::VoiceActivityDetection => {
+                    "opencut.voice-activity-detection-request.v1"
+                }
+            },
+            option_requirements: provider_option_requirements(request_kind),
             provenance_identity: &[
                 "providerId",
                 "adapterId",
+                "adapterVersion",
                 "modelId",
                 "modelVersion",
                 "modelSha256",
@@ -208,6 +311,65 @@ fn tasks() -> Vec<MediaCapabilityTask> {
         },
     })
     .collect()
+}
+
+fn provider_option_requirements(kind: ProviderTaskKind) -> ProviderOptionRequirements {
+    match kind {
+        ProviderTaskKind::SubjectTracking => ProviderOptionRequirements::SubjectTracking {
+            sample_interval_ticks: IntegerBounds {
+                minimum: 1,
+                maximum: MAX_SAFE_INTEGER,
+            },
+            max_samples: IntegerBounds {
+                minimum: 2,
+                maximum: 1_000_000,
+            },
+            max_subjects: IntegerBounds {
+                minimum: 1,
+                maximum: 1_024,
+            },
+            prompt_max_chars: 4_096,
+            normalized_initial_box: true,
+        },
+        ProviderTaskKind::AudioCleanup => ProviderOptionRequirements::AudioCleanup {
+            noise_reduction: NumberBounds {
+                minimum: 0.0,
+                maximum: 1.0,
+            },
+            de_reverb: NumberBounds {
+                minimum: 0.0,
+                maximum: 1.0,
+            },
+            de_ess: NumberBounds {
+                minimum: 0.0,
+                maximum: 1.0,
+            },
+            high_pass_hz: NumberBounds {
+                minimum: 0.0,
+                maximum: 300.0,
+            },
+        },
+        ProviderTaskKind::StemSeparation => ProviderOptionRequirements::StemSeparation {
+            allowed_stem_sets: &["vocals-accompaniment", "vocals-drums-bass-other"],
+            sample_aligned_outputs_required: true,
+        },
+        ProviderTaskKind::VoiceActivityDetection => {
+            ProviderOptionRequirements::VoiceActivityDetection {
+                threshold: NumberBounds {
+                    minimum: 0.0,
+                    maximum: 1.0,
+                },
+                minimum_duration_ticks: IntegerBounds {
+                    minimum: 1,
+                    maximum: MAX_SAFE_INTEGER,
+                },
+                padding_ticks: IntegerBounds {
+                    minimum: 0,
+                    maximum: MAX_SAFE_INTEGER,
+                },
+            }
+        }
+    }
 }
 
 const MEDIA_ANALYSIS_SCHEMA: &str = "opencut.media-analysis.v1";
@@ -233,9 +395,41 @@ pub struct MediaAnalysisDraft {
     pub scene_id: String,
     pub task_id: String,
     pub source: AnalysisSource,
-    pub semantic_inputs: Value,
+    pub semantic_inputs: MediaAnalysisSemanticInputs,
     pub provenance: AnalysisProvenance,
     pub payload: AnalysisPayload,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum MediaAnalysisSemanticInputs {
+    SubjectTracking {
+        sampling: TrackingSamplingOptions,
+        prompt: Option<String>,
+        initial_box: Option<NormalizedBox>,
+        max_subjects: u16,
+    },
+    VoiceActivityDetection {
+        channel: String,
+        threshold: f64,
+        minimum_duration_ticks: i64,
+        padding_ticks: i64,
+        range: SourceRange,
+    },
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrackingSamplingOptions {
+    pub interval_ticks: i64,
+    pub max_samples: u32,
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -265,12 +459,63 @@ pub struct AnalysisProvenance {
     pub approval_status: ApprovalStatus,
     pub provider_id: String,
     pub adapter_id: String,
+    pub adapter_version: String,
     pub model: ModelIdentity,
     pub runtime: String,
     pub device: ExecutionDevice,
     #[serde(default)]
     pub warnings: Vec<String>,
     pub fallback_reason: Option<String>,
+    pub lifecycle_events: Vec<ProviderLifecycleEvent>,
+    pub cost: AnalysisCost,
+    pub output_artifacts: Vec<ProviderOutputArtifact>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderLifecycleEvent {
+    pub sequence: u32,
+    pub attempt: u32,
+    pub kind: ProviderLifecycleEventKind,
+    pub occurred_at: String,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderLifecycleEventKind {
+    Submitted,
+    Started,
+    Retried,
+    Completed,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnalysisCost {
+    pub status: AnalysisCostStatus,
+    pub amount: f64,
+    pub currency: Option<String>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AnalysisCostStatus {
+    NotIncurred,
+    ExternalUnverified,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderOutputArtifact {
+    pub artifact_id: String,
+    pub kind: String,
+    pub content_sha256: String,
+    pub bytes: u64,
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -463,7 +708,7 @@ pub struct MediaAnalysisRecord {
     pub scene_id: String,
     pub task_id: String,
     pub source: AnalysisSource,
-    pub semantic_inputs: Value,
+    pub semantic_inputs: MediaAnalysisSemanticInputs,
     pub semantic_input_hash: String,
     pub cache_identity: String,
     pub provenance: AnalysisProvenance,
@@ -484,12 +729,76 @@ pub enum MediaAnalysisValidation {
     Rejected { code: String, reason: String },
 }
 
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolveMediaAnalysisCreateInput {
+    pub operation_id: String,
+    pub created_at: String,
+    pub analysis: MediaAnalysisDraft,
+    pub existing_analysis: Option<MediaAnalysisRecord>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize)]
+#[serde(
+    tag = "status",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum MediaAnalysisCreateResolution {
+    Created { analysis: MediaAnalysisRecord },
+    Replayed { analysis: MediaAnalysisRecord },
+    Rejected { code: String, reason: String },
+}
+
 #[export]
 pub fn validate_media_analysis(input: ValidateMediaAnalysisInput) -> MediaAnalysisValidation {
     match build_media_analysis(input) {
         Ok(analysis) => MediaAnalysisValidation::Validated { analysis },
         Err((code, reason)) => MediaAnalysisValidation::Rejected { code, reason },
     }
+}
+
+#[export]
+pub fn resolve_media_analysis_create(
+    input: ResolveMediaAnalysisCreateInput,
+) -> MediaAnalysisCreateResolution {
+    let created_at = input
+        .existing_analysis
+        .as_ref()
+        .map(|analysis| analysis.created_at.clone())
+        .unwrap_or(input.created_at);
+    let proposed = match build_media_analysis(ValidateMediaAnalysisInput {
+        operation_id: input.operation_id.clone(),
+        created_at,
+        analysis: input.analysis,
+    }) {
+        Ok(analysis) => analysis,
+        Err((code, reason)) => {
+            return MediaAnalysisCreateResolution::Rejected { code, reason };
+        }
+    };
+    let Some(existing) = input.existing_analysis else {
+        return MediaAnalysisCreateResolution::Created { analysis: proposed };
+    };
+    let verified = match verify_media_analysis(VerifyMediaAnalysisInput { analysis: existing }) {
+        MediaAnalysisValidation::Validated { analysis } => analysis,
+        MediaAnalysisValidation::Rejected { code, reason } => {
+            return MediaAnalysisCreateResolution::Rejected { code, reason };
+        }
+    };
+    if verified.operation_id != input.operation_id || verified.content_hash != proposed.content_hash
+    {
+        return MediaAnalysisCreateResolution::Rejected {
+            code: "MEDIA_ANALYSIS_ID_REUSED".into(),
+            reason: "analysisId was already used for a different operation or semantic input"
+                .into(),
+        };
+    }
+    MediaAnalysisCreateResolution::Replayed { analysis: verified }
 }
 
 #[export]
@@ -540,6 +849,7 @@ fn build_media_analysis(
         ("sceneId", draft.scene_id.as_str()),
         ("providerId", draft.provenance.provider_id.as_str()),
         ("adapterId", draft.provenance.adapter_id.as_str()),
+        ("adapterVersion", draft.provenance.adapter_version.as_str()),
         ("modelId", draft.provenance.model.id.as_str()),
         ("modelVersion", draft.provenance.model.version.as_str()),
         ("modelSource", draft.provenance.model.source.as_str()),
@@ -570,6 +880,8 @@ fn build_media_analysis(
             "no local media model has owner approval",
         );
     }
+    validate_provenance(&mut draft.provenance)?;
+    validate_semantic_inputs(&draft.task_id, &draft.source, &mut draft.semantic_inputs)?;
     validate_payload(&draft.task_id, &draft.source, &mut draft.payload)?;
     let semantic_input_hash = hash(&json!({
         "taskId": draft.task_id,
@@ -588,7 +900,10 @@ fn build_media_analysis(
         "semanticInputHash": semantic_input_hash,
         "providerId": draft.provenance.provider_id,
         "adapterId": draft.provenance.adapter_id,
+        "adapterVersion": draft.provenance.adapter_version,
         "modelSha256": draft.provenance.model.sha256,
+        "runtime": draft.provenance.runtime,
+        "device": draft.provenance.device,
     }))?;
     let mut record = MediaAnalysisRecord {
         schema_version: draft.schema_version,
@@ -615,6 +930,172 @@ fn build_media_analysis(
         .remove("contentHash");
     record.content_hash = hash(&projection)?;
     Ok(record)
+}
+
+fn validate_provenance(provenance: &mut AnalysisProvenance) -> Result<(), (String, String)> {
+    for warning in &provenance.warnings {
+        require_text("provenance warning", warning)?;
+    }
+    if provenance.warnings.len() > 1_000 {
+        return reject(
+            "INVALID_MEDIA_ANALYSIS",
+            "provenance warnings exceed the supported bound",
+        );
+    }
+    if let Some(reason) = &provenance.fallback_reason {
+        require_text("fallback reason", reason)?;
+    }
+    if provenance.lifecycle_events.is_empty() || provenance.lifecycle_events.len() > 10_000 {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle must contain a bounded event history",
+        );
+    }
+    provenance
+        .lifecycle_events
+        .sort_by_key(|event| event.sequence);
+    for (index, event) in provenance.lifecycle_events.iter().enumerate() {
+        if event.sequence as usize != index + 1 || event.attempt == 0 {
+            return reject(
+                "INVALID_PROVIDER_LIFECYCLE",
+                "provider lifecycle sequences must be contiguous and attempts must be positive",
+            );
+        }
+        require_text("provider lifecycle timestamp", &event.occurred_at)?;
+    }
+    if provenance.lifecycle_events.last().map(|event| event.kind)
+        != Some(ProviderLifecycleEventKind::Completed)
+    {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "the final provider lifecycle event must be completed",
+        );
+    }
+    if !provenance.cost.amount.is_finite() || provenance.cost.amount < 0.0 {
+        return reject(
+            "INVALID_PROVIDER_COST",
+            "provider cost amount must be finite and nonnegative",
+        );
+    }
+    match provenance.cost.status {
+        AnalysisCostStatus::NotIncurred
+            if provenance.cost.amount == 0.0 && provenance.cost.currency.is_none() => {}
+        AnalysisCostStatus::ExternalUnverified => {
+            if let Some(currency) = &provenance.cost.currency {
+                require_text("provider cost currency", currency)?;
+            }
+        }
+        _ => {
+            return reject(
+                "INVALID_PROVIDER_COST",
+                "not-incurred provider cost requires zero amount and no currency",
+            );
+        }
+    }
+    if provenance.output_artifacts.len() > 100_000 {
+        return reject(
+            "INVALID_PROVIDER_OUTPUT",
+            "provider output artifact inventory exceeds the supported bound",
+        );
+    }
+    provenance
+        .output_artifacts
+        .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+    let mut artifact_ids = BTreeSet::new();
+    for artifact in &provenance.output_artifacts {
+        require_text("provider output artifact ID", &artifact.artifact_id)?;
+        require_text("provider output artifact kind", &artifact.kind)?;
+        require_sha256(
+            "provider output artifact contentSha256",
+            &artifact.content_sha256,
+        )?;
+        if artifact.bytes == 0
+            || artifact.bytes > MAX_SAFE_INTEGER as u64
+            || !artifact_ids.insert(artifact.artifact_id.as_str())
+        {
+            return reject(
+                "INVALID_PROVIDER_OUTPUT",
+                "provider output artifacts require unique IDs and positive safe byte counts",
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_semantic_inputs(
+    task_id: &str,
+    source: &AnalysisSource,
+    inputs: &mut MediaAnalysisSemanticInputs,
+) -> Result<(), (String, String)> {
+    match (task_id, inputs) {
+        (
+            "opencut.task.subject-tracking.v1",
+            MediaAnalysisSemanticInputs::SubjectTracking {
+                sampling,
+                prompt,
+                initial_box,
+                max_subjects,
+            },
+        ) => {
+            require_ticks("tracking sample interval", sampling.interval_ticks, false)?;
+            if sampling.interval_ticks > source.duration_ticks
+                || !(2..=1_000_000).contains(&sampling.max_samples)
+                || !(1..=1_024).contains(max_subjects)
+            {
+                return reject(
+                    "INVALID_SEMANTIC_INPUTS",
+                    "tracking sampling and subject limits are outside their supported bounds",
+                );
+            }
+            if let Some(prompt) = prompt {
+                require_text("tracking prompt", prompt)?;
+            }
+            if let Some(box_) = initial_box {
+                validate_box(box_)?;
+            }
+        }
+        (
+            "opencut.task.voice-activity-detection.v1",
+            MediaAnalysisSemanticInputs::VoiceActivityDetection {
+                channel,
+                threshold,
+                minimum_duration_ticks,
+                padding_ticks,
+                range,
+            },
+        ) => {
+            require_text("voice activity input channel", channel)?;
+            if !threshold.is_finite() || !(0.0..=1.0).contains(threshold) {
+                return reject(
+                    "INVALID_SEMANTIC_INPUTS",
+                    "voice activity threshold must be between zero and one",
+                );
+            }
+            require_ticks(
+                "voice activity minimum duration",
+                *minimum_duration_ticks,
+                false,
+            )?;
+            require_ticks("voice activity padding", *padding_ticks, true)?;
+            if *minimum_duration_ticks > source.duration_ticks
+                || *padding_ticks > source.duration_ticks
+            {
+                return reject(
+                    "INVALID_SEMANTIC_INPUTS",
+                    "voice activity duration options exceed the source duration",
+                );
+            }
+            validate_range("voice activity input range", range, source.duration_ticks)?;
+        }
+        (known, _) if tasks().iter().any(|task| task.task_id == known) => {
+            return reject(
+                "INCOMPATIBLE_SEMANTIC_INPUTS",
+                "task ID and semantic input kind are incompatible",
+            );
+        }
+        _ => return reject("UNKNOWN_MEDIA_TASK_ID", "unknown media task ID"),
+    }
+    Ok(())
 }
 
 fn validate_payload(
@@ -789,6 +1270,7 @@ fn validate_payload(
             }
             corrections.sort_by(|left, right| left.correction_id.cmp(&right.correction_id));
             let mut correction_ids = BTreeSet::new();
+            let mut correction_targets = BTreeSet::new();
             for correction in corrections {
                 require_text("activity correction ID", &correction.correction_id)?;
                 if !correction_ids.insert(correction.correction_id.as_str()) {
@@ -798,6 +1280,12 @@ fn validate_payload(
                     );
                 }
                 require_text("activity correction range ID", &correction.range_id)?;
+                if !correction_targets.insert(correction.range_id.as_str()) {
+                    return reject(
+                        "MALFORMED_ACTIVITY_CORRECTION",
+                        "voice activity corrections must target distinct range IDs",
+                    );
+                }
                 require_text("activity correction note", &correction.note)?;
                 match (correction.action, &correction.range) {
                     (ActivityCorrectionAction::Upsert, Some(range)) => {
@@ -1132,6 +1620,7 @@ pub struct DuckingPlan {
     pub reduction_db: f64,
     pub attack_ticks: i64,
     pub release_ticks: i64,
+    pub overlap_policy: &'static str,
     pub envelopes: Vec<DuckingEnvelope>,
 }
 
@@ -1139,7 +1628,7 @@ pub struct DuckingPlan {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DuckingEnvelope {
-    pub range_id: String,
+    pub source_range_ids: Vec<String>,
     pub start_ticks: i64,
     pub speech_start_ticks: i64,
     pub speech_end_ticks: i64,
@@ -1252,10 +1741,10 @@ pub fn plan_audio_post(mut input: AudioPostPlanningInput) -> AudioPostPlanningRe
             "corrected voice activity ranges must not overlap",
         );
     }
-    let envelopes = ranges
+    let expanded = ranges
         .into_iter()
         .map(|range| DuckingEnvelope {
-            range_id: range.range_id,
+            source_range_ids: vec![range.range_id],
             start_ticks: range
                 .start_ticks
                 .saturating_sub(input.ducking.attack_ticks)
@@ -1269,13 +1758,31 @@ pub fn plan_audio_post(mut input: AudioPostPlanningInput) -> AudioPostPlanningRe
             gain_db: input.ducking.reduction_db,
             confidence: range.confidence,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let mut envelopes: Vec<DuckingEnvelope> = Vec::with_capacity(expanded.len());
+    for envelope in expanded {
+        if let Some(previous) = envelopes.last_mut()
+            && envelope.start_ticks <= previous.end_ticks
+        {
+            previous
+                .source_range_ids
+                .extend(envelope.source_range_ids.into_iter());
+            previous.speech_start_ticks =
+                previous.speech_start_ticks.min(envelope.speech_start_ticks);
+            previous.speech_end_ticks = previous.speech_end_ticks.max(envelope.speech_end_ticks);
+            previous.end_ticks = previous.end_ticks.max(envelope.end_ticks);
+            previous.confidence = previous.confidence.min(envelope.confidence);
+            continue;
+        }
+        envelopes.push(envelope);
+    }
     let ducking = DuckingPlan {
         source_analysis_id: verified.analysis_id.clone(),
         target_track_id: input.ducking.target_track_id,
         reduction_db: input.ducking.reduction_db,
         attack_ticks: input.ducking.attack_ticks,
         release_ticks: input.ducking.release_ticks,
+        overlap_policy: "merge",
         envelopes,
     };
     let mut plan = AudioPostPlan {

@@ -9,7 +9,8 @@ import {
 } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import {
-	validateMediaAnalysis,
+	resolveMediaAnalysisCreate,
+	type MediaAnalysisCreateResolution,
 	verifyMediaAnalysis,
 } from "./native-media-foundation";
 
@@ -48,31 +49,29 @@ export class MediaAnalysisStore {
 		const analysisId = stringField(analysis, "analysisId");
 		if (!analysisId) throw new Error("analysisId is required");
 		const existing = await this.get(analysisId);
-		const validation = validateMediaAnalysis({
+		const resolution = resolveMediaAnalysisCreate({
 			operationId,
-			createdAt: existing ? String(existing.createdAt) : now,
+			createdAt: now,
 			analysis,
+			existingAnalysis: existing,
 		});
-		if (validation.status === "rejected") {
-			return { ...validation, affectedObjects: [] };
+		if (resolution.status !== "created") return result(resolution);
+		try {
+			await this.write(resolution.analysis);
+			return result(resolution);
+		} catch (error) {
+			if (!isAlreadyExists(error)) throw error;
+			const concurrent = await this.get(analysisId);
+			if (!concurrent) throw error;
+			return result(
+				resolveMediaAnalysisCreate({
+					operationId,
+					createdAt: now,
+					analysis,
+					existingAnalysis: concurrent,
+				}),
+			);
 		}
-		if (existing) {
-			if (
-				existing.operationId !== operationId ||
-				existing.contentHash !== validation.analysis.contentHash
-			) {
-				return {
-					status: "rejected",
-					code: "MEDIA_ANALYSIS_ID_REUSED",
-					reason:
-						"analysisId was already used for a different operation or semantic input",
-					affectedObjects: [],
-				};
-			}
-			return result("replayed", existing);
-		}
-		await this.write(validation.analysis);
-		return result("created", validation.analysis);
 	}
 
 	async get(analysisId: string): Promise<Record<string, unknown> | null> {
@@ -122,21 +121,30 @@ export class MediaAnalysisStore {
 	}
 }
 
-function result(
-	status: "created" | "replayed",
-	analysis: Record<string, unknown>,
-) {
+function result(resolution: MediaAnalysisCreateResolution) {
+	if (resolution.status === "rejected") {
+		return { ...resolution, affectedObjects: [] as [] };
+	}
 	return {
-		status,
-		analysis,
+		status: resolution.status,
+		analysis: resolution.analysis,
 		affectedObjects: [
 			{
 				objectType: "media-analysis" as const,
-				objectId: String(analysis.analysisId),
+				objectId: String(resolution.analysis.analysisId),
 				action: "created" as const,
 			},
 		],
 	};
+}
+
+function isAlreadyExists(error: unknown): boolean {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		(error as { code?: unknown }).code === "EEXIST"
+	);
 }
 
 function stringField(

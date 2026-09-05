@@ -7,11 +7,24 @@ const wasm = require("../../../rust/wasm/pkg-node/opencut_wasm.js") as {
 	}):
 		| ({ status: "catalog" } & Record<string, unknown>)
 		| { status: "rejected"; code: string; reason: string };
+	mediaExecutionBlocker(input: { taskId: string }): {
+		status: "rejected";
+		code: "MODEL_SELECTION_REQUIRED" | "UNKNOWN_MEDIA_TASK_ID";
+		reason: string;
+		taskId: string;
+		providerExecution: "forbidden";
+	};
 	validateMediaAnalysis(input: {
 		operationId: string;
 		createdAt: string;
 		analysis: unknown;
 	}): MediaAnalysisValidation;
+	resolveMediaAnalysisCreate(input: {
+		operationId: string;
+		createdAt: string;
+		analysis: unknown;
+		existingAnalysis: Record<string, unknown> | null;
+	}): MediaAnalysisCreateResolution;
 	verifyMediaAnalysis(input: { analysis: unknown }): MediaAnalysisValidation;
 	planAudioPost(input: unknown):
 		| {
@@ -26,6 +39,13 @@ export type MediaAnalysisValidation =
 	| { status: "validated"; analysis: Record<string, unknown> }
 	| { status: "rejected"; code: string; reason: string };
 
+export type MediaAnalysisCreateResolution =
+	| {
+			status: "created" | "replayed";
+			analysis: Record<string, unknown>;
+	  }
+	| { status: "rejected"; code: string; reason: string };
+
 export function getMediaCapabilityCatalog(input: {
 	taskIds?: string[];
 }): Record<string, unknown> {
@@ -33,6 +53,16 @@ export function getMediaCapabilityCatalog(input: {
 		string,
 		unknown
 	>;
+}
+
+export function getMediaExecutionBlocker(taskId: string) {
+	return plainJson(wasm.mediaExecutionBlocker({ taskId })) as {
+		status: "rejected";
+		code: "MODEL_SELECTION_REQUIRED" | "UNKNOWN_MEDIA_TASK_ID";
+		reason: string;
+		taskId: string;
+		providerExecution: "forbidden";
+	};
 }
 
 export function validateMediaAnalysis(input: {
@@ -49,6 +79,17 @@ export function verifyMediaAnalysis(analysis: unknown) {
 	return plainJson(
 		wasm.verifyMediaAnalysis({ analysis }),
 	) as MediaAnalysisValidation;
+}
+
+export function resolveMediaAnalysisCreate(input: {
+	operationId: string;
+	createdAt: string;
+	analysis: unknown;
+	existingAnalysis: Record<string, unknown> | null;
+}) {
+	return plainJson(
+		wasm.resolveMediaAnalysisCreate(input),
+	) as MediaAnalysisCreateResolution;
 }
 
 export function planAudioPost(input: unknown) {

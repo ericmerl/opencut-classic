@@ -54,6 +54,7 @@ test("discovers the Rust-owned model capability catalog without provider executi
 				provenanceIdentity: [
 					"providerId",
 					"adapterId",
+					"adapterVersion",
 					"modelId",
 					"modelVersion",
 					"modelSha256",
@@ -73,6 +74,12 @@ test("discovers the Rust-owned model capability catalog without provider executi
 				requiredIdentity: ["modelId", "version", "sha256", "source", "license"],
 			},
 		});
+		expect(record(task.requirements).semanticInputContract).toMatch(
+			/^opencut\..+-request\.v1$/,
+		);
+		expect(record(record(task.requirements).optionRequirements).kind).toBe(
+			record(task.requirements).requestKind,
+		);
 	}
 	const capabilities = await harness.call("opencut_capabilities", {});
 	expect(capabilities.mediaFoundation).toMatchObject({
@@ -85,6 +92,42 @@ test("discovers the Rust-owned model capability catalog without provider executi
 				canExecute: false,
 			},
 		})),
+	});
+	expect(capabilities.providers).toMatchObject({
+		audioCleanup: {
+			status: "model-selection-required",
+			canExecute: false,
+		},
+		subjectTracking: {
+			status: "model-selection-required",
+			canExecute: false,
+		},
+	});
+	const blockedCleanup = await harness.call("opencut_clean_audio", {
+		...mutation("media-foundation:block-cleanup"),
+		projectId: "project-1",
+		expectedProjectContentHash: "f".repeat(64),
+		expectedRevision: 0,
+		trackId: "track-1",
+		elementId: "clip-1",
+	});
+	expect(blockedCleanup).toMatchObject({
+		status: "rejected",
+		code: "MODEL_SELECTION_REQUIRED",
+		providerExecution: "forbidden",
+	});
+	const blockedTracking = await harness.call("opencut_track_subject", {
+		...mutation("media-foundation:block-tracking"),
+		projectId: "project-1",
+		expectedProjectContentHash: "f".repeat(64),
+		expectedRevision: 0,
+		trackId: "track-1",
+		elementId: "clip-1",
+	});
+	expect(blockedTracking).toMatchObject({
+		status: "rejected",
+		code: "MODEL_SELECTION_REQUIRED",
+		providerExecution: "forbidden",
 	});
 });
 
@@ -103,6 +146,7 @@ test("persists canonical reusable tracking data and reads it after restart", asy
 			provenance: {
 				origin: "external-result",
 				approvalStatus: "unverified",
+				adapterVersion: "1.0.0",
 				model: {
 					id: "fixture-tracker",
 					version: "1.0.0",
@@ -110,6 +154,12 @@ test("persists canonical reusable tracking data and reads it after restart", asy
 					license: "fixture-only",
 					source: "https://example.invalid/fixture-tracker",
 				},
+				lifecycleEvents: [
+					{ sequence: 1, attempt: 1, kind: "submitted" },
+					{ sequence: 2, attempt: 1, kind: "completed" },
+				],
+				cost: { status: "not-incurred", amount: 0 },
+				outputArtifacts: [],
 			},
 			payload: {
 				kind: "subject-tracking",
@@ -133,10 +183,10 @@ test("persists canonical reusable tracking data and reads it after restart", asy
 	});
 	const analysis = record(created.analysis);
 	expect(analysis.semanticInputHash).toBe(
-		"1284b77bfa585df08551f442266ff4c6b26398ae3ef6973a76b9ecf97f0f598d",
+		"8b709d3abcfdd75c977bb53035b34ee816b3dbb2661fb41df63556901d561705",
 	);
 	expect(analysis.cacheIdentity).toBe(
-		"fe9fae7468e7fd43cf802aded883d92029593ba449cda40cca9a3bc4853a2b92",
+		"fb5acc4c8ca579d088b39ed6e2b37bd3e5152396f76a3eb9e9dd24a0fc4a82db",
 	);
 	expect(analysis.contentHash).toMatch(/^[a-f0-9]{64}$/);
 
@@ -148,6 +198,24 @@ test("persists canonical reusable tracking data and reads it after restart", asy
 	expect(secondAnalysis.semanticInputHash).toBe(analysis.semanticInputHash);
 	expect(secondAnalysis.cacheIdentity).toBe(analysis.cacheIdentity);
 	expect(secondAnalysis.contentHash).not.toBe(analysis.contentHash);
+
+	const alternateExecution = trackingAnalysis();
+	alternateExecution.analysisId = "tracking-3";
+	alternateExecution.provenance.runtime = "fixture-runtime-v2";
+	alternateExecution.provenance.device = "cuda";
+	const alternateExecutionResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:create:tracking-3"),
+			analysis: alternateExecution,
+		},
+	);
+	expect(record(alternateExecutionResult.analysis).semanticInputHash).toBe(
+		analysis.semanticInputHash,
+	);
+	expect(record(alternateExecutionResult.analysis).cacheIdentity).not.toBe(
+		analysis.cacheIdentity,
+	);
 
 	const read = await harness.call("opencut_get_media_analysis", {
 		analysisId: "tracking-1",
@@ -177,6 +245,35 @@ test("persists canonical reusable tracking data and reads it after restart", asy
 		durableOperationStatus: "replayed",
 		analysis: created.analysis,
 	});
+});
+
+test("serializes concurrent creates for one durable analysis identity", async () => {
+	const analysis = { ...trackingAnalysis(), analysisId: "tracking-concurrent" };
+	const [left, right] = await Promise.all([
+		harness.call("opencut_create_media_analysis", {
+			...mutation("media-analysis:create:concurrent-left"),
+			analysis,
+		}),
+		harness.call("opencut_create_media_analysis", {
+			...mutation("media-analysis:create:concurrent-right"),
+			analysis,
+		}),
+	]);
+	const results = [left, right].sort((a, b) =>
+		String(a.status).localeCompare(String(b.status)),
+	);
+	expect(results.map((result) => result.status)).toEqual([
+		"created",
+		"rejected",
+	]);
+	expect(results[1]).toMatchObject({
+		code: "MEDIA_ANALYSIS_ID_REUSED",
+		operationDisposition: "not-applied",
+	});
+	const stored = await harness.call("opencut_get_media_analysis", {
+		analysisId: "tracking-concurrent",
+	});
+	expect(stored).toMatchObject({ status: "found" });
 });
 
 test("deterministically plans ordered audio post and VAD-derived ducking", async () => {
@@ -219,9 +316,10 @@ test("deterministically plans ordered audio post and VAD-derived ducking", async
 			},
 			ducking: {
 				targetTrackId: "music-track",
+				overlapPolicy: "merge",
 				envelopes: [
 					{
-						rangeId: "speech-1",
+						sourceRangeIds: ["speech-1"],
 						startTicks: 48_000,
 						speechStartTicks: 60_000,
 						speechEndTicks: 120_000,
@@ -229,7 +327,7 @@ test("deterministically plans ordered audio post and VAD-derived ducking", async
 						gainDb: -12,
 					},
 					{
-						rangeId: "speech-2",
+						sourceRangeIds: ["speech-2"],
 						startTicks: 168_000,
 						speechStartTicks: 180_000,
 						speechEndTicks: 216_000,
@@ -252,6 +350,26 @@ test("deterministically plans ordered audio post and VAD-derived ducking", async
 	});
 	expect(record(second.plan).planHash).toBe(plan.planHash);
 	expect(record(second.plan).graph).toEqual(plan.graph);
+
+	const merged = await harness.call("opencut_plan_audio_post", {
+		...request,
+		ducking: {
+			...request.ducking,
+			attackTicks: 60_000,
+			releaseTicks: 60_000,
+		},
+	});
+	expect(record(record(merged.plan).ducking).envelopes).toEqual([
+		{
+			sourceRangeIds: ["speech-1", "speech-2"],
+			startTicks: 0,
+			speechStartTicks: 60_000,
+			speechEndTicks: 216_000,
+			endTicks: 240_000,
+			gainDb: -12,
+			confidence: 0.88,
+		},
+	]);
 });
 
 test("fails closed for unknown tasks, malformed results, incompatible attachments, and stale identity", async () => {
@@ -333,6 +451,48 @@ test("fails closed for unknown tasks, malformed results, incompatible attachment
 		operationDisposition: "not-applied",
 	});
 
+	const vadForDuplicateCorrection = voiceActivityAnalysis();
+	const duplicateCorrectionTarget = {
+		...vadForDuplicateCorrection,
+		analysisId: "vad-duplicate-correction-target",
+		payload: {
+			...vadForDuplicateCorrection.payload,
+			corrections: [
+				{
+					correctionId: "correction-speech-1-earlier",
+					action: "upsert" as const,
+					rangeId: "speech-1",
+					range: {
+						rangeId: "speech-1",
+						startTicks: 60_000,
+						endTicks: 108_000,
+						confidence: 1,
+					},
+					note: "Correct the first range.",
+				},
+				{
+					correctionId: "correction-speech-1-later",
+					action: "remove" as const,
+					rangeId: "speech-1",
+					range: null,
+					note: "A second correction for the same source range is ambiguous.",
+				},
+			],
+		},
+	};
+	const duplicateCorrectionResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:duplicate-correction-target"),
+			analysis: duplicateCorrectionTarget,
+		},
+	);
+	expect(duplicateCorrectionResult).toMatchObject({
+		status: "rejected",
+		code: "MALFORMED_ACTIVITY_CORRECTION",
+		operationDisposition: "not-applied",
+	});
+
 	const created = await harness.call("opencut_create_media_analysis", {
 		...mutation("media-analysis:create:vad-stale-plan"),
 		analysis: { ...voiceActivityAnalysis(), analysisId: "vad-stale-plan" },
@@ -364,6 +524,7 @@ test("fails closed for unknown tasks, malformed results, incompatible attachment
 		"tracking-stale",
 		"tracking-unavailable-model",
 		"vad-overlap",
+		"vad-duplicate-correction-target",
 	]) {
 		expect(
 			await harness.call("opencut_get_media_analysis", { analysisId }),
@@ -550,14 +711,18 @@ function trackingAnalysis() {
 			bytes: 1_024,
 		},
 		semanticInputs: {
-			sampling: { intervalTicks: 120_000 },
+			kind: "subject-tracking" as const,
+			sampling: { intervalTicks: 120_000, maxSamples: 2 },
 			prompt: "person",
+			initialBox: null,
+			maxSubjects: 1,
 		},
 		provenance: {
 			origin: "external-result",
 			approvalStatus: "unverified",
 			providerId: "fixture-provider",
 			adapterId: "fixture-adapter-v1",
+			adapterVersion: "1.0.0",
 			model: {
 				id: "fixture-tracker",
 				version: "1.0.0",
@@ -569,6 +734,22 @@ function trackingAnalysis() {
 			device: "cpu",
 			warnings: ["Fixture provenance is not an approved production model."],
 			fallbackReason: null,
+			lifecycleEvents: [
+				{
+					sequence: 1,
+					attempt: 1,
+					kind: "submitted" as const,
+					occurredAt: "2026-09-05T00:00:00.000Z",
+				},
+				{
+					sequence: 2,
+					attempt: 1,
+					kind: "completed" as const,
+					occurredAt: "2026-09-05T00:00:01.000Z",
+				},
+			],
+			cost: { status: "not-incurred" as const, amount: 0, currency: null },
+			outputArtifacts: [],
 		},
 		payload: {
 			kind: "subject-tracking",
@@ -631,17 +812,19 @@ function voiceActivityAnalysis() {
 			bytes: 2_048,
 		},
 		semanticInputs: {
+			kind: "voice-activity-detection" as const,
 			channel: "mix",
 			threshold: 0.6,
 			minimumDurationTicks: 12_000,
 			paddingTicks: 0,
-			rangePolicy: { kind: "source" },
+			range: { startTicks: 0, endTicks: 240_000 },
 		},
 		provenance: {
 			origin: "external-result",
 			approvalStatus: "unverified",
 			providerId: "fixture-vad-provider",
 			adapterId: "fixture-vad-adapter-v1",
+			adapterVersion: "1.0.0",
 			model: {
 				id: "fixture-vad",
 				version: "1.0.0",
@@ -653,6 +836,22 @@ function voiceActivityAnalysis() {
 			device: "cpu",
 			warnings: ["Fixture provenance is not an approved production model."],
 			fallbackReason: null,
+			lifecycleEvents: [
+				{
+					sequence: 1,
+					attempt: 1,
+					kind: "submitted" as const,
+					occurredAt: "2026-09-05T00:00:00.000Z",
+				},
+				{
+					sequence: 2,
+					attempt: 1,
+					kind: "completed" as const,
+					occurredAt: "2026-09-05T00:00:01.000Z",
+				},
+			],
+			cost: { status: "not-incurred" as const, amount: 0, currency: null },
+			outputArtifacts: [],
 		},
 		payload: {
 			kind: "voice-activity",

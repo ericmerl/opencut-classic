@@ -4,7 +4,6 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { join } from "node:path";
 import { EditorBridge, type BridgeConnectionIdentity } from "./editor-bridge";
-import { AudioCleanupService } from "./clean-audio";
 import { CapabilitySnapshotService } from "./capability-snapshot";
 import {
 	readMediaTreatmentCatalog,
@@ -36,7 +35,6 @@ import { ManagedEditorWorker } from "./managed-editor-worker";
 import { NormalizeAudioOperation } from "./normalize-audio-operation";
 import { SubtitleFiles } from "./subtitle-files";
 import { SubtitleImportOperation } from "./subtitle-import-operation";
-import { SubjectTrackingService } from "./track-subject";
 import { OperationLedger, OperationLedgerReuseError } from "./operation-ledger";
 import {
 	HistoryCheckpointStore,
@@ -68,6 +66,7 @@ import {
 import { SpeechAnalysisService } from "./speech-analysis";
 import {
 	getMediaCapabilityCatalog,
+	getMediaExecutionBlocker,
 	planAudioPost,
 } from "./native-media-foundation";
 import { MediaAnalysisStore } from "./media-analysis-store";
@@ -328,12 +327,6 @@ const editorialDecisions = new EditorialDecisionService(
 );
 await editorialDecisions.readiness();
 const normalizeAudio = new NormalizeAudioOperation(bridge);
-const audioCleanup = new AudioCleanupService(
-	bridge,
-	undefined,
-	join(exportReceipts.directory, "provider-operations", "audio-cleanup"),
-	jobStoreDirectory,
-);
 const exportValidator = new ExportValidator(exportReceipts);
 const exportQc = new ExportQcService(exportReceipts);
 const deliveryPackages = new DeliveryPackageService(exportReceipts, exportQc);
@@ -436,17 +429,6 @@ const matteGeneration = new MatteGenerationService(
 );
 const subtitleFiles = new SubtitleFiles();
 const subtitleImport = new SubtitleImportOperation(bridge, subtitleFiles);
-const subjectTracking = new SubjectTrackingService(
-	bridge,
-	undefined,
-	join(
-		exportReceipts.directory,
-		"provider-operations",
-		"subject-tracking",
-		"provider-results",
-	),
-	jobStoreDirectory,
-);
 const operationLedger = new OperationLedger(
 	process.env.OPENCUT_OPERATION_LEDGER_DIR ??
 		join(exportReceipts.directory, "operation-ledger"),
@@ -1571,7 +1553,7 @@ function createServer(): McpServer {
 		"opencut_clean_audio",
 		{
 			description:
-				"Clean the complete uploaded source audio through the configured external provider and attach the result non-destructively to the selected audio or video clip. Existing trim, retime, fades, ducking, mute, and volume automation remain on the clip.",
+				"Reserved cleanup execution surface. Returns MODEL_SELECTION_REQUIRED without provider execution until the owner approves an exact model identity, source, license, and artifact hash; attach precomputed audio with opencut_attach_clean_audio.",
 			inputSchema: withProjectMutationSafety(cleanAudioInputSchema),
 		},
 		async (input) =>
@@ -1579,24 +1561,8 @@ function createServer(): McpServer {
 				await ledgerBoundary.execute(
 					"opencut_clean_audio",
 					input,
-					(context) =>
-						audioCleanup.clean(
-							input,
-							observeProvider(context, input.operationId),
-						),
-					async (context) => {
-						const artifact = retainedProviderArtifact(
-							context,
-							"audio-cleaner-command",
-						);
-						return artifact
-							? audioCleanup.attachRecovered(
-									input,
-									artifact,
-									observeProvider(context, input.operationId),
-								)
-							: null;
-					},
+					async () => modelSelectionRequired("opencut.task.audio-cleanup.v1"),
+					async () => modelSelectionRequired("opencut.task.audio-cleanup.v1"),
 				),
 			),
 	);
@@ -2124,7 +2090,7 @@ function createServer(): McpServer {
 		"opencut_track_subject",
 		{
 			description:
-				"Track a subject through a video clip with the configured local provider, map source samples through trim and retime, smooth the motion, and atomically create focal-point or crop reframe keyframes.",
+				"Reserved subject-tracking execution surface. Returns MODEL_SELECTION_REQUIRED without provider execution until the owner approves an exact model identity, source, license, and artifact hash; persist external tracking data with opencut_create_media_analysis.",
 			inputSchema: withProjectMutationSafety(trackSubjectInputSchema),
 		},
 		async (input) =>
@@ -2132,21 +2098,10 @@ function createServer(): McpServer {
 				await ledgerBoundary.execute(
 					"opencut_track_subject",
 					input,
-					(context) =>
-						subjectTracking.track(
-							input,
-							observeProvider(context, input.operationId),
-						),
-					async (context) => {
-						const recovery = retainedTrackingRecovery(context);
-						return recovery
-							? subjectTracking.applyRecovered(
-									input,
-									recovery,
-									observeProvider(context, input.operationId),
-								)
-							: null;
-					},
+					async () =>
+						modelSelectionRequired("opencut.task.subject-tracking.v1"),
+					async () =>
+						modelSelectionRequired("opencut.task.subject-tracking.v1"),
 				),
 			),
 	);
@@ -3113,6 +3068,13 @@ function toolResult(value: unknown) {
 	};
 }
 
+function modelSelectionRequired(taskId: string) {
+	return {
+		...getMediaExecutionBlocker(taskId),
+		affectedObjects: [] as [],
+	};
+}
+
 type BrowserHistoryState = {
 	status: "history-state";
 	projectId: string;
@@ -3371,72 +3333,6 @@ function providerCheckpointChannel(
 		if (channel === "alpha" || channel === "red") return channel;
 	}
 	return null;
-}
-
-function retainedTrackingRecovery(context: OperationExecutionContext): {
-	samples: Array<{
-		sourceTime: number;
-		box: { x: number; y: number; width: number; height: number };
-		confidence?: number;
-	}>;
-	modelId: string;
-	modelVersion: string;
-} | null {
-	const checkpoint = context
-		.record()
-		.checkpoints.find(
-			(candidate) =>
-				candidate.kind === "provider" &&
-				Array.isArray(candidate.metadata.samples),
-		);
-	const provenance = context
-		.record()
-		.providerProvenance.find(
-			(candidate) => candidate.provider === "subject-tracker-command",
-		);
-	if (
-		!checkpoint ||
-		!provenance?.modelId ||
-		!provenance.modelVersion ||
-		!Array.isArray(checkpoint.metadata.samples)
-	)
-		return null;
-	const samples = checkpoint.metadata.samples.map(parseTrackingSample);
-	return samples.every((sample) => sample !== null)
-		? {
-				samples: samples as NonNullable<(typeof samples)[number]>[],
-				modelId: provenance.modelId,
-				modelVersion: provenance.modelVersion,
-			}
-		: null;
-}
-
-function parseTrackingSample(value: JsonValue) {
-	if (!isRecord(value) || !isRecord(value.box)) return null;
-	const box = value.box;
-	if (
-		typeof value.sourceTime !== "number" ||
-		!Number.isInteger(value.sourceTime) ||
-		value.sourceTime < 0 ||
-		![box.x, box.y, box.width, box.height].every(
-			(candidate) =>
-				typeof candidate === "number" && Number.isFinite(candidate),
-		) ||
-		(value.confidence !== undefined && typeof value.confidence !== "number")
-	)
-		return null;
-	return {
-		sourceTime: value.sourceTime,
-		box: {
-			x: box.x as number,
-			y: box.y as number,
-			width: box.width as number,
-			height: box.height as number,
-		},
-		...(typeof value.confidence === "number"
-			? { confidence: value.confidence }
-			: {}),
-	};
 }
 
 async function runProjectOperation({

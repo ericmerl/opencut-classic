@@ -188,9 +188,10 @@ describe("CapabilitySnapshotService", () => {
 			fonts: { status: "ready" },
 			providers: {
 				audioCleanup: {
-					status: "ready",
-					version: expect.any(String),
-					model: { status: "unknown" },
+					status: "model-selection-required",
+					canExecute: false,
+					version: null,
+					model: { status: "model-selection-required" },
 				},
 			},
 		});

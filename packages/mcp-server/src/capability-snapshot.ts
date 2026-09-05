@@ -607,21 +607,20 @@ export class CapabilitySnapshotService {
 	}
 
 	private async readProviderReadiness() {
+		const modelSelectionRequired = {
+			status: "model-selection-required",
+			canExecute: false,
+			reason:
+				"Owner approval of an exact model ID, immutable version, canonical source, license, and SHA-256 is required.",
+			command: null,
+			version: null,
+			model: { status: "model-selection-required", id: null, version: null },
+		};
 		const entries = [
-			[
-				"audioCleanup",
-				"OPENCUT_AUDIO_CLEANER_COMMAND",
-				"OPENCUT_AUDIO_CLEANER_ARGS",
-			],
 			[
 				"matteGeneration",
 				"OPENCUT_MATTE_PRODUCER_COMMAND",
 				"OPENCUT_MATTE_PRODUCER_ARGS",
-			],
-			[
-				"subjectTracking",
-				"OPENCUT_SUBJECT_TRACKER_COMMAND",
-				"OPENCUT_SUBJECT_TRACKER_ARGS",
 			],
 		] as const;
 		const results = await Promise.all(
@@ -671,7 +670,11 @@ export class CapabilitySnapshotService {
 				] as const;
 			}),
 		);
-		return Object.fromEntries(results);
+		return {
+			audioCleanup: modelSelectionRequired,
+			...Object.fromEntries(results),
+			subjectTracking: modelSelectionRequired,
+		};
 	}
 
 	private async readWasmArtifact() {
