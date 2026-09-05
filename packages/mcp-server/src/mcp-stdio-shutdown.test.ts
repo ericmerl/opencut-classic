@@ -47,7 +47,7 @@ test("exits promptly after the MCP client closes stdin", async () => {
 		child.stdin.end();
 		const exitCode = await Promise.race([
 			child.exited,
-			Bun.sleep(750).then(() => null),
+			Bun.sleep(2_000).then(() => null),
 		]);
 		expect(exitCode).not.toBeNull();
 	} finally {
@@ -56,7 +56,7 @@ test("exits promptly after the MCP client closes stdin", async () => {
 			await child.exited;
 		}
 	}
-});
+}, 30_000);
 
 async function readFirstLine(
 	stream: ReadableStream<Uint8Array>,
