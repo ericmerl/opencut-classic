@@ -90,8 +90,11 @@ describe("capability snapshot public MCP transport", () => {
 		expect(filmFrame).toMatchObject({
 			id: "simple-media.film-frame",
 			name: "Film Frame",
+			behavior: expect.stringContaining("deterministic grain"),
 			readiness: {
-				status: "reference-missing",
+				status: "ready",
+				implementation: "opencut-defined-v1",
+				externalEquivalence: "not-claimed",
 				reference: null,
 				tolerance: null,
 			},
@@ -117,7 +120,7 @@ describe("capability snapshot public MCP transport", () => {
 			expect.objectContaining({
 				id: "simple-media.montage-curve",
 				readiness: expect.objectContaining({
-					status: "reference-missing",
+					status: "ready",
 				}),
 			}),
 		]);

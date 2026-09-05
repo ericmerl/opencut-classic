@@ -96,6 +96,8 @@ mock.module("opencut-wasm", () => ({
 	transitionCatalog: () => nativeWasm().transitionCatalog(),
 	resolveMediaTreatment: (options: unknown) =>
 		nativeWasm().resolveMediaTreatment(options),
+	resolveMediaTreatmentRender: (options: unknown) =>
+		nativeWasm().resolveMediaTreatmentRender(options),
 	resolveSplitTransition: (options: unknown) =>
 		nativeWasm().resolveSplitTransition(options),
 	evaluateTransition: (options: unknown) =>

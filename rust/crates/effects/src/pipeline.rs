@@ -11,6 +11,8 @@ const GAUSSIAN_BLUR_SHADER_ID: &str = "gaussian-blur";
 const GAUSSIAN_BLUR_SHADER_SOURCE: &str = include_str!("shaders/gaussian_blur.wgsl");
 const COLOR_GRADE_SHADER_ID: &str = "color-grade";
 const COLOR_GRADE_SHADER_SOURCE: &str = include_str!("shaders/color_grade.wgsl");
+const NAMED_TREATMENT_SHADER_ID: &str = "named-treatment";
+const NAMED_TREATMENT_SHADER_SOURCE: &str = include_str!("shaders/named_treatment.wgsl");
 
 pub struct ApplyEffectsOptions<'a> {
     pub source: &'a wgpu::Texture,
@@ -93,6 +95,13 @@ impl EffectPipeline {
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("effects-color-grade-shader"),
                     source: wgpu::ShaderSource::Wgsl(COLOR_GRADE_SHADER_SOURCE.into()),
+                });
+        let named_treatment_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-named-treatment-shader"),
+                    source: wgpu::ShaderSource::Wgsl(NAMED_TREATMENT_SHADER_SOURCE.into()),
                 });
         let pipeline_layout =
             context
@@ -177,9 +186,49 @@ impl EffectPipeline {
                     multiview_mask: None,
                     cache: None,
                 });
+        let named_treatment_pipeline =
+            context
+                .device()
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("effects-named-treatment-pipeline"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &vertex_shader_module,
+                        entry_point: Some("vertex_main"),
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<[f32; 2]>() as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &[wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x2,
+                                offset: 0,
+                                shader_location: 0,
+                            }],
+                        }],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &named_treatment_shader_module,
+                        entry_point: Some("fragment_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: context.texture_format(),
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                });
         let pipelines = HashMap::from([
             (GAUSSIAN_BLUR_SHADER_ID.to_string(), gaussian_blur_pipeline),
             (COLOR_GRADE_SHADER_ID.to_string(), color_grade_pipeline),
+            (
+                NAMED_TREATMENT_SHADER_ID.to_string(),
+                named_treatment_pipeline,
+            ),
         ]);
 
         Self {
@@ -318,10 +367,36 @@ fn pack_effect_uniforms(
     match pass.shader.as_str() {
         GAUSSIAN_BLUR_SHADER_ID => pack_gaussian_blur_uniforms(pass, width, height),
         COLOR_GRADE_SHADER_ID => pack_color_grade_uniforms(pass, width, height),
+        NAMED_TREATMENT_SHADER_ID => pack_named_treatment_uniforms(pass, width, height),
         shader => Err(EffectsError::UnknownEffectShader {
             shader: shader.to_string(),
         }),
     }
+}
+
+fn pack_named_treatment_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<EffectUniformBuffer, EffectsError> {
+    const UNIFORMS: [&str; 3] = ["u_mode", "u_mix", "u_progress"];
+    let mode = read_number_uniform(pass, "u_mode")?;
+    let mix = read_number_uniform(pass, "u_mix")?;
+    let progress = read_number_uniform(pass, "u_progress")?;
+    for uniform in pass.uniforms.keys() {
+        if !UNIFORMS.contains(&uniform.as_str()) {
+            return Err(EffectsError::UnsupportedUniform {
+                shader: pass.shader.clone(),
+                uniform: uniform.clone(),
+            });
+        }
+    }
+    Ok(EffectUniformBuffer {
+        resolution: [width as f32, height as f32],
+        direction: [0.0; 2],
+        primary: [mode, mix, progress, 0.0],
+        secondary: [0.0; 4],
+    })
 }
 
 fn pack_gaussian_blur_uniforms(
@@ -480,6 +555,11 @@ mod tests {
     #[test]
     fn gaussian_blur_shader_remains_valid_with_shared_uniform_layout() {
         validate_shader(GAUSSIAN_BLUR_SHADER_SOURCE);
+    }
+
+    #[test]
+    fn named_treatment_shader_remains_valid_with_shared_uniform_layout() {
+        validate_shader(NAMED_TREATMENT_SHADER_SOURCE);
     }
 
     #[test]

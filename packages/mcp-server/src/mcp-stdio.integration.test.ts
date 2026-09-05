@@ -1083,11 +1083,36 @@ integrationTest(
 		const profileDirectory = join(directory, "named-treatment-profile");
 		const receiptDirectory = join(directory, "named-treatment-receipts");
 		const outputPath = join(directory, "transition-parity.webm");
-		const sources = [
+		const treatmentIds = [
+			"simple-media.film-frame",
+			"simple-media.play-pendulum",
+			"simple-media.technicolor-flash",
+			"simple-media.scanner-bar",
+			"simple-media.glitch",
+			"simple-media.chromatic",
+			"simple-media.dark-night",
+			"simple-media.mirror",
+			"simple-media.body-treatment",
+			"simple-media.meme-treatment",
+			"simple-media.pull-in",
+			"simple-media.pull-out",
+			"simple-media.swipe-left",
+			"simple-media.montage-curve",
+		] as const;
+		const sources: ReadonlyArray<readonly [string, string]> = [
 			["red", "color=c=0xd02020:size=320x240:rate=30:duration=2"],
 			["green", "color=c=0x20d040:size=320x240:rate=30:duration=2"],
 			["blue", "color=c=0x2040d0:size=320x240:rate=30:duration=2"],
-		] as const;
+			...treatmentIds.map(
+				(treatmentId, index) =>
+					[
+						`treatment-${index}`,
+						treatmentId === "simple-media.montage-curve"
+							? "testsrc2=size=320x240:rate=30:duration=2"
+							: "smptebars=size=320x240:rate=30:duration=2",
+					] as const,
+			),
+		];
 		for (const [name, filter] of sources) {
 			await createSyntheticVideo(join(directory, `${name}.mp4`), filter);
 		}
@@ -1112,7 +1137,11 @@ integrationTest(
 			treatments: [
 				{
 					id: "simple-media.film-frame",
-					readiness: { status: "reference-missing" },
+					readiness: {
+						status: "ready",
+						implementation: "opencut-defined-v1",
+						externalEquivalence: "not-claimed",
+					},
 				},
 			],
 		});
@@ -1211,16 +1240,20 @@ integrationTest(
 		);
 		expect(invalidTransition).toMatchObject({ result: { status: "rejected" } });
 
+		const treatmentElementIds = elementIds.slice(3);
+		const treatmentOperations = treatmentIds.map((treatmentId, index) => ({
+			kind: "upsert_effect",
+			trackId,
+			elementId: treatmentElementIds[index],
+			effectId: `treatment-effect-${index}`,
+			effectType: treatmentId,
+			...(treatmentId === "simple-media.film-frame"
+				? { params: { mix: 0.75 } }
+				: {}),
+			enabled: true,
+		}));
 		const operations = [
-			{
-				kind: "upsert_effect",
-				trackId,
-				elementId: elementIds[0],
-				effectId: "film-frame-foundation",
-				effectType: "simple-media.film-frame",
-				params: { mix: 0.75 },
-				enabled: false,
-			},
+			...treatmentOperations,
 			{
 				kind: "upsert_transition",
 				trackId,
@@ -1234,7 +1267,7 @@ integrationTest(
 				kind: "create_compound",
 				compoundId: "transition-compound",
 				name: "Transition compound",
-				elements: elementIds.slice(1).map((elementId) => ({
+				elements: elementIds.slice(1, 3).map((elementId) => ({
 					trackId,
 					elementId,
 				})),
@@ -1289,11 +1322,11 @@ integrationTest(
 		const firstElement = requireRecords(
 			appliedSnapshot.elements,
 			"elements",
-		).find((element) => element.elementId === elementIds[0]);
+		).find((element) => element.elementId === treatmentElementIds[0]);
 		expect(requireRecords(firstElement?.effects, "effects")).toContainEqual({
-			effectId: "film-frame-foundation",
+			effectId: "treatment-effect-0",
 			effectType: "simple-media.film-frame",
-			enabled: false,
+			enabled: true,
 			params: { mix: 0.75 },
 		});
 		await first.callTool("opencut_stop_editor_worker", {});
@@ -1320,11 +1353,11 @@ integrationTest(
 			affinity(identity),
 		);
 		const reloadedFirst = requireRecords(reloaded.elements, "elements").find(
-			(element) => element.elementId === elementIds[0],
+			(element) => element.elementId === treatmentElementIds[0],
 		);
 		expect(requireRecords(reloadedFirst?.effects, "effects")).toContainEqual(
 			expect.objectContaining({
-				effectId: "film-frame-foundation",
+				effectId: "treatment-effect-0",
 				effectType: "simple-media.film-frame",
 				params: { mix: 0.75 },
 			}),
@@ -1373,7 +1406,48 @@ integrationTest(
 			},
 			5 * 60_000,
 		);
-		expect(exported.status).toBe("exported");
+		expect(exported).toMatchObject({ status: "exported" });
+		for (const [index, treatmentId] of treatmentIds.entries()) {
+			const treatmentTicks = (index + 3) * 240_000 + 12_000;
+			const treatmentPreview = await restarted.callTool(
+				"opencut_render_preview_frame",
+				{
+					...previewBase,
+					operationId: `named-treatment-${index}-preview`,
+					time: {
+						kind: "media-time",
+						ticks: treatmentTicks,
+						rounding: "exact",
+					},
+				},
+				5 * 60_000,
+			);
+			expect(treatmentPreview).toMatchObject({ status: "rendered" });
+			const treatmentRgba = await extractRgba(
+				requireString(treatmentPreview.outputPath, "treatment outputPath"),
+			);
+			const untreatedRgba = await extractRgba(
+				join(directory, `treatment-${index}.mp4`),
+				12_000 / MEDIA_TICKS_PER_SECOND,
+			);
+			expect(
+				rgbaComparisonMetrics(treatmentRgba, untreatedRgba).meanAbsoluteError,
+			).toBeGreaterThan(0.5);
+			const treatmentParity = rgbaComparisonMetrics(
+				treatmentRgba,
+				await extractRgba(outputPath, treatmentTicks / MEDIA_TICKS_PER_SECOND),
+			);
+			assertMetricAtMost({
+				label: `${treatmentId} preview/export RGBA MAE`,
+				actual: treatmentParity.meanAbsoluteError,
+				maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+			});
+			assertMetricAtLeast({
+				label: `${treatmentId} preview/export PSNR`,
+				actual: treatmentParity.psnrDb,
+				minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
+			});
+		}
 		for (const [label, ticks] of [
 			["compound-boundary", 268_000],
 			["nested-simple-boundary", 508_000],
