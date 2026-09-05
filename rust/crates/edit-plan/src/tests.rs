@@ -2325,6 +2325,17 @@ fn split_remaps_owned_objects_and_resolves_animation_boundaries() {
 
 #[test]
 fn split_retimed_clip_retaining_right_remaps_outgoing_transition() {
+    assert_eq!(
+        resolve_split_transition(ResolveSplitTransitionOptions {
+            retain_side: RetainSide::Right,
+            source_element_id: "video-1".into(),
+            right_element_id: "video-right".into(),
+        }),
+        SplitTransitionResolution {
+            incoming_target_element_id: None,
+            outgoing_source_element_id: Some("video-right".into()),
+        }
+    );
     let mut before = full_snapshot();
     before.project.scenes[0].tracks[0].elements[1]
         .common_mut()
@@ -3423,6 +3434,12 @@ fn named_treatments_fail_closed_for_unknown_ids_ranges_and_applicability() {
     .unwrap_err();
     assert!(matches!(wrong_element.code, ErrorCode::IncompatibleTrack));
     assert_eq!(wrong_element.path.as_deref(), Some("elementId"));
+
+    let wrong_track =
+        resolve_treatment_parameters("simple-media.film-frame", "video", "text", None, None)
+            .unwrap_err();
+    assert_eq!(wrong_track.kind, TreatmentValidationKind::Inapplicable);
+    assert_eq!(wrong_track.path, "trackId");
 }
 
 #[test]
@@ -3452,6 +3469,36 @@ fn nested_compound_catalog_state_fails_closed() {
     ))
     .unwrap_err();
     assert_eq!(treatment_error.path.as_deref(), Some("effectType"));
+
+    let mut track_snapshot = full_snapshot();
+    let CanonicalElement::Compound { tracks, .. } =
+        &mut track_snapshot.project.scenes[0].tracks[0].elements[1]
+    else {
+        panic!("fixture compound changed type");
+    };
+    tracks[0].track_type = "text".into();
+    let CanonicalElement::Image { effects, .. } = &mut tracks[0].elements[0] else {
+        panic!("fixture nested image changed type");
+    };
+    effects.push(CanonicalEffect {
+        order: 0,
+        id: "nested-treatment".into(),
+        effect_type: "simple-media.film-frame".into(),
+        enabled: true,
+        params: CanonicalValue::Object(BTreeMap::from([(
+            "mix".into(),
+            CanonicalValue::Number(1.0),
+        )])),
+    });
+    let track_error = evaluate(options_with_before(
+        track_snapshot,
+        vec![EditOperation::RemoveTransition {
+            track_id: "track-main".into(),
+            transition_id: "transition-1".into(),
+        }],
+    ))
+    .unwrap_err();
+    assert_eq!(track_error.path.as_deref(), Some("trackId"));
 
     let mut transition_snapshot = full_snapshot();
     let CanonicalElement::Compound { tracks, .. } =

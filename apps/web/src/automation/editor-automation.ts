@@ -3505,7 +3505,15 @@ export class EditorAutomation {
 			operation.kind === "remove_effect" ||
 			operation.kind === "reorder_effects"
 		) {
-			return buildEffectControlCommand({ element, operation });
+			const track = this.getTracks().find(
+				(candidate) => candidate.id === operation.trackId,
+			);
+			if (!track) throw new Error(`track not found: ${operation.trackId}`);
+			return buildEffectControlCommand({
+				element,
+				trackType: track.type,
+				operation,
+			});
 		}
 		if (
 			operation.kind === "upsert_keyframe" ||

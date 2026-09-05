@@ -2,6 +2,7 @@
 
 import { describe, expect, mock, test } from "bun:test";
 import type { SceneTracks, VideoElement } from "@/timeline";
+import { nativeWasm } from "../../../../test/native-wasm";
 
 let tracks: SceneTracks;
 mock.module("opencut-wasm", () => ({
@@ -10,6 +11,8 @@ mock.module("opencut-wasm", () => ({
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) => seconds * 120_000,
 	mediaTimeToSeconds: ({ time }: { time: number }) => time / 120_000,
 	parseTimecode: () => 0,
+	resolveSplitTransition: (options: unknown) =>
+		nativeWasm().resolveSplitTransition(options),
 	roundToFrame: ({ time }: { time: number }) => time,
 	snappedSeekTime: ({ time }: { time: number }) => time,
 }));

@@ -38,6 +38,8 @@ mock.module("opencut-wasm", () => ({
 	roundToFrame: ({ time }: { time: number }) => time,
 	resolveMediaTreatment: (options: unknown) =>
 		nativeWasm().resolveMediaTreatment(options),
+	resolveSplitTransition: (options: unknown) =>
+		nativeWasm().resolveSplitTransition(options),
 	snappedSeekTime: ({ time }: { time: number }) => time,
 }));
 mock.module("@/core", () => ({
