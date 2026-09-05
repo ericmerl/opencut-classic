@@ -770,91 +770,16 @@ impl State {
                     return Err(key_error);
                 }
             }
-            for effect in &element.effects {
-                if let Err(mut effect_error) = validate_effect_attachment(
-                    &element.element_type,
-                    &effect.effect_type,
-                    &effect.params,
-                    operation_index.unwrap_or(0),
-                ) {
-                    effect_error.operation_index = operation_index;
-                    return Err(effect_error);
-                }
-            }
         }
         for transition in &self.snapshot.transitions {
             unique(&mut ids, &transition.transition_id, operation_index)?;
-            self.require_element(
-                &transition.track_id,
-                &transition.from_element_id,
-                operation_index,
-            )?;
-            self.require_element(
-                &transition.track_id,
-                &transition.to_element_id,
-                operation_index,
-            )?;
-            let track = self
-                .snapshot
-                .tracks
-                .iter()
-                .find(|track| track.track_id == transition.track_id)
-                .expect("transition track was validated");
-            let from_element = self
-                .snapshot
-                .elements
-                .iter()
-                .find(|element| {
-                    element.track_id == transition.track_id
-                        && element.element_id == transition.from_element_id
-                })
-                .expect("transition source was validated");
-            let to_element = self
-                .snapshot
-                .elements
-                .iter()
-                .find(|element| {
-                    element.track_id == transition.track_id
-                        && element.element_id == transition.to_element_id
-                })
-                .expect("transition destination was validated");
-            if self
-                .snapshot
-                .transitions
-                .iter()
-                .filter(|candidate| {
-                    candidate.track_id == transition.track_id
-                        && candidate.to_element_id == transition.to_element_id
-                })
-                .count()
-                > 1
-            {
-                return Err(error(
-                    ErrorCode::InvalidValue,
-                    "incoming element has more than one transition",
-                    operation_index,
-                    Some("transition.toElementId"),
-                ));
-            }
-            if let Err(transition_error) =
-                validate_stored_transition(&transition_evaluation_options(
-                    &transition.transition_id,
-                    &transition.transition_type,
-                    &track.track_type,
-                    from_element,
-                    to_element,
-                    transition.duration,
-                    Some(&transition.transition_id),
-                ))
-            {
-                let mut mapped = map_transition_error(transition_error, 0);
-                mapped.operation_index = operation_index;
-                if mapped.path.as_deref() == Some("transitionType") {
-                    mapped.path = Some("transition.type".to_owned());
-                }
-                return Err(mapped);
-            }
         }
+        validate_catalog_state(
+            &self.snapshot.tracks,
+            &self.snapshot.elements,
+            &self.snapshot.transitions,
+            operation_index,
+        )?;
         for bookmark in &self.snapshot.bookmarks {
             if let Some(bookmark_id) = &bookmark.bookmark_id {
                 validate_id(bookmark_id, operation_index, "bookmarkId")?;
@@ -3118,7 +3043,6 @@ impl State {
                 ) {
                     return incompatible(index, "clip effects require a visual timeline element");
                 }
-                validate_treatment_applicability(effect_type, &element.element_type, index)?;
                 if let Some(effect) = element
                     .effects
                     .iter_mut()
@@ -5772,11 +5696,17 @@ impl State {
         }
         self.snapshot.elements.splice(pos..pos, split_elements);
 
-        if retain == "right" {
-            let right_id = right_id.expect("right-side ID was validated before insertion");
+        if retain == "left" {
             self.snapshot
                 .transitions
-                .retain(|transition| transition.to_element_id != id);
+                .retain(|transition| transition.from_element_id != id);
+        } else {
+            let right_id = right_id.expect("right-side ID was validated before insertion");
+            if retain == "right" {
+                self.snapshot
+                    .transitions
+                    .retain(|transition| transition.to_element_id != id);
+            }
             for transition in &mut self.snapshot.transitions {
                 if transition.from_element_id == id {
                     transition.from_element_id = right_id.into();
@@ -5824,6 +5754,96 @@ fn map_transition_error(failure: TransitionValidationError, index: usize) -> Edi
         TransitionValidationKind::Bounds => ErrorCode::Bounds,
     };
     error(code, failure.reason, Some(index), Some(&failure.path))
+}
+
+fn validate_catalog_state(
+    tracks: &[Track],
+    elements: &[Element],
+    transitions: &[Transition],
+    operation_index: Option<usize>,
+) -> Result<(), EditPlanError> {
+    for element in elements {
+        for effect in &element.effects {
+            if let Err(mut effect_error) = validate_effect_attachment(
+                &element.element_type,
+                &effect.effect_type,
+                &effect.params,
+                operation_index.unwrap_or(0),
+            ) {
+                effect_error.operation_index = operation_index;
+                return Err(effect_error);
+            }
+        }
+        validate_catalog_state(
+            &element.compound_tracks,
+            &element.compound_members,
+            &element.compound_transitions,
+            operation_index,
+        )?;
+    }
+    for transition in transitions {
+        let track = tracks
+            .iter()
+            .find(|track| track.track_id == transition.track_id)
+            .ok_or_else(|| {
+                error(
+                    ErrorCode::UnknownReference,
+                    "transition references an unknown track",
+                    operation_index,
+                    Some("transition.trackId"),
+                )
+            })?;
+        let endpoint = |element_id: &str| {
+            elements
+                .iter()
+                .find(|element| {
+                    element.track_id == transition.track_id && element.element_id == element_id
+                })
+                .ok_or_else(|| {
+                    error(
+                        ErrorCode::UnknownReference,
+                        "transition references an unknown element",
+                        operation_index,
+                        Some("transition.elementId"),
+                    )
+                })
+        };
+        let from_element = endpoint(&transition.from_element_id)?;
+        let to_element = endpoint(&transition.to_element_id)?;
+        if transitions
+            .iter()
+            .filter(|candidate| {
+                candidate.track_id == transition.track_id
+                    && candidate.to_element_id == transition.to_element_id
+            })
+            .count()
+            > 1
+        {
+            return Err(error(
+                ErrorCode::InvalidValue,
+                "incoming element has more than one transition",
+                operation_index,
+                Some("transition.toElementId"),
+            ));
+        }
+        if let Err(transition_error) = validate_stored_transition(&transition_evaluation_options(
+            &transition.transition_id,
+            &transition.transition_type,
+            &track.track_type,
+            from_element,
+            to_element,
+            transition.duration,
+            Some(&transition.transition_id),
+        )) {
+            let mut mapped = map_transition_error(transition_error, 0);
+            mapped.operation_index = operation_index;
+            if mapped.path.as_deref() == Some("transitionType") {
+                mapped.path = Some("transition.type".to_owned());
+            }
+            return Err(mapped);
+        }
+    }
+    Ok(())
 }
 
 fn animation_storage_keys(element: &Element) -> Vec<String> {
@@ -6889,21 +6909,7 @@ fn validate_effect_attachment(
         }
         return Ok(());
     }
-    validate_treatment_applicability(effect_type, element_type, index)?;
     effect_params(effect_type, element_type, None, Some(params), index).map(|_| ())
-}
-
-fn validate_treatment_applicability(
-    effect_type: &str,
-    element_type: &str,
-    index: usize,
-) -> Result<(), EditPlanError> {
-    if media_treatment_definition(effect_type).is_none() {
-        return Ok(());
-    }
-    resolve_treatment_parameters(effect_type, element_type, None, None)
-        .map(|_| ())
-        .map_err(|failure| treatment_error(failure, index))
 }
 
 fn treatment_params(

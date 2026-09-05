@@ -3,6 +3,7 @@ import { UpdateElementsCommand } from "@/commands/timeline/element/update-elemen
 import { findTrackTransition, type TimelineTrack } from "@/timeline";
 import type { AutomationEditOperation } from "./types";
 import { evaluateTransition } from "opencut-wasm";
+import { toTransitionBoundary } from "./transition-boundary";
 
 type TransitionOperation = Extract<
 	AutomationEditOperation,
@@ -48,8 +49,8 @@ export function buildTransitionCommand({
 		transitionId: operation.transitionId,
 		transitionType: operation.transitionType,
 		trackType: track.type,
-		fromElement: transitionBoundary(fromElement),
-		toElement: transitionBoundary(toElement),
+		fromElement: toTransitionBoundary(fromElement),
+		toElement: toTransitionBoundary(toElement),
 		duration: operation.duration,
 		existingIncomingTransitionId: toElement.transitionIn?.id,
 	});
@@ -74,14 +75,4 @@ export function buildTransitionCommand({
 			},
 		],
 	});
-}
-
-function transitionBoundary(element: TimelineTrack["elements"][number]) {
-	return {
-		id: element.id,
-		type: element.type,
-		startTime: element.startTime,
-		duration: element.duration,
-		hasMasks: "masks" in element && Boolean(element.masks?.length),
-	};
 }

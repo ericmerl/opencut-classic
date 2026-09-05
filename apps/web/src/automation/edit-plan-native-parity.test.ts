@@ -167,7 +167,7 @@ const parityCases: NativeParityCase[] = [
 	},
 	{
 		name: "set_retime omitted maintainPitch",
-		state: richState,
+		state: richStateWithoutTransition,
 		operation: {
 			kind: "set_retime",
 			trackId: "scene-target-main",
@@ -425,7 +425,7 @@ const parityCases: NativeParityCase[] = [
 	},
 	{
 		name: "move element scope",
-		state: richState,
+		state: richStateWithoutTransition,
 		operation: {
 			kind: "move",
 			trackId: "scene-target-main",
@@ -560,7 +560,7 @@ const parityCases: NativeParityCase[] = [
 	},
 	{
 		name: "trim explicit source span",
-		state: richState,
+		state: richStateWithoutTransition,
 		operation: {
 			kind: "trim",
 			trackId: "scene-target-main",
@@ -824,7 +824,7 @@ const optionalParityCases: NativeParityCase[] = [
 	},
 	{
 		name: "set_retime explicit maintainPitch with animated duration clamp",
-		state: richState,
+		state: richStateWithoutTransition,
 		operation: {
 			kind: "set_retime",
 			trackId: "scene-target-main",
@@ -1807,7 +1807,7 @@ function effectMergeState(): NativeState {
 }
 
 function retimedState(): NativeState {
-	const state = richState();
+	const state = richStateWithoutTransition();
 	const target = state.project.scenes.find(
 		(scene) => scene.id === "scene-target",
 	);

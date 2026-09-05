@@ -7,6 +7,7 @@ import type {
 	ProjectSnapshot,
 } from "opencut-wasm";
 import { evaluateStoredTransition } from "opencut-wasm";
+import { toTransitionBoundary } from "./transition-boundary";
 import type { ChannelData, ElementAnimations } from "@/animation/types";
 import type { Effect } from "@/effects/types";
 import type { Mask } from "@/masks/types";
@@ -435,8 +436,8 @@ function decodeTrack({
 			transitionId: transition.id,
 			transitionType: transition.type,
 			trackType: track.type,
-			fromElement: transitionBoundary(fromElement),
-			toElement: transitionBoundary(toElement),
+			fromElement: toTransitionBoundary(fromElement),
+			toElement: toTransitionBoundary(toElement),
 			duration: transition.duration,
 			existingIncomingTransitionId: transition.id,
 		});
@@ -510,16 +511,6 @@ function decodeTrack({
 		default:
 			throw new Error("retained track type is invalid");
 	}
-}
-
-function transitionBoundary(element: TimelineElement) {
-	return {
-		id: element.id,
-		type: element.type,
-		startTime: element.startTime,
-		duration: element.duration,
-		hasMasks: "masks" in element && Boolean(element.masks?.length),
-	};
 }
 
 function isVideoTrackElement(
