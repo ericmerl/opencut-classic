@@ -212,7 +212,8 @@ console.log(JSON.stringify({protocol:"opencut.approved-audio-provider.v1",status
 			"../providers/approved-audio/provider.py",
 		);
 		const python = [
-			"import importlib.util",
+			"import importlib.util, sys, types",
+			"sys.modules['numpy']=types.ModuleType('numpy')",
 			`spec=importlib.util.spec_from_file_location('provider', ${JSON.stringify(providerScript)})`,
 			"module=importlib.util.module_from_spec(spec)",
 			"spec.loader.exec_module(module)",
