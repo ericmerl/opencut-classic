@@ -3394,6 +3394,57 @@ fn named_treatments_resolve_defaults_and_persist_in_canonical_state() {
 }
 
 #[test]
+fn named_treatment_render_state_is_deterministic_and_montage_is_monotonic() {
+    let render = |treatment_id: &str, local_time: i64| {
+        resolve_media_treatment_render(ResolveMediaTreatmentRenderOptions {
+            treatment_id: treatment_id.into(),
+            params: Params::new(),
+            local_time,
+            duration: 120_000,
+            canvas_width: 320.0,
+            canvas_height: 240.0,
+        })
+    };
+
+    let ResolveMediaTreatmentRenderResponse::Resolved { motion, passes, .. } =
+        render("simple-media.play-pendulum", 15_000)
+    else {
+        panic!("play pendulum should resolve");
+    };
+    assert!(passes.is_empty());
+    assert!((motion.rotation_degrees - 12.0).abs() < 1e-9);
+
+    let ResolveMediaTreatmentRenderResponse::Resolved { motion, .. } =
+        render("simple-media.swipe-left", 15_000)
+    else {
+        panic!("swipe left should resolve");
+    };
+    assert!((motion.position_x - 270.0).abs() < 1e-9);
+    assert!((motion.opacity_multiplier - 0.25).abs() < 1e-9);
+
+    let montage_progress = |local_time| {
+        let ResolveMediaTreatmentRenderResponse::Resolved {
+            source_progress: Some(progress),
+            ..
+        } = render("simple-media.montage-curve", local_time)
+        else {
+            panic!("montage curve should resolve source progress");
+        };
+        progress
+    };
+    let samples = [0, 15_000, 30_000, 60_000, 90_000, 120_000].map(montage_progress);
+    assert_eq!(samples[0], 0.0);
+    assert_eq!(samples[5], 1.0);
+    assert!(samples.windows(2).all(|pair| pair[0] <= pair[1]));
+
+    assert!(
+        media_treatment_definitions()
+            .iter()
+            .all(|definition| !definition.behavior.is_empty())
+    );
+}
+
+#[test]
 fn named_treatments_fail_closed_for_unknown_ids_ranges_and_applicability() {
     let operation = |effect_type: &str, element_id: &str, mix: f64| EditOperation::UpsertEffect {
         track_id: if element_id == "text-1" {

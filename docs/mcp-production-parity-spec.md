@@ -653,11 +653,11 @@ Preview and export MUST use the same font descriptors, wrapping rules, line geom
 
 The exact realistic filter values already represented in the audit MUST remain discoverable as a stable preset and render identically in preview and export.
 
-Production parity also requires stable, discoverable, typed implementations of the named Simple Media treatments identified in audit section E: Film Frame, Play Pendulum, Technicolor Flash, Scanner Bar, Glitch, Chromatic, Dark Night, Mirror, required body or meme treatments, and exact Pull In, Pull Out, and Swipe Left behavior.
+Production parity also requires stable, discoverable, typed implementations of the named Simple Media treatments identified in audit section E: Film Frame, Play Pendulum, Technicolor Flash, Scanner Bar, Glitch, Chromatic, Dark Night, Mirror, Body Treatment, Meme Treatment, Pull In, Pull Out, and Swipe Left.
 
-Each treatment MUST define defaults, parameter ranges, applicability, persistence, renderer behavior, and reference visual tolerances. A similarly named effect is not sufficient. Implementation of a treatment MUST NOT start until its audit row records the owner-supplied reference clip or frame and a numeric tolerance (audit owner decision 5). This work is low priority and is scheduled after the foundations, lifecycle, evidence, and job milestones.
+Each treatment MUST define defaults, parameter ranges, applicability, persistence, and deterministic renderer behavior. Owner decision 5 was superseded on 2026-09-05: these treatments use documented OpenCut-defined semantics, require preview/export parity evidence and a visible change from an untreated source, and explicitly make no external Simple Media pixel-equivalence claim. External reference clips and tolerances are therefore not prerequisites.
 
-Foundation status (issue #28): Rust now owns a versioned treatment catalog for every named treatment in audit section E, including stable IDs, typed default parameter envelopes, bounds, element/track applicability, canonical effect-attachment persistence, and explicit `reference-missing` readiness. The public capability snapshot and `opencut_list_treatments` expose that catalog and exact ID lookup without claiming any treatment is visually exact. Rust rejects reserved-but-unknown IDs, inapplicable elements, unknown parameters, invalid types, and out-of-range values. Renderer behavior and visual reference comparisons remain unavailable until this audit records an owner-supplied reference clip or frame and numeric tolerance for each treatment; `reference-missing` is not a render-ready state.
+Implementation status (issue #28): Rust owns a versioned treatment catalog for every named treatment in audit section E, including stable IDs, documented behavior, typed default parameter envelopes, bounds, element/track applicability, canonical effect-attachment persistence, and explicit `ready`/`opencut-defined-v1` readiness with `externalEquivalence: not-claimed`. The public capability snapshot and `opencut_list_treatments` expose the catalog and exact ID lookup. Rust rejects reserved-but-unknown IDs, inapplicable elements, unknown parameters, invalid types, and out-of-range values. Rust also resolves visual shader passes, motion transforms and opacity, and Montage source-time mapping. Real managed-Chrome public-stdio coverage requires every treatment to differ visibly from its untreated source and compares preview/export pixels within the repository tolerances.
 
 ### 18.3 Transitions, keyframes, motion, and compositing
 
@@ -695,7 +695,7 @@ Preview and export audio MUST be tolerance-tested against the same automation an
 
 Production parity MUST add a durable source-to-timeline time map for speed ramps, reverse, and freeze frames. It MUST define trim, split, keyframe, transition, caption, tracker, matte, and audio mapping at every boundary.
 
-The model MUST represent the exact Montage behavior required by the workflow, independent pitch policy, and frame interpolation mode. The Montage curve is a named treatment under section 18.2 and its reference and tolerance MUST be recorded before implementation. Frame blending and optical flow remain optional, but fallback and diagnostic behavior MUST be explicit.
+The model MUST represent Montage behavior, independent pitch policy, and frame interpolation mode. The Montage Curve named treatment under section 18.2 is a Rust-owned normalized smoothstep source-time mapping; `mix` interpolates from linear time to that monotonic endpoint-preserving curve. Frame blending and optical flow remain optional, but fallback and diagnostic behavior MUST be explicit.
 
 ### 18.6 Variant exports
 
@@ -1058,7 +1058,7 @@ The implementation sequence follows dependency order, even where an older priori
 4. Content-addressed snapshot retention, range preview, and before/after comparison on top of exact-time frame rendering.
 5. One durable job model with running cancellation, explicit retry, progress, recovery, and resolution of uncertain outcomes.
 6. Project, scene, bookmark, track, media-bin, and timeline lifecycle.
-7. Production editing: captions and fonts (after the owner supplies the font set), variants, encoder recording, structured QC, delivery packaging, transcript and silence editing, redo and checkpoints, speed ramps, review annotations, then named treatments (after references are recorded), tracking and audio providers (after models are chosen), and finally chroma key.
+7. Production editing: captions and fonts (after the owner supplies the font set), variants, encoder recording, structured QC, delivery packaging, transcript and silence editing, redo and checkpoints, speed ramps, review annotations, named OpenCut-defined treatments, tracking and audio providers (after models are chosen), and finally chroma key.
 8. Reaudit every requirement and run the fresh-install Simple Media workflow.
 9. Begin P2 and the post-parity background-removal project only after parity is proven.
 
@@ -1081,15 +1081,14 @@ These decisions are already part of this specification:
 - Background-removal generation and refinement are outside parity and form the first post-parity project; matte attachment and provider protocols are preserved.
 - P2 cannot displace parity-required work.
 - The deployment is one Windows PC, personal use, one editor per instance, more instances for concurrency.
-- The fourteen owner decisions of 2026-09-02 recorded in the audit are settled.
+- The owner decisions recorded in the audit are settled except where the audit records an explicit later supersession.
 
 The following remain open and MUST be resolved before their dependent contracts freeze:
 
-1. The reference clip or frame and numeric tolerance for each named Simple Media effect, motion preset, transition, and the Montage curve. Owner supplies from the course material; recorded per audit row before implementation.
-2. The bundled font set. Owner supplies; the implementing agent asks before caption-preset work.
-3. Which local provider models are approved for subject tracking, audio cleanup, stem separation, and VAD. Deferred; low priority.
-4. Whether renders must be bitwise reproducible across driver updates on this PC or only within declared tolerance with a recorded environment fingerprint. Deferred; the fingerprint is required either way.
-5. Which transcript or EDL interchange formats are required beyond the versioned internal JSON contract.
+1. The bundled font set. Owner supplies; the implementing agent asks before caption-preset work.
+2. Which local provider models are approved for subject tracking, audio cleanup, stem separation, and VAD. Deferred; low priority.
+3. Whether renders must be bitwise reproducible across driver updates on this PC or only within declared tolerance with a recorded environment fingerprint. Deferred; the fingerprint is required either way.
+4. Which transcript or EDL interchange formats are required beyond the versioned internal JSON contract.
 
 An unanswered question MUST become a typed unavailable or policy-required result where it affects execution. It MUST not be filled by an undocumented default.
 

@@ -50,7 +50,23 @@ pub struct TreatmentApplicability {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum TreatmentReadinessStatus {
+    Ready,
     ReferenceMissing,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TreatmentImplementation {
+    #[serde(rename = "opencut-defined-v1")]
+    OpenCutDefinedV1,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExternalEquivalence {
+    NotClaimed,
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -59,6 +75,8 @@ pub enum TreatmentReadinessStatus {
 pub struct TreatmentReadiness {
     pub status: TreatmentReadinessStatus,
     pub reason: String,
+    pub implementation: TreatmentImplementation,
+    pub external_equivalence: ExternalEquivalence,
     pub reference: Option<String>,
     pub tolerance: Option<f64>,
 }
@@ -70,6 +88,7 @@ pub struct MediaTreatmentDefinition {
     pub id: String,
     pub name: String,
     pub kind: TreatmentKind,
+    pub behavior: String,
     pub parameters: Vec<CatalogParameter>,
     pub applicability: TreatmentApplicability,
     pub readiness: TreatmentReadiness,
@@ -137,6 +156,73 @@ pub enum ResolveMediaTreatmentResponse {
     Resolved { params: Params },
     NotTreatment { reserved_namespace: bool },
     Rejected { reason: String, path: String },
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolveMediaTreatmentRenderOptions {
+    pub treatment_id: String,
+    pub params: Params,
+    pub local_time: i64,
+    pub duration: i64,
+    pub canvas_width: f64,
+    pub canvas_height: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(hashmap_as_object))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TreatmentRenderPass {
+    pub shader: String,
+    pub uniforms: std::collections::BTreeMap<String, f64>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TreatmentMotion {
+    pub scale_x: f64,
+    pub scale_y: f64,
+    pub position_x: f64,
+    pub position_y: f64,
+    pub rotation_degrees: f64,
+    pub opacity_multiplier: f64,
+}
+
+impl Default for TreatmentMotion {
+    fn default() -> Self {
+        Self {
+            scale_x: 1.0,
+            scale_y: 1.0,
+            position_x: 0.0,
+            position_y: 0.0,
+            rotation_degrees: 0.0,
+            opacity_multiplier: 1.0,
+        }
+    }
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "status",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ResolveMediaTreatmentRenderResponse {
+    Resolved {
+        passes: Vec<TreatmentRenderPass>,
+        motion: TreatmentMotion,
+        source_progress: Option<f64>,
+    },
+    NotTreatment,
+    Rejected {
+        reason: String,
+    },
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
@@ -298,17 +384,68 @@ fn treatment(
         id: id.to_owned(),
         name: name.to_owned(),
         kind,
+        behavior: treatment_behavior(id).to_owned(),
         parameters,
         applicability: TreatmentApplicability {
             element_types: element_types.iter().map(|value| (*value).to_owned()).collect(),
             track_types,
         },
         readiness: TreatmentReadiness {
-            status: TreatmentReadinessStatus::ReferenceMissing,
-            reason: "Owner reference clip or frame and numeric tolerance are not recorded in audit row E. Rendering remains unavailable.".to_owned(),
+            status: TreatmentReadinessStatus::Ready,
+            reason: "Deterministic OpenCut-defined renderer behavior is available; external Simple Media pixel equivalence is not claimed.".to_owned(),
+            implementation: TreatmentImplementation::OpenCutDefinedV1,
+            external_equivalence: ExternalEquivalence::NotClaimed,
             reference: None,
             tolerance: None,
         },
+    }
+}
+
+fn treatment_behavior(id: &str) -> &'static str {
+    match id {
+        "simple-media.film-frame" => {
+            "Adds a dark film gate, vignette, deterministic grain, and a time-varying vertical scratch."
+        }
+        "simple-media.play-pendulum" => {
+            "Rotates around center through one damp-free 12-degree sinusoidal pendulum cycle over durationTicks, then rests."
+        }
+        "simple-media.technicolor-flash" => {
+            "Adds a time-varying three-channel exposure flash with alternating red, green, and blue emphasis."
+        }
+        "simple-media.scanner-bar" => {
+            "Moves a narrow cyan-white luminance bar from top to bottom while slightly cooling the underlying image."
+        }
+        "simple-media.glitch" => {
+            "Applies deterministic horizontal scan-band displacement, RGB separation, and intermittent luminance blocks."
+        }
+        "simple-media.chromatic" => {
+            "Separates red and blue channels horizontally while preserving the green channel."
+        }
+        "simple-media.dark-night" => {
+            "Applies a low-exposure blue night grade with center-weighted illumination."
+        }
+        "simple-media.mirror" => {
+            "Reflects the left half of the frame across the vertical center line."
+        }
+        "simple-media.body-treatment" => {
+            "Applies a warm center spotlight, increased contrast, and edge falloff intended for a centered subject."
+        }
+        "simple-media.meme-treatment" => {
+            "Applies high contrast, boosted saturation, a bright center, and a dark caption-safe frame."
+        }
+        "simple-media.pull-in" => {
+            "Animates scale from 1.18 to 1.0 with smoothstep easing over durationTicks, then rests."
+        }
+        "simple-media.pull-out" => {
+            "Animates scale from 0.82 to 1.0 with smoothstep easing over durationTicks, then rests."
+        }
+        "simple-media.swipe-left" => {
+            "Animates from one canvas width right to the resting position with smoothstep easing and a matching fade-in over durationTicks."
+        }
+        "simple-media.montage-curve" => {
+            "Maps normalized source time through smoothstep; mix interpolates from linear time to the monotonic endpoint-preserving curve."
+        }
+        _ => "",
     }
 }
 
@@ -362,7 +499,7 @@ pub fn media_treatment_definitions() -> Vec<MediaTreatmentDefinition> {
             "Montage Curve",
             TreatmentKind::RetimeCurve,
             &["video"],
-            vec![mix_parameter(), duration_parameter()],
+            vec![mix_parameter()],
         ),
     ]
 }
@@ -474,6 +611,113 @@ pub fn resolve_media_treatment(
             reason: error.reason,
             path: error.path,
         },
+    }
+}
+
+#[export]
+pub fn resolve_media_treatment_render(
+    options: ResolveMediaTreatmentRenderOptions,
+) -> ResolveMediaTreatmentRenderResponse {
+    let Some(definition) = media_treatment_definition(&options.treatment_id) else {
+        return ResolveMediaTreatmentRenderResponse::NotTreatment;
+    };
+    if options.local_time < 0
+        || options.duration <= 0
+        || !options.canvas_width.is_finite()
+        || !options.canvas_height.is_finite()
+        || options.canvas_width <= 0.0
+        || options.canvas_height <= 0.0
+    {
+        return ResolveMediaTreatmentRenderResponse::Rejected {
+            reason: "treatment render time and canvas dimensions must be positive".to_owned(),
+        };
+    }
+    let params = match resolve_treatment_parameters(
+        &options.treatment_id,
+        &definition.applicability.element_types[0],
+        &definition.applicability.track_types[0],
+        None,
+        Some(&options.params),
+    ) {
+        Ok(params) => params,
+        Err(error) => {
+            return ResolveMediaTreatmentRenderResponse::Rejected {
+                reason: error.reason,
+            };
+        }
+    };
+    let mix = match params.get("mix") {
+        Some(Scalar::Number(value)) => *value,
+        _ => 1.0,
+    };
+    let progress = (options.local_time as f64 / options.duration as f64).clamp(0.0, 1.0);
+    let timed_progress = match params.get("durationTicks") {
+        Some(Scalar::Number(value)) => (options.local_time as f64 / *value).clamp(0.0, 1.0),
+        _ => progress,
+    };
+    let eased = timed_progress * timed_progress * (3.0 - 2.0 * timed_progress);
+    let mut motion = TreatmentMotion::default();
+    let mut source_progress = None;
+    let visual_mode = match options.treatment_id.as_str() {
+        "simple-media.film-frame" => Some(0.0),
+        "simple-media.technicolor-flash" => Some(1.0),
+        "simple-media.scanner-bar" => Some(2.0),
+        "simple-media.glitch" => Some(3.0),
+        "simple-media.chromatic" => Some(4.0),
+        "simple-media.dark-night" => Some(5.0),
+        "simple-media.mirror" => Some(6.0),
+        "simple-media.body-treatment" => Some(7.0),
+        "simple-media.meme-treatment" => Some(8.0),
+        "simple-media.play-pendulum" => {
+            motion.rotation_degrees = (timed_progress * std::f64::consts::TAU).sin() * 12.0 * mix;
+            None
+        }
+        "simple-media.pull-in" => {
+            let scale = 1.0 + (1.0 - eased) * 0.18 * mix;
+            motion.scale_x = scale;
+            motion.scale_y = scale;
+            None
+        }
+        "simple-media.pull-out" => {
+            let scale = 1.0 - (1.0 - eased) * 0.18 * mix;
+            motion.scale_x = scale;
+            motion.scale_y = scale;
+            None
+        }
+        "simple-media.swipe-left" => {
+            motion.position_x = options.canvas_width * (1.0 - eased) * mix;
+            motion.opacity_multiplier = 1.0 - (1.0 - timed_progress) * mix;
+            None
+        }
+        "simple-media.montage-curve" => {
+            let curved = progress * progress * (3.0 - 2.0 * progress);
+            source_progress = Some(progress + (curved - progress) * mix);
+            None
+        }
+        _ => {
+            return ResolveMediaTreatmentRenderResponse::Rejected {
+                reason: format!(
+                    "treatment {} has no renderer behavior",
+                    options.treatment_id
+                ),
+            };
+        }
+    };
+    let passes = visual_mode
+        .map(|mode| TreatmentRenderPass {
+            shader: "named-treatment".to_owned(),
+            uniforms: std::collections::BTreeMap::from([
+                ("u_mode".to_owned(), mode),
+                ("u_mix".to_owned(), mix),
+                ("u_progress".to_owned(), progress),
+            ]),
+        })
+        .into_iter()
+        .collect();
+    ResolveMediaTreatmentRenderResponse::Resolved {
+        passes,
+        motion,
+        source_progress,
     }
 }
 
