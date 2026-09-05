@@ -184,6 +184,12 @@ fn full_snapshot() -> ProjectSnapshot {
     .unwrap()
 }
 
+fn full_snapshot_without_transitions() -> ProjectSnapshot {
+    let mut snapshot = full_snapshot();
+    snapshot.project.scenes[0].tracks[0].transitions.clear();
+    snapshot
+}
+
 #[test]
 fn sequential_created_track_is_visible_to_later_insert() {
     let result = evaluate(options(vec![
@@ -1414,7 +1420,7 @@ fn all_61_operation_variants_have_valid_and_invalid_evaluator_coverage() {
         ),
         (
             "set_retime",
-            full_snapshot(),
+            full_snapshot_without_transitions(),
             vec![EditOperation::SetRetime {
                 track_id: "track-main".into(),
                 element_id: "video-1".into(),
@@ -1425,7 +1431,7 @@ fn all_61_operation_variants_have_valid_and_invalid_evaluator_coverage() {
         ),
         (
             "trim",
-            full_snapshot(),
+            full_snapshot_without_transitions(),
             vec![EditOperation::Trim {
                 track_id: "track-main".into(),
                 element_id: "video-1".into(),
@@ -1706,7 +1712,7 @@ fn timing_consequences_are_attributed_to_the_operation_that_caused_each_change()
 
 #[test]
 fn duration_changes_pin_and_apply_deterministic_animation_boundaries() {
-    let mut before = full_snapshot();
+    let mut before = full_snapshot_without_transitions();
     let video = before.project.scenes[0].tracks[0]
         .elements
         .iter_mut()
@@ -1795,7 +1801,7 @@ fn duration_changes_pin_and_apply_deterministic_animation_boundaries() {
 
 #[test]
 fn trim_pins_and_applies_deterministic_animation_boundaries() {
-    let mut before = full_snapshot();
+    let mut before = full_snapshot_without_transitions();
     let video = before.project.scenes[0].tracks[0]
         .elements
         .iter_mut()
@@ -2320,6 +2326,9 @@ fn split_remaps_owned_objects_and_resolves_animation_boundaries() {
 #[test]
 fn split_retimed_clip_retaining_right_remaps_outgoing_transition() {
     let mut before = full_snapshot();
+    before.project.scenes[0].tracks[0].elements[1]
+        .common_mut()
+        .start_time = MediaTime::from_ticks(120_000);
     let video = before.project.scenes[0].tracks[0]
         .elements
         .iter_mut()
@@ -3330,6 +3339,17 @@ fn caption_style_presets_name_bundled_faces_and_gate_insertion() {
 
 #[test]
 fn named_treatments_resolve_defaults_and_persist_in_canonical_state() {
+    let MediaTreatmentLookupResponse::Found { catalog } =
+        find_media_treatment("simple-media.film-frame".into())
+    else {
+        panic!("known treatment lookup failed");
+    };
+    assert_eq!(catalog.treatments.len(), 1);
+    assert!(matches!(
+        find_media_treatment("simple-media.unknown".into()),
+        MediaTreatmentLookupResponse::Unknown { .. }
+    ));
+
     let result = evaluate(options_with_before(
         full_snapshot(),
         vec![EditOperation::UpsertEffect {
@@ -3406,7 +3426,76 @@ fn named_treatments_fail_closed_for_unknown_ids_ranges_and_applicability() {
 }
 
 #[test]
+fn nested_compound_catalog_state_fails_closed() {
+    let mut treatment_snapshot = full_snapshot();
+    let CanonicalElement::Compound { tracks, .. } =
+        &mut treatment_snapshot.project.scenes[0].tracks[0].elements[1]
+    else {
+        panic!("fixture compound changed type");
+    };
+    let CanonicalElement::Image { effects, .. } = &mut tracks[0].elements[0] else {
+        panic!("fixture nested image changed type");
+    };
+    effects.push(CanonicalEffect {
+        order: 0,
+        id: "nested-treatment".into(),
+        effect_type: "simple-media.unknown".into(),
+        enabled: true,
+        params: CanonicalValue::Object(BTreeMap::new()),
+    });
+    let treatment_error = evaluate(options_with_before(
+        treatment_snapshot,
+        vec![EditOperation::RemoveTransition {
+            track_id: "track-main".into(),
+            transition_id: "transition-1".into(),
+        }],
+    ))
+    .unwrap_err();
+    assert_eq!(treatment_error.path.as_deref(), Some("effectType"));
+
+    let mut transition_snapshot = full_snapshot();
+    let CanonicalElement::Compound { tracks, .. } =
+        &mut transition_snapshot.project.scenes[0].tracks[0].elements[1]
+    else {
+        panic!("fixture compound changed type");
+    };
+    let nested_track = &mut tracks[0];
+    nested_track.elements[0].common_mut().duration = MediaTime::from_ticks(30_030);
+    let mut second = nested_track.elements[0].clone();
+    second.common_mut().id = "nested-image-2".into();
+    second.common_mut().order = 1;
+    second.common_mut().start_time = MediaTime::from_ticks(30_030);
+    nested_track.elements.push(second);
+    nested_track.transitions.push(CanonicalTransition {
+        order: 0,
+        id: "nested-transition".into(),
+        from_element_id: "nested-image".into(),
+        to_element_id: "nested-image-2".into(),
+        transition_type: "cube-spin".into(),
+        duration: MediaTime::from_ticks(4_004),
+    });
+    let transition_error = evaluate(options_with_before(
+        transition_snapshot,
+        vec![EditOperation::RemoveTransition {
+            track_id: "track-main".into(),
+            transition_id: "transition-1".into(),
+        }],
+    ))
+    .unwrap_err();
+    assert_eq!(transition_error.path.as_deref(), Some("transition.type"));
+}
+
+#[test]
 fn transition_catalog_owns_ids_and_compound_boundary_policy() {
+    let TransitionLookupResponse::Found { catalog } = find_transition("crossfade".into()) else {
+        panic!("known transition lookup failed");
+    };
+    assert_eq!(catalog.transitions.len(), 1);
+    assert!(matches!(
+        find_transition("cube-spin".into()),
+        TransitionLookupResponse::Unknown { .. }
+    ));
+
     let mut unknown_snapshot = full_snapshot();
     unknown_snapshot.project.scenes[0].tracks[0].transitions[0].transition_type =
         "cube-spin".into();

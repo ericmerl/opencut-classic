@@ -95,4 +95,82 @@ describe("SplitElementsCommand transition integrity", () => {
 		command.undo();
 		expect(tracks).toBe(before);
 	});
+
+	test("removes an outgoing transition when retain-left creates a gap", () => {
+		const before = {
+			overlay: [],
+			main: {
+				id: "main",
+				name: "Main",
+				type: "video",
+				muted: false,
+				hidden: false,
+				elements: [
+					video({ id: "left-source", startTime: 0 }),
+					{
+						...video({ id: "next", startTime: 240_000 }),
+						transitionIn: {
+							id: "transition",
+							type: "crossfade",
+							duration: mediaTime({ ticks: 30_000 }),
+							fromElementId: "left-source",
+						},
+					},
+				],
+			},
+			audio: [],
+		} satisfies SceneTracks;
+		tracks = before;
+
+		new SplitElementsCommand({
+			elements: [{ trackId: "main", elementId: "left-source" }],
+			splitTime: mediaTime({ ticks: 120_000 }),
+			retainSide: "left",
+		}).execute();
+
+		expect(tracks.main.elements[1]?.transitionIn).toBeUndefined();
+	});
+
+	test("remaps an outgoing transition to the right half when retaining both", () => {
+		const before = {
+			overlay: [],
+			main: {
+				id: "main",
+				name: "Main",
+				type: "video",
+				muted: false,
+				hidden: false,
+				elements: [
+					video({ id: "left-source", startTime: 0 }),
+					{
+						...video({ id: "next", startTime: 240_000 }),
+						transitionIn: {
+							id: "transition",
+							type: "crossfade",
+							duration: mediaTime({ ticks: 30_000 }),
+							fromElementId: "left-source",
+						},
+					},
+				],
+			},
+			audio: [],
+		} satisfies SceneTracks;
+		tracks = before;
+
+		new SplitElementsCommand({
+			elements: [{ trackId: "main", elementId: "left-source" }],
+			splitTime: mediaTime({ ticks: 120_000 }),
+			retainSide: "both",
+			rightElementIds: ["right-replacement"],
+		}).execute();
+
+		expect(tracks.main.elements.map(({ id }) => id)).toEqual([
+			"left-source",
+			"right-replacement",
+			"next",
+		]);
+		expect(tracks.main.elements[2]?.transitionIn?.fromElementId).toBe(
+			"right-replacement",
+		);
+	});
 });

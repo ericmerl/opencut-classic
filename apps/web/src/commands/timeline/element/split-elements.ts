@@ -80,6 +80,7 @@ export class SplitElementsCommand extends Command {
 			}
 
 			const replacedSourceIds = new Map<string, string>();
+			const removedTransitionSourceIds = new Set<string>();
 			const elements = track.elements.flatMap((element) => {
 				const shouldSplit = elementsToSplit.some(
 					(target) => target.elementId === element.id,
@@ -161,6 +162,7 @@ export class SplitElementsCommand extends Command {
 				});
 
 				if (this.retainSide === "left") {
+					removedTransitionSourceIds.add(element.id);
 					splitResult = [
 						{
 							...element,
@@ -207,6 +209,7 @@ export class SplitElementsCommand extends Command {
 						trackId: track.id,
 						elementId: secondElementId,
 					});
+					replacedSourceIds.set(element.id, secondElementId);
 					const rightOwned = cloneSplitRightOwnedIdentities({
 						element,
 						resolvedIds: this.resolvedIds,
@@ -240,6 +243,11 @@ export class SplitElementsCommand extends Command {
 			const remappedElements = elements.map((element) => {
 				if (!("transitionIn" in element) || !element.transitionIn) {
 					return element;
+				}
+				if (
+					removedTransitionSourceIds.has(element.transitionIn.fromElementId)
+				) {
+					return { ...element, transitionIn: undefined };
 				}
 				const remappedFromId = replacedSourceIds.get(
 					element.transitionIn.fromElementId,

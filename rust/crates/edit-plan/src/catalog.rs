@@ -84,6 +84,19 @@ pub struct MediaTreatmentCatalog {
     pub treatments: Vec<MediaTreatmentDefinition>,
 }
 
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, missing_as_null))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "status",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum MediaTreatmentLookupResponse {
+    Found { catalog: MediaTreatmentCatalog },
+    Unknown { reason: String },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreatmentValidationKind {
     UnknownId,
@@ -164,6 +177,19 @@ pub struct TransitionDefinition {
 pub struct TransitionCatalog {
     pub schema_version: String,
     pub transitions: Vec<TransitionDefinition>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "status",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum TransitionLookupResponse {
+    Found { catalog: TransitionCatalog },
+    Unknown { reason: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -444,6 +470,21 @@ pub fn media_treatment_catalog() -> MediaTreatmentCatalog {
     }
 }
 
+#[export]
+pub fn find_media_treatment(treatment_id: String) -> MediaTreatmentLookupResponse {
+    let Some(treatment) = media_treatment_definition(&treatment_id) else {
+        return MediaTreatmentLookupResponse::Unknown {
+            reason: format!("unknown treatment ID: {treatment_id}"),
+        };
+    };
+    MediaTreatmentLookupResponse::Found {
+        catalog: MediaTreatmentCatalog {
+            schema_version: MEDIA_TREATMENT_CATALOG_SCHEMA_VERSION.to_owned(),
+            treatments: vec![treatment],
+        },
+    }
+}
+
 fn transition(
     transition_type: TransitionType,
     compound_boundary_policy: TransitionBoundaryPolicy,
@@ -506,7 +547,7 @@ pub fn validate_transition_request(
 pub fn validate_stored_transition(
     options: &EvaluateTransitionOptions,
 ) -> Result<(), TransitionValidationError> {
-    validate_transition(options, false)
+    validate_transition(options, true)
 }
 
 fn validate_transition(
@@ -630,5 +671,20 @@ pub fn transition_catalog() -> TransitionCatalog {
     TransitionCatalog {
         schema_version: TRANSITION_CATALOG_SCHEMA_VERSION.to_owned(),
         transitions: transition_definitions(),
+    }
+}
+
+#[export]
+pub fn find_transition(transition_id: String) -> TransitionLookupResponse {
+    let Some(transition) = transition_definition(&transition_id) else {
+        return TransitionLookupResponse::Unknown {
+            reason: format!("unknown transition ID: {transition_id}"),
+        };
+    };
+    TransitionLookupResponse::Found {
+        catalog: TransitionCatalog {
+            schema_version: TRANSITION_CATALOG_SCHEMA_VERSION.to_owned(),
+            transitions: vec![transition],
+        },
     }
 }

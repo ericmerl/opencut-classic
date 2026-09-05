@@ -1463,6 +1463,152 @@ integrationTest(
 				minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
 			});
 		}
+
+		const fadeOperations = [
+			{
+				kind: "upsert_transition",
+				trackId,
+				transitionId: "outer-crossfade",
+				fromElementId: elementIds[0],
+				toElementId: "transition-compound",
+				transitionType: "fade-through-black",
+				duration: 60_000,
+			},
+		];
+		const fadePreflight = await restarted.callTool(
+			"opencut_preflight_edit_plan",
+			{
+				contractVersion: 2,
+				...affinity(identity),
+				projectId,
+				sceneId,
+				expectedRevision: previewBase.expectedRevision,
+				expectedProjectContentHash: previewBase.expectedProjectContentHash,
+				expectedWriteVersion: previewBase.expectedWriteVersion,
+				saveReceiptOperationId: previewBase.saveReceiptOperationId,
+				expectedSaveReceiptId: previewBase.expectedSaveReceiptId,
+				preflightId: "named-treatment-fade-compound-preflight",
+				description:
+					"Change the compound-boundary transition to fade through black",
+				operations: fadeOperations,
+				policy: {
+					warningPolicy: "allow",
+					providerExecution: "forbidden",
+					costPolicy: "require-exact",
+				},
+			},
+		);
+		expect(fadePreflight).toMatchObject({
+			result: { status: "validated" },
+		});
+		const fadeEvaluation = requireRecord(
+			requireRecord(fadePreflight.result, "fade preflight result").evaluation,
+			"fade evaluation",
+		);
+		const fadeApplied = await restarted.callTool("opencut_apply_edit_plan", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "named-treatment-fade-compound-apply",
+			expectedRevision: previewBase.expectedRevision,
+			expectedProjectContentHash: previewBase.expectedProjectContentHash,
+			description:
+				"Change the compound-boundary transition to fade through black",
+			operations: fadeOperations,
+			preflight: {
+				receiptId: requireString(
+					fadePreflight.receiptId,
+					"fade preflight receiptId",
+				),
+				planFingerprint: requireString(
+					fadeEvaluation.planFingerprint,
+					"fade planFingerprint",
+				),
+				preflightFingerprint: requireString(
+					fadeEvaluation.preflightFingerprint,
+					"fade preflightFingerprint",
+				),
+				planDiffHash: requireString(
+					fadeEvaluation.planDiffHash,
+					"fade planDiffHash",
+				),
+			},
+		});
+		expect(fadeApplied.status).toBe("applied");
+		const fadeSnapshot = requireRecord(fadeApplied.snapshot, "fade snapshot");
+		const fadeSave = await restarted.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "named-treatment-fade-compound-save",
+			expectedRevision: requireNumber(fadeApplied.revision, "fade revision"),
+			expectedContentHash: requireProjectContentHash(fadeSnapshot),
+		});
+		const fadeOutputPath = join(directory, "transition-parity-fade.webm");
+		const fadePreviewBase = {
+			...affinity(identity),
+			contractVersion: 2,
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(fadeApplied.revision, "fade revision"),
+			expectedProjectContentHash: requireProjectContentHash(fadeSnapshot),
+			expectedWriteVersion: requireNumber(
+				fadeSave.writeVersion,
+				"fade writeVersion",
+			),
+			saveReceiptOperationId: "named-treatment-fade-compound-save",
+			expectedSaveReceiptId: requireString(
+				fadeSave.receiptId,
+				"fade save receiptId",
+			),
+			canvasSize: { width: 320, height: 240 },
+			format: "png",
+		};
+		const fadeExport = await restarted.callTool(
+			"opencut_export_project",
+			{
+				...affinity(identity),
+				projectId,
+				operationId: "named-treatment-fade-transition-export",
+				expectedRevision: fadePreviewBase.expectedRevision,
+				expectedProjectContentHash: fadePreviewBase.expectedProjectContentHash,
+				outputPath: fadeOutputPath,
+				format: "webm",
+				quality: "very_high",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: false,
+				canvasSize: { width: 320, height: 240 },
+			},
+			5 * 60_000,
+		);
+		expect(fadeExport.status).toBe("exported");
+		const fadeTicks = 268_000;
+		const fadePreview = await restarted.callTool(
+			"opencut_render_preview_frame",
+			{
+				...fadePreviewBase,
+				operationId: "named-treatment-compound-fade-preview",
+				time: { kind: "media-time", ticks: fadeTicks, rounding: "exact" },
+			},
+			5 * 60_000,
+		);
+		expect(fadePreview).toMatchObject({ status: "rendered" });
+		const fadeParity = rgbaComparisonMetrics(
+			await extractRgba(
+				requireString(fadePreview.outputPath, "fade preview outputPath"),
+			),
+			await extractRgba(fadeOutputPath, fadeTicks / MEDIA_TICKS_PER_SECOND),
+		);
+		assertMetricAtMost({
+			label: "fade compound-boundary preview/export RGBA MAE",
+			actual: fadeParity.meanAbsoluteError,
+			maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+		});
+		assertMetricAtLeast({
+			label: "fade compound-boundary preview/export PSNR",
+			actual: fadeParity.psnrDb,
+			minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
+		});
 		await restarted.callTool("opencut_stop_editor_worker", {});
 	},
 	10 * 60_000,
