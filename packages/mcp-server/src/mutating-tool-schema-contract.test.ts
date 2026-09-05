@@ -690,6 +690,7 @@ const cases: SchemaCase[] = [
 					prompt: null,
 					initialBox: null,
 					maxSubjects: 1,
+					range: { startTicks: 0, endTicks: 120_000 },
 				},
 				provenance: {
 					origin: "external-result",

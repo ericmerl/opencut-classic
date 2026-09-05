@@ -79,6 +79,7 @@ pub enum ProviderOptionRequirements {
         max_subjects: IntegerBounds,
         prompt_max_chars: u32,
         normalized_initial_box: bool,
+        source_range_required: bool,
     },
     AudioCleanup {
         noise_reduction: NumberBounds,
@@ -333,6 +334,7 @@ fn provider_option_requirements(kind: ProviderTaskKind) -> ProviderOptionRequire
             },
             prompt_max_chars: 4_096,
             normalized_initial_box: true,
+            source_range_required: true,
         },
         ProviderTaskKind::AudioCleanup => ProviderOptionRequirements::AudioCleanup {
             noise_reduction: NumberBounds {
@@ -417,6 +419,7 @@ pub enum MediaAnalysisSemanticInputs {
         prompt: Option<String>,
         initial_box: Option<NormalizedBox>,
         max_subjects: u16,
+        range: SourceRange,
     },
     VoiceActivityDetection {
         channel: String,
@@ -428,7 +431,7 @@ pub enum MediaAnalysisSemanticInputs {
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TrackingSamplingOptions {
     pub interval_ticks: i64,
@@ -581,7 +584,7 @@ pub enum AnalysisPayload {
 }
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceRange {
     pub start_ticks: i64,
@@ -959,6 +962,7 @@ fn validate_provenance(provenance: &mut AnalysisProvenance) -> Result<(), (Strin
     provenance
         .lifecycle_events
         .sort_by_key(|event| event.sequence);
+    let mut previous_timestamp = None;
     for (index, event) in provenance.lifecycle_events.iter().enumerate() {
         if event.sequence as usize != index + 1 || event.attempt == 0 {
             return reject(
@@ -966,7 +970,14 @@ fn validate_provenance(provenance: &mut AnalysisProvenance) -> Result<(), (Strin
                 "provider lifecycle sequences must be contiguous and attempts must be positive",
             );
         }
-        require_text("provider lifecycle timestamp", &event.occurred_at)?;
+        let timestamp = parse_canonical_timestamp(&event.occurred_at)?;
+        if previous_timestamp.is_some_and(|previous| timestamp < previous) {
+            return reject(
+                "INVALID_PROVIDER_LIFECYCLE",
+                "provider lifecycle timestamps must be nondecreasing",
+            );
+        }
+        previous_timestamp = Some(timestamp);
     }
     let first = &provenance.lifecycle_events[0];
     if first.kind != ProviderLifecycleEventKind::Submitted || first.attempt != 1 {
@@ -1072,18 +1083,22 @@ fn validate_semantic_result_binding(
             MediaAnalysisSemanticInputs::SubjectTracking {
                 sampling,
                 max_subjects,
+                range: requested_range,
                 ..
             },
-            AnalysisPayload::SubjectTracking { subjects, .. },
+            AnalysisPayload::SubjectTracking {
+                coverage, subjects, ..
+            },
         ) => {
-            if subjects.len() > usize::from(*max_subjects)
+            if coverage != requested_range
+                || subjects.len() > usize::from(*max_subjects)
                 || subjects
                     .iter()
                     .any(|subject| subject.samples.len() > sampling.max_samples as usize)
             {
                 return reject(
                     "INCOMPATIBLE_SEMANTIC_INPUTS",
-                    "tracking results exceed the requested subject or sample limits",
+                    "tracking coverage or result counts do not match the semantic request",
                 );
             }
         }
@@ -1149,6 +1164,7 @@ fn validate_semantic_inputs(
                 prompt,
                 initial_box,
                 max_subjects,
+                range,
             },
         ) => {
             require_ticks("tracking sample interval", sampling.interval_ticks, false)?;
@@ -1167,6 +1183,7 @@ fn validate_semantic_inputs(
             if let Some(box_) = initial_box {
                 validate_box(box_)?;
             }
+            validate_range("tracking input range", range, source.duration_ticks)?;
         }
         (
             "opencut.task.voice-activity-detection.v1",
@@ -1411,7 +1428,14 @@ fn validate_payload(
                             );
                         }
                     }
-                    (ActivityCorrectionAction::Remove, None) => {}
+                    (ActivityCorrectionAction::Remove, None)
+                        if range_ids.contains(correction.range_id.as_str()) => {}
+                    (ActivityCorrectionAction::Remove, None) => {
+                        return reject(
+                            "MALFORMED_ACTIVITY_CORRECTION",
+                            "remove correction references an unknown activity range",
+                        );
+                    }
                     _ => {
                         return reject(
                             "MALFORMED_ACTIVITY_CORRECTION",
@@ -1519,6 +1543,94 @@ fn require_text(name: &str, value: &str) -> Result<(), (String, String)> {
         );
     }
     Ok(())
+}
+
+fn parse_canonical_timestamp(
+    value: &str,
+) -> Result<(u32, u32, u32, u32, u32, u32, u32), (String, String)> {
+    let bytes = value.as_bytes();
+    let delimiters = [
+        (4, b'-'),
+        (7, b'-'),
+        (10, b'T'),
+        (13, b':'),
+        (16, b':'),
+        (19, b'.'),
+        (23, b'Z'),
+    ];
+    if bytes.len() != 24
+        || delimiters
+            .iter()
+            .any(|(index, expected)| bytes.get(*index) != Some(expected))
+    {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle timestamps must use canonical UTC millisecond format",
+        );
+    }
+    let component = |start: usize, end: usize| {
+        bytes[start..end].iter().try_fold(0_u32, |value, byte| {
+            byte.is_ascii_digit()
+                .then_some(value * 10 + u32::from(*byte - b'0'))
+        })
+    };
+    let Some(year) = component(0, 4) else {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle timestamp contains invalid digits",
+        );
+    };
+    let Some(month) = component(5, 7) else {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle timestamp contains invalid digits",
+        );
+    };
+    let Some(day) = component(8, 10) else {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle timestamp contains invalid digits",
+        );
+    };
+    let Some(hour) = component(11, 13) else {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle timestamp contains invalid digits",
+        );
+    };
+    let Some(minute) = component(14, 16) else {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle timestamp contains invalid digits",
+        );
+    };
+    let Some(second) = component(17, 19) else {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle timestamp contains invalid digits",
+        );
+    };
+    let Some(millisecond) = component(20, 23) else {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle timestamp contains invalid digits",
+        );
+    };
+    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap_year => 29,
+        2 => 28,
+        _ => 0,
+    };
+    if year == 0 || day == 0 || day > days_in_month || hour > 23 || minute > 59 || second > 59 {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle timestamp is not a valid UTC instant",
+        );
+    }
+    Ok((year, month, day, hour, minute, second, millisecond))
 }
 
 fn require_sha256(name: &str, value: &str) -> Result<(), (String, String)> {

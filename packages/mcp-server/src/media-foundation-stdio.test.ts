@@ -198,10 +198,10 @@ test("persists canonical reusable tracking data and reads it after restart", asy
 	});
 	const analysis = record(created.analysis);
 	expect(analysis.semanticInputHash).toBe(
-		"8b709d3abcfdd75c977bb53035b34ee816b3dbb2661fb41df63556901d561705",
+		"f7d05b3e312172f6e244b6a155dce8665f2634a4b76c72af22a2fbaa1569bb3e",
 	);
 	expect(analysis.cacheIdentity).toBe(
-		"fb5acc4c8ca579d088b39ed6e2b37bd3e5152396f76a3eb9e9dd24a0fc4a82db",
+		"acca8b9ed6ea01415f7adce59bb20e0a1467cfb1362824085af98e9759918c88",
 	);
 	expect(analysis.contentHash).toMatch(/^[a-f0-9]{64}$/);
 
@@ -450,6 +450,25 @@ test("fails closed for unknown tasks, malformed results, incompatible attachment
 		operationDisposition: "not-applied",
 	});
 
+	const mismatchedTrackingCoverage = trackingAnalysis();
+	mismatchedTrackingCoverage.analysisId = "tracking-coverage-mismatch";
+	mismatchedTrackingCoverage.semanticInputs.range = {
+		startTicks: 0,
+		endTicks: 120_000,
+	};
+	const mismatchedTrackingCoverageResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:tracking-coverage"),
+			analysis: mismatchedTrackingCoverage,
+		},
+	);
+	expect(mismatchedTrackingCoverageResult).toMatchObject({
+		status: "rejected",
+		code: "INCOMPATIBLE_SEMANTIC_INPUTS",
+		operationDisposition: "not-applied",
+	});
+
 	const mismatchedVadChannel = voiceActivityAnalysis();
 	mismatchedVadChannel.analysisId = "vad-channel-mismatch";
 	mismatchedVadChannel.payload.channel = "dialogue";
@@ -690,6 +709,47 @@ test("fails closed for unknown tasks, malformed results, incompatible attachment
 		operationDisposition: "not-applied",
 	});
 
+	const vadUnknownRemoval = voiceActivityAnalysis();
+	vadUnknownRemoval.analysisId = "vad-unknown-removal";
+	vadUnknownRemoval.payload.corrections = [
+		{
+			correctionId: "remove-missing-range",
+			action: "remove",
+			rangeId: "missing-range",
+			range: null,
+			note: "Cannot remove a range that was never detected.",
+		},
+	];
+	const vadUnknownRemovalResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:vad-unknown-removal"),
+			analysis: vadUnknownRemoval,
+		},
+	);
+	expect(vadUnknownRemovalResult).toMatchObject({
+		status: "rejected",
+		code: "MALFORMED_ACTIVITY_CORRECTION",
+		operationDisposition: "not-applied",
+	});
+
+	const backwardLifecycle = trackingAnalysis();
+	backwardLifecycle.analysisId = "tracking-backward-lifecycle";
+	backwardLifecycle.provenance.lifecycleEvents[1]!.occurredAt =
+		"2026-09-04T23:59:59.999Z";
+	const backwardLifecycleResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:backward-lifecycle"),
+			analysis: backwardLifecycle,
+		},
+	);
+	expect(backwardLifecycleResult).toMatchObject({
+		status: "rejected",
+		code: "INVALID_PROVIDER_LIFECYCLE",
+		operationDisposition: "not-applied",
+	});
+
 	const created = await harness.call("opencut_create_media_analysis", {
 		...mutation("media-analysis:create:vad-stale-plan"),
 		analysis: { ...voiceActivityAnalysis(), analysisId: "vad-stale-plan" },
@@ -719,13 +779,16 @@ test("fails closed for unknown tasks, malformed results, incompatible attachment
 		"tracking-malformed",
 		"tracking-too-many-samples",
 		"tracking-too-many-subjects",
+		"tracking-coverage-mismatch",
 		"tracking-incomplete-lifecycle",
 		"tracking-invalid-retry-lifecycle",
+		"tracking-backward-lifecycle",
 		"tracking-incompatible",
 		"tracking-stale",
 		"tracking-unavailable-model",
 		"vad-overlap",
 		"vad-duplicate-correction-target",
+		"vad-unknown-removal",
 		"vad-channel-mismatch",
 		"vad-short-range",
 		"vad-outside-requested-range",
@@ -921,6 +984,7 @@ function trackingAnalysis() {
 			prompt: "person",
 			initialBox: null,
 			maxSubjects: 1,
+			range: { startTicks: 0, endTicks: 240_000 },
 		},
 		provenance: {
 			origin: "external-result",
