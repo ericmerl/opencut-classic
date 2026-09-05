@@ -2,7 +2,6 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
 import type { EditorCore } from "@/core";
 import type { TProject } from "@/project/types";
 import type {
@@ -14,16 +13,9 @@ import {
 	SAVE_RECEIPT_STORAGE_SCHEMA_VERSION,
 } from "@/services/storage/types";
 import type { TScene } from "@/timeline";
+import { nativeWasm } from "../../test/native-wasm";
 
-const require = createRequire(import.meta.url);
-const projectState =
-	require("../../../../rust/wasm/pkg-node/opencut_wasm.js") as {
-		evaluateAutomationOperationPolicy: (options: {
-			method: string;
-			status: string;
-		}) => { durableSuccess: boolean; retainSnapshot: boolean };
-		evaluateProjectSnapshotRetention: (options: unknown) => unknown;
-	};
+const projectState = nativeWasm();
 
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
@@ -32,6 +24,10 @@ mock.module("opencut-wasm", () => ({
 	evaluateEditPlan: () => {
 		throw new Error("save tests must not evaluate an edit plan");
 	},
+	evaluateTransition: (options: unknown) =>
+		projectState.evaluateTransition(options),
+	evaluateStoredTransition: (options: unknown) =>
+		projectState.evaluateStoredTransition(options),
 	evaluateProjectSnapshotRetention:
 		projectState.evaluateProjectSnapshotRetention,
 	formatTimecode: () => "00:00",
@@ -40,6 +36,8 @@ mock.module("opencut-wasm", () => ({
 	mediaTimeToSeconds: ({ time }: { time: number }) => time / 120000,
 	parseTimecode: () => 0,
 	roundToFrame: ({ time }: { time: number }) => time,
+	resolveMediaTreatment: (options: unknown) =>
+		projectState.resolveMediaTreatment(options),
 	snappedSeekTime: ({ time }: { time: number }) => time,
 }));
 mock.module("@/services/renderer/canvas-renderer", () => ({

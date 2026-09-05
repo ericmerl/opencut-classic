@@ -105,8 +105,25 @@ async function collectNode({
 		});
 		return;
 	}
-	if (node instanceof RootNode || node instanceof CompoundNode) {
-		if (node instanceof CompoundNode && !node.resolved?.active) return;
+	if (node instanceof CompoundNode) {
+		if (!node.resolved?.active) return;
+		const compoundItems: FrameItemDescriptor[] = [];
+		for (let index = 0; index < node.children.length; index++) {
+			await collectNode({
+				node: node.children[index],
+				renderer,
+				path: `${path}:${index}`,
+				items: compoundItems,
+				textures,
+			});
+		}
+		for (const item of compoundItems) {
+			multiplyFrameItemOpacity(item, node.resolved.opacity);
+		}
+		items.push(...compoundItems);
+		return;
+	}
+	if (node instanceof RootNode) {
 		for (let index = 0; index < node.children.length; index++) {
 			await collectNode({
 				node: node.children[index],
@@ -231,6 +248,19 @@ async function collectNode({
 			items,
 			textures,
 		});
+	}
+}
+
+function multiplyFrameItemOpacity(
+	item: FrameItemDescriptor,
+	multiplier: number,
+): void {
+	if (item.type === "layer") {
+		item.opacity *= multiplier;
+		return;
+	}
+	if (item.type === "track") {
+		for (const child of item.items) multiplyFrameItemOpacity(child, multiplier);
 	}
 }
 

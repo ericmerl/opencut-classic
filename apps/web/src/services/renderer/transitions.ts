@@ -58,11 +58,14 @@ export function applyClipTransition({
 		};
 	}
 
-	const scale = phase === "in" ? 0.8 + progress * 0.2 : 1 + progress * 0.15;
-	nextTransform.scaleX *= scale;
-	nextTransform.scaleY *= scale;
-	return {
-		transform: nextTransform,
-		opacity: opacity * (phase === "in" ? progress : 1 - progress),
-	};
+	if (type === "zoom") {
+		const scale = phase === "in" ? 0.8 + progress * 0.2 : 1 + progress * 0.15;
+		nextTransform.scaleX *= scale;
+		nextTransform.scaleY *= scale;
+		return {
+			transform: nextTransform,
+			opacity: opacity * (phase === "in" ? progress : 1 - progress),
+		};
+	}
+	throw new Error(`unknown transition ID: ${String(type)}`);
 }

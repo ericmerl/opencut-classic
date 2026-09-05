@@ -83,12 +83,55 @@ async function resolveNode({
 }): Promise<void> {
 	if (node instanceof CompoundNode) {
 		const clipTime = context.time - node.params.timeOffset;
-		const active = clipTime >= 0 && clipTime < node.params.duration;
-		node.resolved = { active };
+		const active =
+			clipTime >= 0 &&
+			(clipTime < node.params.duration ||
+				(Boolean(node.params.transitionOut) &&
+					clipTime <
+						node.params.duration + (node.params.transitionOut?.duration ?? 0)));
+		let opacity = 1;
+		if (
+			active &&
+			node.params.transitionOut &&
+			clipTime >= node.params.duration
+		) {
+			opacity = applyClipTransition({
+				type: node.params.transitionOut.type,
+				phase: "out",
+				progress:
+					(clipTime - node.params.duration) /
+					node.params.transitionOut.duration,
+				canvasWidth: context.renderer.width,
+				transform: {
+					position: { x: 0, y: 0 },
+					scaleX: 1,
+					scaleY: 1,
+					rotate: 0,
+				},
+				opacity: 1,
+			}).opacity;
+		} else if (active && node.params.transitionIn) {
+			opacity = applyClipTransition({
+				type: node.params.transitionIn.type,
+				phase: "in",
+				progress: clipTime / node.params.transitionIn.duration,
+				canvasWidth: context.renderer.width,
+				transform: {
+					position: { x: 0, y: 0 },
+					scaleX: 1,
+					scaleY: 1,
+					rotate: 0,
+				},
+				opacity: 1,
+			}).opacity;
+		}
+		node.resolved = { active, opacity };
 		if (!active) return;
 		const nestedContext = {
 			...context,
-			time: clipTime + node.params.trimStart,
+			time:
+				Math.min(clipTime, Math.max(0, node.params.duration - 1)) +
+				node.params.trimStart,
 		};
 		await Promise.all(
 			node.children.map((child) =>

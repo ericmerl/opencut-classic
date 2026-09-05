@@ -1071,6 +1071,348 @@ integrationTest(
 );
 
 integrationTest(
+	"persists named treatment foundations and renders transition parity across compound boundaries",
+	async () => {
+		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;
+		if (!baseUrl)
+			throw new Error("OPENCUT_HEADLESS_INTEGRATION_URL is required");
+		const browserPath = process.env.OPENCUT_HEADLESS_BROWSER_PATH;
+		if (!browserPath)
+			throw new Error("OPENCUT_HEADLESS_BROWSER_PATH is required");
+		const bridgePort = await availablePort();
+		const profileDirectory = join(directory, "named-treatment-profile");
+		const receiptDirectory = join(directory, "named-treatment-receipts");
+		const outputPath = join(directory, "transition-parity.webm");
+		const sources = [
+			["red", "color=c=0xd02020:size=320x240:rate=30:duration=2"],
+			["green", "color=c=0x20d040:size=320x240:rate=30:duration=2"],
+			["blue", "color=c=0x2040d0:size=320x240:rate=30:duration=2"],
+		] as const;
+		for (const [name, filter] of sources) {
+			await createSyntheticVideo(join(directory, `${name}.mp4`), filter);
+		}
+
+		const first = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await first.callTool("opencut_start_editor_worker", {});
+		const firstStatus = await first.callTool("opencut_connection_status", {});
+		const firstIdentity = requireRecord(
+			firstStatus.connectionIdentity,
+			"connection identity",
+		);
+		const catalog = await first.callTool("opencut_list_treatments", {
+			treatmentId: "simple-media.film-frame",
+		});
+		expect(catalog).toMatchObject({
+			treatments: [
+				{
+					id: "simple-media.film-frame",
+					readiness: { status: "reference-missing" },
+				},
+			],
+		});
+
+		let state = await first.callTool(
+			"opencut_get_project",
+			affinity(firstIdentity),
+		);
+		const projectId = requireString(state.projectId, "projectId");
+		const elementIds: string[] = [];
+		for (const [index, [name]] of sources.entries()) {
+			const imported = await first.callTool("opencut_import_media", {
+				...affinity(firstIdentity),
+				projectId,
+				operationId: `named-treatment-import-${name}`,
+				expectedRevision: requireNumber(state.revision, "revision"),
+				expectedProjectContentHash: requireProjectContentHash(state),
+				path: join(directory, `${name}.mp4`),
+				startTime: index * 240_000,
+				adoptMediaSettings: index === 0,
+			});
+			elementIds.push(requireString(imported.elementId, "elementId"));
+			state = requireRecord(imported.snapshot, "imported snapshot");
+			state.revision = imported.revision;
+		}
+		const sceneId = requireString(state.sceneId, "sceneId");
+		const trackId = requireString(
+			requireRecords(state.elements, "elements").find(
+				(element) => element.elementId === elementIds[0],
+			)?.trackId,
+			"trackId",
+		);
+		const saved = await first.callTool("opencut_save_project", {
+			...affinity(firstIdentity),
+			projectId,
+			sceneId,
+			operationId: "named-treatment-source-save",
+			expectedRevision: requireNumber(state.revision, "revision"),
+			expectedContentHash: requireProjectContentHash(state),
+		});
+		const preflightBase = {
+			contractVersion: 2,
+			...affinity(firstIdentity),
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(state.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(state),
+			expectedWriteVersion: requireNumber(saved.writeVersion, "writeVersion"),
+			saveReceiptOperationId: "named-treatment-source-save",
+			expectedSaveReceiptId: requireString(saved.receiptId, "save receiptId"),
+			policy: {
+				warningPolicy: "allow",
+				providerExecution: "forbidden",
+				costPolicy: "require-exact",
+			},
+		};
+		const invalidTreatment = await first.callTool(
+			"opencut_preflight_edit_plan",
+			{
+				...preflightBase,
+				preflightId: "named-treatment-invalid-range",
+				description: "Reject an out-of-range treatment parameter",
+				operations: [
+					{
+						kind: "upsert_effect",
+						trackId,
+						elementId: elementIds[0],
+						effectId: "film-frame-invalid",
+						effectType: "simple-media.film-frame",
+						params: { mix: 1.01 },
+					},
+				],
+			},
+		);
+		expect(invalidTreatment).toMatchObject({
+			result: { status: "rejected", error: { code: "BOUNDS", path: "mix" } },
+		});
+		const invalidTransition = await first.callTool(
+			"opencut_preflight_edit_plan",
+			{
+				...preflightBase,
+				preflightId: "named-transition-unknown-id",
+				description: "Reject an unknown transition ID in Rust",
+				operations: [
+					{
+						kind: "upsert_transition",
+						trackId,
+						transitionId: "unknown-transition",
+						fromElementId: elementIds[0],
+						toElementId: elementIds[1],
+						transitionType: "cube-spin",
+						duration: 60_000,
+					},
+				],
+			},
+		);
+		expect(invalidTransition).toMatchObject({ result: { status: "rejected" } });
+
+		const operations = [
+			{
+				kind: "upsert_effect",
+				trackId,
+				elementId: elementIds[0],
+				effectId: "film-frame-foundation",
+				effectType: "simple-media.film-frame",
+				params: { mix: 0.75 },
+				enabled: false,
+			},
+			{
+				kind: "upsert_transition",
+				trackId,
+				transitionId: "inner-crossfade",
+				fromElementId: elementIds[1],
+				toElementId: elementIds[2],
+				transitionType: "crossfade",
+				duration: 60_000,
+			},
+			{
+				kind: "create_compound",
+				compoundId: "transition-compound",
+				name: "Transition compound",
+				elements: elementIds.slice(1).map((elementId) => ({
+					trackId,
+					elementId,
+				})),
+				relationshipScope: "element",
+				targetTrackId: trackId,
+			},
+			{
+				kind: "upsert_transition",
+				trackId,
+				transitionId: "outer-crossfade",
+				fromElementId: elementIds[0],
+				toElementId: "transition-compound",
+				transitionType: "crossfade",
+				duration: 60_000,
+			},
+		];
+		const preflight = await first.callTool("opencut_preflight_edit_plan", {
+			...preflightBase,
+			preflightId: "named-treatment-valid-preflight",
+			description: "Persist treatment metadata and build transition boundaries",
+			operations,
+		});
+		expect(preflight).toMatchObject({ result: { status: "validated" } });
+		const evaluation = requireRecord(
+			requireRecord(preflight.result, "preflight result").evaluation,
+			"evaluation",
+		);
+		const applied = await first.callTool("opencut_apply_edit_plan", {
+			...affinity(firstIdentity),
+			projectId,
+			sceneId,
+			operationId: "named-treatment-valid-apply",
+			expectedRevision: preflightBase.expectedRevision,
+			expectedProjectContentHash: preflightBase.expectedProjectContentHash,
+			description: "Persist treatment metadata and build transition boundaries",
+			operations,
+			preflight: {
+				receiptId: requireString(preflight.receiptId, "preflight receiptId"),
+				planFingerprint: requireString(
+					evaluation.planFingerprint,
+					"planFingerprint",
+				),
+				preflightFingerprint: requireString(
+					evaluation.preflightFingerprint,
+					"preflightFingerprint",
+				),
+				planDiffHash: requireString(evaluation.planDiffHash, "planDiffHash"),
+			},
+		});
+		expect(applied.status).toBe("applied");
+		const appliedSnapshot = requireRecord(applied.snapshot, "applied snapshot");
+		const firstElement = requireRecords(
+			appliedSnapshot.elements,
+			"elements",
+		).find((element) => element.elementId === elementIds[0]);
+		expect(requireRecords(firstElement?.effects, "effects")).toContainEqual({
+			effectId: "film-frame-foundation",
+			effectType: "simple-media.film-frame",
+			enabled: false,
+			params: { mix: 0.75 },
+		});
+		await first.callTool("opencut_stop_editor_worker", {});
+		await first.close();
+
+		const restarted = await startMcp({
+			baseUrl,
+			browserPath,
+			bridgePort,
+			profileDirectory,
+			receiptDirectory,
+		});
+		await restarted.callTool("opencut_start_editor_worker", { projectId });
+		const restartedStatus = await restarted.callTool(
+			"opencut_connection_status",
+			{},
+		);
+		const identity = requireRecord(
+			restartedStatus.connectionIdentity,
+			"restarted identity",
+		);
+		const reloaded = await restarted.callTool(
+			"opencut_get_project",
+			affinity(identity),
+		);
+		const reloadedFirst = requireRecords(reloaded.elements, "elements").find(
+			(element) => element.elementId === elementIds[0],
+		);
+		expect(requireRecords(reloadedFirst?.effects, "effects")).toContainEqual(
+			expect.objectContaining({
+				effectId: "film-frame-foundation",
+				effectType: "simple-media.film-frame",
+				params: { mix: 0.75 },
+			}),
+		);
+		const paritySave = await restarted.callTool("opencut_save_project", {
+			...affinity(identity),
+			projectId,
+			sceneId,
+			operationId: "named-treatment-parity-save",
+			expectedRevision: requireNumber(reloaded.revision, "revision"),
+			expectedContentHash: requireProjectContentHash(reloaded),
+		});
+		const previewBase = {
+			...affinity(identity),
+			contractVersion: 2,
+			projectId,
+			sceneId,
+			expectedRevision: requireNumber(reloaded.revision, "revision"),
+			expectedProjectContentHash: requireProjectContentHash(reloaded),
+			expectedWriteVersion: requireNumber(
+				paritySave.writeVersion,
+				"writeVersion",
+			),
+			saveReceiptOperationId: "named-treatment-parity-save",
+			expectedSaveReceiptId: requireString(
+				paritySave.receiptId,
+				"save receiptId",
+			),
+			canvasSize: { width: 320, height: 240 },
+			format: "png",
+		};
+		const exported = await restarted.callTool(
+			"opencut_export_project",
+			{
+				...affinity(identity),
+				projectId,
+				operationId: "named-treatment-transition-export",
+				expectedRevision: previewBase.expectedRevision,
+				expectedProjectContentHash: previewBase.expectedProjectContentHash,
+				outputPath,
+				format: "webm",
+				quality: "very_high",
+				fps: { numerator: 30, denominator: 1 },
+				includeAudio: false,
+				canvasSize: { width: 320, height: 240 },
+			},
+			5 * 60_000,
+		);
+		expect(exported.status).toBe("exported");
+		for (const [label, ticks] of [
+			["compound-boundary", 268_000],
+			["nested-simple-boundary", 508_000],
+		] as const) {
+			const preview = await restarted.callTool(
+				"opencut_render_preview_frame",
+				{
+					...previewBase,
+					operationId: `named-treatment-${label}-preview`,
+					time: { kind: "media-time", ticks, rounding: "exact" },
+				},
+				5 * 60_000,
+			);
+			expect(preview).toMatchObject({ status: "rendered" });
+			const previewRgba = await extractRgba(
+				requireString(preview.outputPath, "preview outputPath"),
+			);
+			const exportRgba = await extractRgba(
+				outputPath,
+				ticks / MEDIA_TICKS_PER_SECOND,
+			);
+			const parity = rgbaComparisonMetrics(previewRgba, exportRgba);
+			assertMetricAtMost({
+				label: `${label} preview/export RGBA MAE`,
+				actual: parity.meanAbsoluteError,
+				maximum: PREVIEW_EXPORT_RGBA_MAE_TOLERANCE,
+			});
+			assertMetricAtLeast({
+				label: `${label} preview/export PSNR`,
+				actual: parity.psnrDb,
+				minimum: PREVIEW_EXPORT_RGBA_MIN_PSNR_DB,
+			});
+		}
+		await restarted.callTool("opencut_stop_editor_worker", {});
+	},
+	10 * 60_000,
+);
+
+integrationTest(
 	"materializes caption layout evidence with bundled fonts at preflight",
 	async () => {
 		const baseUrl = process.env.OPENCUT_HEADLESS_INTEGRATION_URL;

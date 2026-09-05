@@ -68,6 +68,8 @@ function buildTrackNodes({
 					timeOffset: element.startTime,
 					duration: element.duration,
 					trimStart: element.trimStart,
+					transitionIn,
+					transitionOut,
 				});
 				const visibleNestedTracks = [
 					...element.tracks.overlay.filter(

@@ -657,9 +657,13 @@ Production parity also requires stable, discoverable, typed implementations of t
 
 Each treatment MUST define defaults, parameter ranges, applicability, persistence, renderer behavior, and reference visual tolerances. A similarly named effect is not sufficient. Implementation of a treatment MUST NOT start until its audit row records the owner-supplied reference clip or frame and a numeric tolerance (audit owner decision 5). This work is low priority and is scheduled after the foundations, lifecycle, evidence, and job milestones.
 
+Foundation status (issue #28): Rust now owns a versioned treatment catalog for every named treatment in audit section E, including stable IDs, typed default parameter envelopes, bounds, element/track applicability, canonical effect-attachment persistence, and explicit `reference-missing` readiness. The public capability snapshot and `opencut_list_treatments` expose that catalog and exact ID lookup without claiming any treatment is visually exact. Rust rejects reserved-but-unknown IDs, inapplicable elements, unknown parameters, invalid types, and out-of-range values. Renderer behavior and visual reference comparisons remain unavailable until this audit records an owner-supplied reference clip or frame and numeric tolerance for each treatment; `reference-missing` is not a render-ready state.
+
 ### 18.3 Transitions, keyframes, motion, and compositing
 
 Transitions MUST be discoverable through a catalog with stable IDs, constraints, duration rules, and compound-boundary policy. Preview and export parity MUST be tested across boundaries.
+
+Foundation status (issue #28): Rust owns the transition IDs and catalog, video-track and adjacency constraints, one-incoming-transition rule, duration bounds, masked-incoming policy, and per-transition compound-boundary policy. MCP Zod schemas retain only the transport shape, while plan evaluation, apply, retained-state loading, and web authoring delegate semantic validation to Rust. The public capability snapshot and `opencut_list_transitions` expose the complete catalog and exact ID lookup. Crossfade and fade-through-black support compound boundaries; slide, wipe, and zoom reject compound boundaries until a defined renderer policy exists. Real managed-Chrome public-stdio coverage compares preview and export pixels at a simple nested boundary and a supported outer compound boundary.
 
 Existing simple keyframes remain backward compatible. Advanced curve editing, tangent and extrapolation controls, keyframe copy/paste, time transforms, and reusable motion presets are optional for the first release (audit owner decision 4).
 

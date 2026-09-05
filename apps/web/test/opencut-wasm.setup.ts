@@ -1,6 +1,7 @@
 import { mock } from "bun:test";
 import type { Canvas, createCanvas } from "@napi-rs/canvas";
 import { createRequire } from "node:module";
+import { nativeWasm } from "./native-wasm";
 
 const require = createRequire(import.meta.url);
 
@@ -27,11 +28,8 @@ interface NativeProjectState {
  * WASM package and the native canvas binding here would charge every process
  * for what only a few of them use, so both load on first use instead.
  */
-let nativeProjectStateModule: NativeProjectState | undefined;
 function nativeProjectState(): NativeProjectState {
-	nativeProjectStateModule ??=
-		require("../../../rust/wasm/pkg-node/opencut_wasm.js") as NativeProjectState;
-	return nativeProjectStateModule;
+	return nativeWasm() as unknown as NativeProjectState;
 }
 
 const TICKS_PER_SECOND = 120_000;
@@ -94,6 +92,14 @@ mock.module("opencut-wasm", () => ({
 	captionStylePresets: () => nativeProjectState().captionStylePresets(),
 	resolveCaptionStyle: (options: unknown) =>
 		nativeProjectState().resolveCaptionStyle(options),
+	mediaTreatmentCatalog: () => nativeWasm().mediaTreatmentCatalog(),
+	transitionCatalog: () => nativeWasm().transitionCatalog(),
+	resolveMediaTreatment: (options: unknown) =>
+		nativeWasm().resolveMediaTreatment(options),
+	evaluateTransition: (options: unknown) =>
+		nativeWasm().evaluateTransition(options),
+	evaluateStoredTransition: (options: unknown) =>
+		nativeWasm().evaluateStoredTransition(options),
 	scheduleFrameRange: (options: unknown) =>
 		nativeProjectState().scheduleFrameRange(options),
 	guessTimecodeFormat: () => "HH:MM:SS",

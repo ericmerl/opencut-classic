@@ -6,6 +6,7 @@ import type {
 	CanonicalTrack,
 	ProjectSnapshot,
 } from "opencut-wasm";
+import { evaluateStoredTransition } from "opencut-wasm";
 import type { ChannelData, ElementAnimations } from "@/animation/types";
 import type { Effect } from "@/effects/types";
 import type { Mask } from "@/masks/types";
@@ -20,7 +21,6 @@ import {
 import { storageService } from "@/services/storage/service";
 import type { PersistedMediaReadback } from "@/services/storage/types";
 import {
-	CLIP_TRANSITION_TYPES,
 	type ClipAudioReplacementAttachment,
 	type ClipMatteAttachment,
 	type ClipTransition,
@@ -403,15 +403,12 @@ function decodeTrack({
 	assertOrdered({ values: track.transitions, name: "transition" });
 	const transitions = new Map<string, ClipTransition>();
 	for (const transition of track.transitions) {
-		if (
-			transitions.has(transition.toElementId) ||
-			!isTransitionType(transition.type)
-		) {
+		if (transitions.has(transition.toElementId)) {
 			throw new Error("retained transition is invalid");
 		}
 		transitions.set(transition.toElementId, {
 			id: transition.id,
-			type: transition.type,
+			type: transition.type as ClipTransition["type"],
 			duration: mediaTime({ ticks: transition.duration }),
 			fromElementId: transition.fromElementId,
 		});
@@ -423,6 +420,29 @@ function decodeTrack({
 	});
 	if (transitions.size > 0) {
 		throw new Error("retained transition target is missing");
+	}
+	for (const transition of track.transitions) {
+		const fromElement = elements.find(
+			(element) => element.id === transition.fromElementId,
+		);
+		const toElement = elements.find(
+			(element) => element.id === transition.toElementId,
+		);
+		if (!fromElement || !toElement) {
+			throw new Error("retained transition endpoint is missing");
+		}
+		const validation = evaluateStoredTransition({
+			transitionId: transition.id,
+			transitionType: transition.type,
+			trackType: track.type,
+			fromElement: transitionBoundary(fromElement),
+			toElement: transitionBoundary(toElement),
+			duration: transition.duration,
+			existingIncomingTransitionId: transition.id,
+		});
+		if (validation.status === "rejected") {
+			throw new Error(`retained transition is invalid: ${validation.reason}`);
+		}
 	}
 	const common = { id: track.id, name: track.name, type: track.type, elements };
 	switch (track.type) {
@@ -492,8 +512,14 @@ function decodeTrack({
 	}
 }
 
-function isTransitionType(value: string): value is ClipTransition["type"] {
-	return CLIP_TRANSITION_TYPES.some((type) => type === value);
+function transitionBoundary(element: TimelineElement) {
+	return {
+		id: element.id,
+		type: element.type,
+		startTime: element.startTime,
+		duration: element.duration,
+		hasMasks: "masks" in element && Boolean(element.masks?.length),
+	};
 }
 
 function isVideoTrackElement(

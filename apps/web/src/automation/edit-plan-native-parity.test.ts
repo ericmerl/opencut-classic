@@ -18,6 +18,7 @@ import type {
 	EvaluateEditPlanOptions,
 } from "opencut-wasm";
 import type { AutomationEditOperation } from "./types";
+import { nativeWasm } from "../../test/native-wasm";
 
 let activeEditor: EditorCore;
 mock.module("opencut-wasm", () => ({
@@ -25,12 +26,18 @@ mock.module("opencut-wasm", () => ({
 	evaluateEditPlan: () => {
 		throw new Error("native parity tests use the Rust JSON evaluator");
 	},
+	evaluateTransition: (options: unknown) =>
+		nativeWasm().evaluateTransition(options),
+	evaluateStoredTransition: (options: unknown) =>
+		nativeWasm().evaluateStoredTransition(options),
 	formatTimecode: () => "00:00",
 	lastFrameTime: () => 0,
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) => seconds * 120_000,
 	mediaTimeToSeconds: ({ time }: { time: number }) => time / 120_000,
 	parseTimecode: () => 0,
 	roundToFrame: ({ time }: { time: number }) => time,
+	resolveMediaTreatment: (options: unknown) =>
+		nativeWasm().resolveMediaTreatment(options),
 	snappedSeekTime: ({ time }: { time: number }) => time,
 }));
 mock.module("@/core", () => ({

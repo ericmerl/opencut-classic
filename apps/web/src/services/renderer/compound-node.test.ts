@@ -39,6 +39,7 @@ const { buildScene } = await import("./scene-builder");
 const { resolveRenderTree } = await import("./resolve");
 const { CompoundNode } = await import("./nodes/compound-node");
 const { EffectLayerNode } = await import("./nodes/effect-layer-node");
+const { ColorNode } = await import("./nodes/color-node");
 const { RootNode } = await import("./nodes/root-node");
 
 describe("compound render node", () => {
@@ -130,16 +131,45 @@ describe("compound render node", () => {
 		});
 
 		await resolveRenderTree({ node: root, renderer, time: 100 });
-		expect(compound.resolved).toEqual({ active: true });
+		expect(compound.resolved).toEqual({ active: true, opacity: 1 });
 		expect(effect.resolved?.passes.length).toBeGreaterThan(0);
 		expect(
 			(await buildFrameDescriptor({ node: root, renderer })).frame.items,
 		).toHaveLength(1);
 
 		await resolveRenderTree({ node: root, renderer, time: 99 });
-		expect(compound.resolved).toEqual({ active: false });
+		expect(compound.resolved).toEqual({ active: false, opacity: 1 });
 		expect(
 			(await buildFrameDescriptor({ node: root, renderer })).frame.items,
 		).toHaveLength(0);
+	});
+
+	test("applies a supported boundary transition to the compound as a group", async () => {
+		const root = new RootNode({ duration: 500 });
+		const compound = new CompoundNode({
+			timeOffset: 100,
+			duration: 100,
+			trimStart: 0,
+			transitionIn: {
+				id: "compound-crossfade",
+				type: "crossfade",
+				duration: mediaTime({ ticks: 20 }),
+				fromElementId: "prior",
+			},
+		});
+		compound.add(new ColorNode({ color: "#ff0000" }));
+		root.add(compound);
+		const renderer = new CanvasRenderer({
+			width: 320,
+			height: 180,
+			fps: DEFAULT_FPS,
+		});
+
+		await resolveRenderTree({ node: root, renderer, time: 110 });
+		expect(compound.resolved).toEqual({ active: true, opacity: 0.5 });
+		const descriptor = await buildFrameDescriptor({ node: root, renderer });
+		expect(descriptor.frame.items).toEqual([
+			expect.objectContaining({ type: "layer", opacity: 0.5 }),
+		]);
 	});
 });

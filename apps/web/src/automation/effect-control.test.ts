@@ -2,6 +2,7 @@
 
 import { describe, expect, mock, test } from "bun:test";
 import type { VideoElement } from "@/timeline";
+import { nativeWasm } from "../../test/native-wasm";
 
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
@@ -9,6 +10,8 @@ mock.module("opencut-wasm", () => ({
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) =>
 		Math.round(seconds * 120000),
 	mediaTimeToSeconds: ({ time }: { time: number }) => time / 120000,
+	resolveMediaTreatment: (options: unknown) =>
+		nativeWasm().resolveMediaTreatment(options),
 	parseTimecode: () => 0,
 	roundToFrame: ({ time }: { time: number }) => time,
 	snappedSeekTime: ({ time }: { time: number }) => time,
@@ -36,6 +39,42 @@ function buildElement(): VideoElement {
 }
 
 describe("effect control", () => {
+	test("materializes Rust-resolved named treatment defaults", () => {
+		const element = buildElement();
+		const created = buildEffectControlPatch({
+			element,
+			operation: {
+				kind: "upsert_effect",
+				trackId: "main",
+				elementId: element.id,
+				effectId: "film-frame-1",
+				effectType: "simple-media.film-frame",
+			},
+		});
+
+		expect(created.effects).toEqual([
+			{
+				id: "film-frame-1",
+				type: "simple-media.film-frame",
+				params: { mix: 1 },
+				enabled: true,
+			},
+		]);
+		expect(() =>
+			buildEffectControlPatch({
+				element,
+				operation: {
+					kind: "upsert_effect",
+					trackId: "main",
+					elementId: element.id,
+					effectId: "film-frame-2",
+					effectType: "simple-media.film-frame",
+					params: { mix: 1.01 },
+				},
+			}),
+		).toThrow("outside supported bounds");
+	});
+
 	test("creates and updates a stable-ID effect with validated params", () => {
 		const element = buildElement();
 		const created = buildEffectControlPatch({

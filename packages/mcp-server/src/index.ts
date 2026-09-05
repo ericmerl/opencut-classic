@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { EditorBridge, type BridgeConnectionIdentity } from "./editor-bridge";
 import { AudioCleanupService } from "./clean-audio";
 import { CapabilitySnapshotService } from "./capability-snapshot";
+import {
+	readMediaTreatmentCatalog,
+	readTransitionCatalog,
+} from "./native-catalog";
 import { ExportBatchQueue } from "./export-batches";
 import { ExportJobStore } from "./export-job-store";
 import { InlineJobMirror } from "./inline-jobs";
@@ -1338,6 +1342,31 @@ function createServer(): McpServer {
 			inputSchema: withConnectionAffinity(z.object({})),
 		},
 		async (params) => toolResult(await bridge.request("list_effects", params)),
+	);
+
+	server.registerTool(
+		"opencut_list_treatments",
+		{
+			description:
+				"List the Rust-owned named Simple Media treatment catalog, or resolve one stable treatment ID. Readiness is reference-missing until audit row E records an owner reference and numeric tolerance; catalog presence does not claim exact rendering.",
+			inputSchema: z
+				.object({ treatmentId: z.string().trim().min(1).optional() })
+				.strict(),
+		},
+		async ({ treatmentId }) =>
+			toolResult(readMediaTreatmentCatalog(treatmentId)),
+	);
+
+	server.registerTool(
+		"opencut_list_transitions",
+		{
+			description:
+				"List the Rust-owned transition catalog, or resolve one stable transition ID, including duration, adjacency, mask, track, and compound-boundary policies.",
+			inputSchema: z
+				.object({ transitionId: z.string().trim().min(1).optional() })
+				.strict(),
+		},
+		async ({ transitionId }) => toolResult(readTransitionCatalog(transitionId)),
 	);
 
 	server.registerTool(

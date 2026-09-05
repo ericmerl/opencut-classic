@@ -3328,6 +3328,135 @@ fn caption_style_presets_name_bundled_faces_and_gate_insertion() {
     assert_eq!(error.message, "unknown caption style preset");
 }
 
+#[test]
+fn named_treatments_resolve_defaults_and_persist_in_canonical_state() {
+    let result = evaluate(options_with_before(
+        full_snapshot(),
+        vec![EditOperation::UpsertEffect {
+            track_id: "track-main".into(),
+            element_id: "video-1".into(),
+            effect_id: "treatment-instance-1".into(),
+            effect_type: "simple-media.film-frame".into(),
+            params: None,
+            enabled: None,
+        }],
+    ))
+    .unwrap();
+
+    let CanonicalElement::Video { effects, .. } =
+        &result.predicted_after.project.scenes[0].tracks[0].elements[0]
+    else {
+        panic!("fixture video changed type");
+    };
+    let treatment = effects
+        .iter()
+        .find(|effect| effect.id == "treatment-instance-1")
+        .expect("named treatment persisted as a canonical effect attachment");
+    assert_eq!(treatment.effect_type, "simple-media.film-frame");
+    assert_eq!(
+        treatment.params,
+        CanonicalValue::Object(BTreeMap::from([(
+            "mix".into(),
+            CanonicalValue::Number(1.0)
+        )]))
+    );
+}
+
+#[test]
+fn named_treatments_fail_closed_for_unknown_ids_ranges_and_applicability() {
+    let operation = |effect_type: &str, element_id: &str, mix: f64| EditOperation::UpsertEffect {
+        track_id: if element_id == "text-1" {
+            "track-text".into()
+        } else {
+            "track-main".into()
+        },
+        element_id: element_id.into(),
+        effect_id: "treatment-instance-1".into(),
+        effect_type: effect_type.into(),
+        params: Some(Params::from_iter([("mix".into(), Scalar::Number(mix))])),
+        enabled: None,
+    };
+
+    let unknown = evaluate(options_with_before(
+        full_snapshot(),
+        vec![operation("simple-media.unknown", "video-1", 1.0)],
+    ))
+    .unwrap_err();
+    assert!(
+        matches!(unknown.code, ErrorCode::InvalidValue),
+        "{unknown:?}"
+    );
+    assert_eq!(unknown.path.as_deref(), Some("effectType"));
+
+    let out_of_range = evaluate(options_with_before(
+        full_snapshot(),
+        vec![operation("simple-media.film-frame", "video-1", 1.01)],
+    ))
+    .unwrap_err();
+    assert!(matches!(out_of_range.code, ErrorCode::Bounds));
+    assert_eq!(out_of_range.path.as_deref(), Some("mix"));
+
+    let wrong_element = evaluate(options_with_before(
+        full_snapshot(),
+        vec![operation("simple-media.film-frame", "text-1", 1.0)],
+    ))
+    .unwrap_err();
+    assert!(matches!(wrong_element.code, ErrorCode::IncompatibleTrack));
+    assert_eq!(wrong_element.path.as_deref(), Some("elementId"));
+}
+
+#[test]
+fn transition_catalog_owns_ids_and_compound_boundary_policy() {
+    let mut unknown_snapshot = full_snapshot();
+    unknown_snapshot.project.scenes[0].tracks[0].transitions[0].transition_type =
+        "cube-spin".into();
+    let unknown = evaluate(options_with_before(
+        unknown_snapshot,
+        vec![EditOperation::RemoveTransition {
+            track_id: "track-main".into(),
+            transition_id: "transition-1".into(),
+        }],
+    ))
+    .unwrap_err();
+    assert!(
+        matches!(unknown.code, ErrorCode::InvalidValue),
+        "{unknown:?}"
+    );
+    assert_eq!(unknown.path.as_deref(), Some("transition.type"));
+
+    let crossfade = evaluate(options_with_before(
+        full_snapshot(),
+        vec![EditOperation::UpsertTransition {
+            track_id: "track-main".into(),
+            transition_id: "transition-1".into(),
+            from_element_id: "video-1".into(),
+            to_element_id: "compound-1".into(),
+            transition_type: TransitionType::Crossfade,
+            duration: MediaTime::from_ticks(30_000),
+        }],
+    ))
+    .unwrap();
+    assert_eq!(
+        crossfade.predicted_after.project.scenes[0].tracks[0].transitions[0].duration,
+        MediaTime::from_ticks(30_000)
+    );
+
+    let wipe = evaluate(options_with_before(
+        full_snapshot(),
+        vec![EditOperation::UpsertTransition {
+            track_id: "track-main".into(),
+            transition_id: "transition-1".into(),
+            from_element_id: "video-1".into(),
+            to_element_id: "compound-1".into(),
+            transition_type: TransitionType::Wipe,
+            duration: MediaTime::from_ticks(30_000),
+        }],
+    ))
+    .unwrap_err();
+    assert!(matches!(wipe.code, ErrorCode::IncompatibleTrack));
+    assert_eq!(wipe.path.as_deref(), Some("transitionType"));
+}
+
 fn caption_plan(operations: Vec<EditOperation>) -> Vec<EditOperation> {
     let mut plan = vec![EditOperation::InsertCaptions {
         track_id: Some("captions".into()),

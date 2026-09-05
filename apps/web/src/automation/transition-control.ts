@@ -1,11 +1,8 @@
 import type { Command } from "@/commands/base-command";
 import { UpdateElementsCommand } from "@/commands/timeline/element/update-elements";
-import {
-	findTrackTransition,
-	getTrackTransitionStates,
-	type TimelineTrack,
-} from "@/timeline";
+import { findTrackTransition, type TimelineTrack } from "@/timeline";
 import type { AutomationEditOperation } from "./types";
+import { evaluateTransition } from "opencut-wasm";
 
 type TransitionOperation = Extract<
 	AutomationEditOperation,
@@ -19,9 +16,6 @@ export function buildTransitionCommand({
 	track: TimelineTrack;
 	operation: TransitionOperation;
 }): Command {
-	if (track.type !== "video") {
-		throw new Error("transitions require a video track");
-	}
 	if (operation.kind === "remove_transition") {
 		const state = findTrackTransition({
 			track,
@@ -50,24 +44,17 @@ export function buildTransitionCommand({
 	if (!fromElement || !toElement) {
 		throw new Error("transition elements must exist on the requested track");
 	}
-	if (fromElement.type === "compound" || toElement.type === "compound") {
-		throw new Error("compound clip transitions are not supported");
-	}
-	if (
-		!Number.isSafeInteger(operation.duration) ||
-		operation.duration <= 0 ||
-		operation.duration > fromElement.duration ||
-		operation.duration > toElement.duration
-	) {
-		throw new Error(
-			"transition duration must be positive and no longer than either clip",
-		);
-	}
-	const existing = toElement.transitionIn;
-	if (existing && existing.id !== operation.transitionId) {
-		throw new Error(
-			`incoming clip already has transition ${existing.id}; update that ID or remove it first`,
-		);
+	const validation = evaluateTransition({
+		transitionId: operation.transitionId,
+		transitionType: operation.transitionType,
+		trackType: track.type,
+		fromElement: transitionBoundary(fromElement),
+		toElement: transitionBoundary(toElement),
+		duration: operation.duration,
+		existingIncomingTransitionId: toElement.transitionIn?.id,
+	});
+	if (validation.status === "rejected") {
+		throw new Error(validation.reason);
 	}
 	const candidate = {
 		...toElement,
@@ -78,28 +65,6 @@ export function buildTransitionCommand({
 			fromElementId: operation.fromElementId,
 		},
 	};
-	const validationTrack = {
-		...track,
-		elements: track.elements.map((element) =>
-			element.id === candidate.id ? candidate : element,
-		),
-	} as TimelineTrack;
-	const state = getTrackTransitionStates({ track: validationTrack }).find(
-		(item) => item.transition.id === operation.transitionId,
-	);
-	if (!state?.isAdjacent) {
-		throw new Error("transition clips must be consecutive and edge-adjacent");
-	}
-	if (
-		operation.transitionType === "wipe" &&
-		"masks" in toElement &&
-		toElement.masks?.length
-	) {
-		throw new Error(
-			"wipe transitions do not yet support masked incoming clips",
-		);
-	}
-
 	return new UpdateElementsCommand({
 		updates: [
 			{
@@ -109,4 +74,14 @@ export function buildTransitionCommand({
 			},
 		],
 	});
+}
+
+function transitionBoundary(element: TimelineTrack["elements"][number]) {
+	return {
+		id: element.id,
+		type: element.type,
+		startTime: element.startTime,
+		duration: element.duration,
+		hasMasks: "masks" in element && Boolean(element.masks?.length),
+	};
 }

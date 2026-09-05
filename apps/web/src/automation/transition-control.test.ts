@@ -2,6 +2,7 @@
 
 import { describe, expect, mock, test } from "bun:test";
 import type { VideoElement, VideoTrack } from "@/timeline";
+import { nativeWasm } from "../../test/native-wasm";
 
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120000,
@@ -9,6 +10,8 @@ mock.module("opencut-wasm", () => ({
 	mediaTimeFromSeconds: ({ seconds }: { seconds: number }) =>
 		Math.round(seconds * 120000),
 	mediaTimeToSeconds: ({ time }: { time: number }) => time / 120000,
+	evaluateTransition: (options: unknown) =>
+		nativeWasm().evaluateTransition(options),
 	parseTimecode: () => 0,
 	roundToFrame: ({ time }: { time: number }) => time,
 	snappedSeekTime: ({ time }: { time: number }) => time,
@@ -72,6 +75,60 @@ describe("buildTransitionCommand", () => {
 		expect(command.constructor.name).toBe("UpdateElementsCommand");
 	});
 
+	test("applies the Rust compound-boundary policy", () => {
+		const track = buildTrack();
+		track.elements[1] = {
+			id: "clip-2",
+			name: "Compound",
+			type: "compound",
+			startTime: mediaTime({ ticks: 240000 }),
+			duration: mediaTime({ ticks: 240000 }),
+			trimStart: mediaTime({ ticks: 0 }),
+			trimEnd: mediaTime({ ticks: 0 }),
+			params: {},
+			tracks: {
+				main: {
+					id: "nested-main",
+					name: "Nested main",
+					type: "video",
+					muted: false,
+					hidden: false,
+					elements: [],
+				},
+				overlay: [],
+				audio: [],
+			},
+		};
+		expect(
+			buildTransitionCommand({
+				track,
+				operation: {
+					kind: "upsert_transition",
+					trackId: track.id,
+					transitionId: "transition-1",
+					fromElementId: "clip-1",
+					toElementId: "clip-2",
+					transitionType: "crossfade",
+					duration: mediaTime({ ticks: 60000 }),
+				},
+			}).constructor.name,
+		).toBe("UpdateElementsCommand");
+		expect(() =>
+			buildTransitionCommand({
+				track,
+				operation: {
+					kind: "upsert_transition",
+					trackId: track.id,
+					transitionId: "transition-1",
+					fromElementId: "clip-1",
+					toElementId: "clip-2",
+					transitionType: "wipe",
+					duration: mediaTime({ ticks: 60000 }),
+				},
+			}),
+		).toThrow("does not support compound boundaries");
+	});
+
 	test("rejects gaps and excessive durations", () => {
 		expect(() =>
 			buildTransitionCommand({
@@ -86,7 +143,7 @@ describe("buildTransitionCommand", () => {
 					duration: mediaTime({ ticks: 60000 }),
 				},
 			}),
-		).toThrow("transition clips must be consecutive and edge-adjacent");
+		).toThrow("transition elements must be consecutive and edge-adjacent");
 		expect(() =>
 			buildTransitionCommand({
 				track: buildTrack(),
