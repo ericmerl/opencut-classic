@@ -1603,7 +1603,8 @@ integrationTest(
 			expectedContentHash: restructuredHash,
 		});
 		expect(paritySave).toMatchObject({ status: "saved" });
-		const parityTicks = 30_000;
+		// Frame 8 at 30 fps: exact rounding requires a frame-aligned time.
+		const parityTicks = 32_000;
 		const outlinePreview = await harness.callTool(
 			"opencut_render_preview_frame",
 			{
@@ -1626,7 +1627,7 @@ integrationTest(
 			},
 			5 * 60_000,
 		);
-		expect(outlinePreview.status).toBe("rendered");
+		expect(outlinePreview).toMatchObject({ status: "rendered" });
 		const outlineExportPath = join(directory, "caption-outline.webm");
 		const outlineExport = await harness.callTool(
 			"opencut_export_project",
@@ -1645,7 +1646,7 @@ integrationTest(
 			},
 			5 * 60_000,
 		);
-		expect(outlineExport.status).toBe("exported");
+		expect(outlineExport).toMatchObject({ status: "exported" });
 		const previewRgba = await extractRgba(
 			requireString(outlinePreview.outputPath, "preview path"),
 		);
