@@ -363,7 +363,7 @@ export class ExportValidator {
 					outputPath,
 					"-map",
 					"0:a:0",
-					"-filter_complex",
+					"-af",
 					"ebur128=peak=true",
 					"-f",
 					"null",
