@@ -199,6 +199,8 @@ Secrets, signed URLs, tokens, and raw credentials MUST NOT appear in provenance 
 
 Model files MUST be pinned by content hash, resolved from a service-managed cache directory declared in section 25.1, and recorded in every result together with the execution device actually selected. A model identifier that resolves to different bytes on different days is not provenance. Model selection itself is deferred (audit owner decision 8); this rule applies to whichever models are later chosen and to the already bundled Whisper path.
 
+Implementation status (2026-09-05): the model-independent media foundation is implemented. A Rust-owned `opencut.media-capability-catalog.v1` exposes stable subject-tracking, audio-cleanup, stem-separation, and VAD task IDs with typed provider-job, source-identity, provenance, CPU-fallback, and deterministic-cache requirements through both `opencut_capabilities` and `opencut_get_media_capability_catalog`. Every task truthfully reports `model-selection-required`, `canExecute: false`, provider execution forbidden, and zero cost incurred. This status does not approve, download, bundle, probe by inference, or claim readiness for any local model; provider execution and production evidence remain blocked on the owner decisions recorded in section 26.
+
 ### 7.4 Backward compatibility
 
 Protocol v1 mutation MUST be disabled by default in a parity deployment. It MAY be enabled only by an explicit configuration flag whose presence is reported in the capability snapshot as `degraded`. Parity evidence MUST be collected with v1 mutation disabled. V1 reads MAY remain available. V1 omission MUST never be interpreted as v2 safety. New contracts MUST use explicit version discriminators. Breaking semantic changes require a new contract, projection, or receipt version, not a silent reinterpretation of an existing version.
@@ -690,6 +692,8 @@ Production parity MUST include:
 - Audio QC with LUFS, true peak, clipping, channel layout, sample rate, silence, sync, expected-audio rules, and audible start/end checks.
 
 Preview and export audio MUST be tolerance-tested against the same automation and effect graph. The mastering chain MUST be the same graph with the same parameters in preview and export, or the preview receipt MUST declare the difference. The export receipt MUST record whether mastering was applied and its parameters, and mastering must not contradict requested output specifications. Drift correction, timecode, and multicamera sync are optional (audit owner decision 3).
+
+Implementation status (2026-09-05): versioned Rust contracts now validate and canonically persist externally produced tracking and VAD analysis objects with exact source identity, source-time samples/ranges, corrections, attachment bindings, full provider/model/license provenance, semantic input hashes, cache identities, and object content hashes. Rust also validates and deterministically plans typed ordered clip/track/master audio graphs and VAD-derived ducking envelopes. These are reference-independent contracts and plans only: no cleanup, stem, VAD, or tracker model is selected; no provider job is executed; no graph is applied by the editor or renderer; no A/B, aligned-stem, preview/export-parity, real-video, or receipt-level QC evidence is claimed. Public stdio coverage is in `packages/mcp-server/src/media-foundation-stdio.test.ts`.
 
 ### 18.5 Retiming
 

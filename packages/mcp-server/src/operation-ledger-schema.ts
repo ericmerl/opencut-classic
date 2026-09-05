@@ -103,6 +103,7 @@ export const operationAffectedObjectSchema = z
 			"delivery-package",
 			"transcript",
 			"speech-analysis",
+			"media-analysis",
 			"editorial-decision",
 			"checkpoint",
 			"review-annotation",
