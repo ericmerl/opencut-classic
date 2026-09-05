@@ -53,6 +53,7 @@ export function renderTextToContext({
 		ctx,
 		layout: resolved.measuredText,
 		textColor: resolved.textColor,
+		textEffects: resolved.measuredText.textEffects,
 		background: resolved.measuredText.resolvedBackground,
 		backgroundColor: resolved.backgroundColor,
 		highlight:

@@ -21,6 +21,8 @@ import type {
 	TextLayoutParams,
 } from "@/text/primitives";
 import { applyCaptionStylePreset } from "./caption-presets";
+import { getTextStyleContract } from "@/text/effects";
+import type { TextOutline, TextShadow } from "opencut-wasm";
 import type { SubtitleCue, SubtitleStyleOverrides } from "./types";
 
 const SUBTITLE_MAX_WIDTH_RATIO = 0.8;
@@ -41,7 +43,11 @@ export function resolveSubtitleFontParams({
 	style,
 }: {
 	style: SubtitleStyleOverrides | undefined;
-}): { fontFamily: string; fontWeight: TextFontWeight; fontStyle: TextFontStyle } {
+}): {
+	fontFamily: string;
+	fontWeight: TextFontWeight;
+	fontStyle: TextFontStyle;
+} {
 	const resolved = resolveSubtitleStyle({ style });
 	return {
 		fontFamily: resolved.fontFamily,
@@ -62,6 +68,8 @@ type ResolvedSubtitleStyle = {
 	lineHeight: number;
 	background: TextBackground;
 	highlight: TextHighlight;
+	outline: TextOutline;
+	shadow: TextShadow;
 	placement: NonNullable<SubtitleStyleOverrides["placement"]>;
 };
 
@@ -75,6 +83,7 @@ function resolveSubtitleStyle({
 		style?.fontSizeRatioOfPlayHeight != null
 			? style.fontSizeRatioOfPlayHeight * FONT_SIZE_SCALE_REFERENCE
 			: (style?.fontSize ?? SUBTITLE_FONT_SIZE);
+	const textEffects = getTextStyleContract();
 
 	return {
 		fontFamily: style?.fontFamily ?? "Arial",
@@ -95,6 +104,8 @@ function resolveSubtitleStyle({
 			enabled: style?.highlight?.enabled ?? DEFAULTS.text.highlight.enabled,
 			color: style?.highlight?.color ?? DEFAULTS.text.highlight.color,
 		},
+		outline: style?.outline ?? textEffects.outline.default,
+		shadow: style?.shadow ?? textEffects.shadow.default,
 		placement: {
 			verticalAlign: style?.placement?.verticalAlign ?? "bottom",
 			marginLeftRatio: style?.placement?.marginLeftRatio,
@@ -264,6 +275,13 @@ function buildElement({
 				style.background.offsetY ?? DEFAULTS.text.background.offsetY,
 			"highlight.enabled": style.highlight.enabled,
 			"highlight.color": style.highlight.color,
+			"outline.color": style.outline.color,
+			"outline.width": style.outline.width,
+			"outline.join": style.outline.join,
+			"shadow.color": style.shadow.color,
+			"shadow.offsetX": style.shadow.offsetX,
+			"shadow.offsetY": style.shadow.offsetY,
+			"shadow.blur": style.shadow.blur,
 			...(caption.speaker ? { "caption.speaker": caption.speaker } : {}),
 			"transform.positionX": positionX,
 			"transform.positionY": positionY,
@@ -323,6 +341,8 @@ export function measureSubtitleCaption({
 	const local = measureCaptionLocalLayout({
 		text: { ...text, content },
 		background: style.background,
+		outline: style.outline,
+		shadow: style.shadow,
 		canvasHeight: canvasSize.height,
 		ctx,
 	});

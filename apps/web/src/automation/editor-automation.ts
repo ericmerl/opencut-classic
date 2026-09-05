@@ -77,6 +77,7 @@ import {
 	mediaTimeToSeconds,
 	TICKS_PER_SECOND,
 } from "@/wasm";
+import * as nativeWasm from "opencut-wasm";
 import { getElementKeyframes } from "@/animation";
 import { analyzeAutomationAudio } from "./audio-analysis";
 import { diffAutomationSnapshots } from "./affected-objects";
@@ -2882,6 +2883,12 @@ export class EditorAutomation {
 			});
 			if (!operation.content.trim())
 				throw new Error("text content is required");
+			const resolvedStyleParams = operation.style
+				? nativeWasm.resolveCaptionStyleParams({ style: operation.style })
+				: null;
+			if (resolvedStyleParams?.status === "rejected") {
+				throw new Error(resolvedStyleParams.reason);
+			}
 			return new InsertElementCommand({
 				elementId: operation.elementId,
 				newTrackId: resolveElementAutoTrackId({
@@ -2896,6 +2903,7 @@ export class EditorAutomation {
 						params: {
 							...DEFAULTS.text.element.params,
 							content: operation.content,
+							...(resolvedStyleParams?.params ?? {}),
 						},
 					},
 					startTime: operation.startTime,

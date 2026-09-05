@@ -88,4 +88,32 @@ describe("caption correction", () => {
 			}),
 		).toThrow("at least one caption correction is required");
 	});
+
+	test("merges Rust-resolved style params without copying transport style", () => {
+		const patch = buildCaptionCorrectionPatch({
+			element: captionElement(),
+			operation: {
+				kind: "update_caption",
+				trackId: "captions",
+				elementId: "caption-1",
+				style: {
+					outline: { color: "#ABCDEF", width: 2, join: "round" },
+				},
+				resolvedParams: {
+					"outline.color": "#abcdef",
+					"outline.width": 2,
+					"outline.join": "round",
+				},
+			},
+		});
+
+		expect(patch).toEqual({
+			params: {
+				content: "Original",
+				"outline.color": "#abcdef",
+				"outline.width": 2,
+				"outline.join": "round",
+			},
+		});
+	});
 });

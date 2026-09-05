@@ -17,6 +17,7 @@ export function toAutomationResolvedOperation(
 			return {
 				...operation,
 				elementId: optional(operation.elementId),
+				style: resolvedSubtitleStyle(operation.style),
 				startTime: mediaTime({ ticks: operation.startTime }),
 				duration: mediaTime({ ticks: operation.duration }),
 				autoTrackId: optional(operation.autoTrackId),
@@ -134,6 +135,8 @@ export function toAutomationResolvedOperation(
 				text: optional(operation.text),
 				startTime: optionalMediaTime(operation.startTime),
 				duration: optionalMediaTime(operation.duration),
+				style: resolvedSubtitleStyle(operation.style),
+				resolvedParams: optional(operation.resolvedParams),
 				resolvedAllocations: optional(operation.resolvedAllocations),
 			};
 		case "shift_captions":
@@ -371,6 +374,21 @@ function resolvedSubtitleStyle(
 		textDecoration: optional(style.textDecoration),
 		letterSpacing: optional(style.letterSpacing),
 		lineHeight: optional(style.lineHeight),
+		outline: style.outline
+			? {
+					color: style.outline.color,
+					width: style.outline.width,
+					join: style.outline.join,
+				}
+			: undefined,
+		shadow: style.shadow
+			? {
+					color: style.shadow.color,
+					offsetX: style.shadow.offsetX,
+					offsetY: style.shadow.offsetY,
+					blur: style.shadow.blur,
+				}
+			: undefined,
 		highlight: style.highlight
 			? {
 					enabled: style.highlight.enabled,
@@ -399,6 +417,7 @@ function toNativeEditOperation(
 				content: operation.content,
 				startTime: operation.startTime,
 				duration: operation.duration,
+				style: operation.style,
 				autoTrackId: operation.autoTrackId,
 				resolvedAllocations: operation.resolvedAllocations,
 			};
@@ -530,6 +549,8 @@ function toNativeEditOperation(
 				text: operation.text,
 				startTime: operation.startTime,
 				duration: operation.duration,
+				style: operation.style,
+				resolvedParams: operation.resolvedParams,
 				resolvedAllocations: operation.resolvedAllocations,
 			};
 		case "shift_captions":

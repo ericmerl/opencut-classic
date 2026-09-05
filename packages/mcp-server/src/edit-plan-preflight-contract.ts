@@ -584,7 +584,7 @@ const captionEdgeOverflowSchema = z
 		bottom: z.number().nonnegative(),
 	})
 	.strict();
-const captionGeometrySchema = z
+const captionGeometryV1Schema = z
 	.object({
 		version: z.literal("opencut.caption-geometry.v1"),
 		measurement: z.literal("opencut.text.measureTextLayout"),
@@ -634,12 +634,53 @@ const captionGeometrySchema = z
 	})
 	.strict();
 
+const textEffectColorSchema = z
+	.string()
+	.regex(/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/);
+const captionGeometryV2Schema = captionGeometryV1Schema
+	.omit({ version: true })
+	.extend({
+		version: z.literal("opencut.caption-geometry.v2"),
+		textEffects: z
+			.object({
+				outline: z
+					.object({
+						color: textEffectColorSchema,
+						width: z.number().nonnegative(),
+						join: z.enum(["round", "bevel", "miter"]),
+					})
+					.strict(),
+				shadow: z
+					.object({
+						color: textEffectColorSchema,
+						offsetX: z.number(),
+						offsetY: z.number(),
+						blur: z.number().nonnegative(),
+					})
+					.strict(),
+				extents: captionEdgeOverflowSchema,
+			})
+			.strict(),
+	})
+	.strict();
+
+const captionGeometrySchema = z.discriminatedUnion("version", [
+	captionGeometryV1Schema,
+	captionGeometryV2Schema,
+]);
+
 /** Browser-materialized caption layout evidence (spec 12.3). */
 export const captionLayoutEvidenceSchema = z
 	.object({
-		layoutVersion: z.literal("opencut.caption-layout.v1"),
+		layoutVersion: z.enum([
+			"opencut.caption-layout.v1",
+			"opencut.caption-layout.v2",
+		]),
 		layoutEngine: z.literal("browser-canvas-2d"),
-		geometryVersion: z.literal("opencut.caption-geometry.v1"),
+		geometryVersion: z.enum([
+			"opencut.caption-geometry.v1",
+			"opencut.caption-geometry.v2",
+		]),
 		measurement: z.literal("opencut.text.measureTextLayout"),
 		fontReadiness: fontReadinessSchema,
 		captions: z
@@ -657,7 +698,26 @@ export const captionLayoutEvidenceSchema = z
 			.min(1),
 		geometrySha256: digestSchema,
 	})
-	.strict();
+	.strict()
+	.superRefine((value, context) => {
+		const suffix = value.layoutVersion.endsWith(".v2") ? ".v2" : ".v1";
+		if (!value.geometryVersion.endsWith(suffix)) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "caption layout and geometry versions must match",
+				path: ["geometryVersion"],
+			});
+		}
+		for (const caption of value.captions) {
+			if (!caption.geometry.version.endsWith(suffix)) {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "caption geometry version must match layout evidence",
+					path: ["captions", caption.captionIndex, "geometry", "version"],
+				});
+			}
+		}
+	});
 
 export const browserEditPlanPreflightResponseSchema = z.union([
 	z

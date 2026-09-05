@@ -285,12 +285,51 @@ pub fn caption_style_presets() -> CaptionStylePresetList {
     model::caption_style_presets()
 }
 
+/// Text outline and shadow defaults/ranges shared by every UI and transport.
+#[export]
+pub fn text_style_contract() -> TextStyleContract {
+    model::text_style_contract()
+}
+
+/// Resolves draw-time text effects and their conservative visual extents.
+#[export]
+pub fn resolve_text_effect_geometry(
+    options: ResolveTextEffectGeometryOptions,
+) -> ResolveTextEffectGeometryResponse {
+    match model::compute_text_effect_geometry(options) {
+        Ok(geometry) => ResolveTextEffectGeometryResponse::Resolved { geometry },
+        Err(reason) => ResolveTextEffectGeometryResponse::Rejected { reason },
+    }
+}
+
+/// Maps ASS outline/shadow fields into the canonical OpenCut text style.
+#[export]
+pub fn map_ass_text_effects(options: MapAssTextEffectsOptions) -> MapAssTextEffectsResponse {
+    match model::compute_ass_text_effects(options) {
+        Ok(style) => MapAssTextEffectsResponse::Mapped { style },
+        Err(reason) => MapAssTextEffectsResponse::Rejected { reason },
+    }
+}
+
 /// Expands a caption style's preset the way the evaluator does.
 #[export]
 pub fn resolve_caption_style(options: ResolveCaptionStyleOptions) -> ResolveCaptionStyleResponse {
     match model::resolve_caption_style(&options.style) {
         Ok(style) => ResolveCaptionStyleResponse::Resolved { style },
         Err(reason) => ResolveCaptionStyleResponse::Rejected { reason },
+    }
+}
+
+/// Resolves a caption style to the exact flat params persisted on text elements.
+#[export]
+pub fn resolve_caption_style_params(
+    options: ResolveCaptionStyleOptions,
+) -> ResolveCaptionStyleParamsResponse {
+    match model::resolve_caption_style(&options.style)
+        .and_then(|style| model::caption_style_params(&style))
+    {
+        Ok(params) => ResolveCaptionStyleParamsResponse::Resolved { params },
+        Err(reason) => ResolveCaptionStyleParamsResponse::Rejected { reason },
     }
 }
 
@@ -424,9 +463,13 @@ fn clear_internal_resolved_fields(operations: &mut [EditOperation]) {
             }
             EditOperation::UpdateCaption {
                 resolved_allocations,
+                resolved_params,
                 ..
+            } => {
+                *resolved_allocations = None;
+                *resolved_params = None;
             }
-            | EditOperation::SplitCaption {
+            EditOperation::SplitCaption {
                 resolved_allocations,
                 ..
             }
@@ -1226,6 +1269,8 @@ impl State {
                 track_id,
                 element_id,
                 duration,
+                style,
+                resolved_params,
                 resolved_allocations,
                 ..
             } => {
@@ -1234,6 +1279,14 @@ impl State {
                 } else {
                     Some(vec![])
                 };
+                *resolved_params = style
+                    .as_ref()
+                    .map(|style| {
+                        caption_style_params(style).map_err(|message| {
+                            error(ErrorCode::InvalidValue, message, Some(index), Some("style"))
+                        })
+                    })
+                    .transpose()?;
             }
             EditOperation::SplitCaption {
                 element_id,
@@ -1827,6 +1880,7 @@ impl State {
                 content,
                 start_time,
                 duration,
+                style,
                 auto_track_id,
                 resolved_allocations,
             } => {
@@ -1834,6 +1888,13 @@ impl State {
                     new_element(required(element_id), "text", "Text", *start_time, *duration);
                 element.text = Some(content.clone());
                 element.params = default_text_params(content);
+                if let Some(style) = style {
+                    for (key, value) in caption_style_params(style).map_err(|message| {
+                        error(ErrorCode::InvalidValue, message, Some(index), Some("style"))
+                    })? {
+                        element.params.insert(key, value);
+                    }
+                }
                 self.insert_with_placement(
                     element,
                     None,
@@ -2241,11 +2302,31 @@ impl State {
                 captions,
                 style,
             } => {
-                if let Some(preset) = style.as_ref().and_then(|value| value.preset.as_deref()) {
-                    if !is_caption_style_preset(preset) {
-                        return invalid(index, "unknown caption style preset");
-                    }
-                }
+                let default_style = SubtitleStyleOverrides::default();
+                let canonical_style =
+                    model::resolve_caption_style(style.as_ref().unwrap_or(&default_style))
+                        .map_err(|message| {
+                            error(ErrorCode::InvalidValue, message, Some(index), Some("style"))
+                        })?;
+                let text_style_contract = model::text_style_contract();
+                let canonical_effect_params = caption_style_params(&SubtitleStyleOverrides {
+                    outline: Some(
+                        canonical_style
+                            .outline
+                            .clone()
+                            .unwrap_or(text_style_contract.outline.default),
+                    ),
+                    shadow: Some(
+                        canonical_style
+                            .shadow
+                            .clone()
+                            .unwrap_or(text_style_contract.shadow.default),
+                    ),
+                    ..Default::default()
+                })
+                .map_err(|message| {
+                    error(ErrorCode::InvalidValue, message, Some(index), Some("style"))
+                })?;
                 let id = required(track_id);
                 self.insert_track("text", id, true, index)?;
                 if captions.is_empty() {
@@ -2268,9 +2349,11 @@ impl State {
                     let resolved_params = caption.resolved_params.as_ref().ok_or_else(|| {
                         invalid_error(index, "caption resolvedParams are required")
                     })?;
-                    if caption.resolved_layout_version.as_deref()
-                        != Some("opencut.caption-layout.v1")
-                        || caption.resolved_layout_engine.as_deref() != Some("browser-canvas-2d")
+                    let layout_version = caption.resolved_layout_version.as_deref();
+                    if !matches!(
+                        layout_version,
+                        Some("opencut.caption-layout.v1" | "opencut.caption-layout.v2")
+                    ) || caption.resolved_layout_engine.as_deref() != Some("browser-canvas-2d")
                     {
                         return invalid(index, "caption resolved layout provenance is invalid");
                     }
@@ -2303,6 +2386,24 @@ impl State {
                             "caption resolvedParams speaker does not match the caption",
                         );
                     }
+                    if layout_version == Some("opencut.caption-layout.v2") {
+                        for key in [
+                            "outline.color",
+                            "outline.width",
+                            "outline.join",
+                            "shadow.color",
+                            "shadow.offsetX",
+                            "shadow.offsetY",
+                            "shadow.blur",
+                        ] {
+                            if scalar_params.get(key) != canonical_effect_params.0.get(key) {
+                                return invalid(
+                                    index,
+                                    "caption resolvedParams text effects do not match the Rust-resolved style",
+                                );
+                            }
+                        }
+                    }
                     let mut element = new_element(
                         required(&caption.element_id),
                         "text",
@@ -2327,13 +2428,15 @@ impl State {
                 text,
                 start_time,
                 duration,
+                style,
+                resolved_params,
                 resolved_allocations,
             } => {
                 let element = self.element_mut(track_id, element_id, index)?;
                 if element.element_type != "text" {
                     return incompatible(index, "caption must reference text");
                 }
-                if text.is_none() && start_time.is_none() && duration.is_none() {
+                if text.is_none() && start_time.is_none() && duration.is_none() && style.is_none() {
                     return invalid(index, "caption update is empty");
                 }
                 if let Some(v) = text {
@@ -2359,6 +2462,16 @@ impl State {
                     .is_some_and(|allocations| !allocations.is_empty())
                 {
                     return invalid(index, "caption has unused duration-clamp allocations");
+                }
+                if style.is_some() {
+                    let Some(params) = resolved_params else {
+                        return invalid(index, "caption style params were not resolved");
+                    };
+                    for (key, value) in params {
+                        element.params.insert(key.clone(), value.clone());
+                    }
+                } else if resolved_params.is_some() {
+                    return invalid(index, "caption has unused style params");
                 }
                 self.caption_track_warnings(track_id, index, warnings);
                 Ok(())
@@ -6547,6 +6660,25 @@ fn default_text_params(content: &str) -> Params {
         ("background.offsetY", Scalar::Number(0.0)),
         ("highlight.enabled", Scalar::Boolean(false)),
         ("highlight.color", Scalar::String("#ffd400".into())),
+        (
+            "outline.color",
+            Scalar::String(DEFAULT_TEXT_OUTLINE_COLOR.into()),
+        ),
+        ("outline.width", Scalar::Number(DEFAULT_TEXT_OUTLINE_WIDTH)),
+        ("outline.join", Scalar::String("round".into())),
+        (
+            "shadow.color",
+            Scalar::String(DEFAULT_TEXT_SHADOW_COLOR.into()),
+        ),
+        (
+            "shadow.offsetX",
+            Scalar::Number(DEFAULT_TEXT_SHADOW_OFFSET_X),
+        ),
+        (
+            "shadow.offsetY",
+            Scalar::Number(DEFAULT_TEXT_SHADOW_OFFSET_Y),
+        ),
+        ("shadow.blur", Scalar::Number(DEFAULT_TEXT_SHADOW_BLUR)),
         ("caption.speaker", Scalar::String(String::new())),
         ("transform.positionX", Scalar::Number(0.0)),
         ("transform.positionY", Scalar::Number(0.0)),

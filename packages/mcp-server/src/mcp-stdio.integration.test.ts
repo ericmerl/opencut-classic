@@ -1142,8 +1142,16 @@ integrationTest(
 			"tiktok-classic",
 			"tiktok-classic-red",
 			"tiktok-karaoke",
+			"tiktok-outline-shadow",
 			"montserrat-clean",
 		]);
+		expect(
+			requireRecord(fonts.textStyleContract, "textStyleContract"),
+		).toMatchObject({
+			scaleReference: 90,
+			outline: { default: { width: 0, join: "round" } },
+			shadow: { default: { offsetX: 0, offsetY: 0, blur: 0 } },
+		});
 		const project = await harness.callTool(
 			"opencut_get_project",
 			affinity(identity),
@@ -1239,10 +1247,15 @@ integrationTest(
 		if (!captionEvidence) throw new Error("expected caption evidence");
 		const geometry = requireRecord(captionEvidence.geometry, "geometry");
 		expect(geometry).toMatchObject({
-			version: "opencut.caption-geometry.v1",
+			version: "opencut.caption-geometry.v2",
 			measurement: "opencut.text.measureTextLayout",
 			clipped: false,
 			safeZone: { inside: true },
+			textEffects: {
+				outline: { width: 0, join: "round" },
+				shadow: { offsetX: 0, offsetY: 0, blur: 0 },
+				extents: { left: 0, top: 0, right: 0, bottom: 0 },
+			},
 		});
 		expect(requireNumber(geometry.lineCount, "lineCount")).toBeGreaterThan(1);
 		expect(requireRecords(geometry.lines, "lines")).toHaveLength(
@@ -1937,6 +1950,7 @@ integrationTest(
 			},
 			{
 				kind: "insert_captions",
+				trackId: "public-styled-captions",
 				captions: [
 					{
 						text: "EXACT FRAME EVIDENCE",
@@ -1955,6 +1969,26 @@ integrationTest(
 						cornerRadius: 4,
 						paddingX: 8,
 						paddingY: 4,
+					},
+					outline: { color: "#00ff00", width: 2, join: "round" },
+					shadow: {
+						color: "#00000099",
+						offsetX: 2,
+						offsetY: 3,
+						blur: 3,
+					},
+				},
+			},
+			{
+				kind: "restyle_captions",
+				trackId: "public-styled-captions",
+				style: {
+					outline: { color: "#FF00FF", width: 2, join: "round" },
+					shadow: {
+						color: "#00000099",
+						offsetX: 2,
+						offsetY: 3,
+						blur: 3,
 					},
 				},
 			},
@@ -2048,9 +2082,9 @@ integrationTest(
 			result: {
 				status: "validated",
 				captionLayout: {
-					layoutVersion: "opencut.caption-layout.v1",
+					layoutVersion: "opencut.caption-layout.v2",
 					layoutEngine: "browser-canvas-2d",
-					geometryVersion: "opencut.caption-geometry.v1",
+					geometryVersion: "opencut.caption-geometry.v2",
 					measurement: "opencut.text.measureTextLayout",
 					fontReadiness: { status: "ready", families: ["Arial"] },
 					captions: [
@@ -2059,7 +2093,18 @@ integrationTest(
 							captionIndex: 0,
 							elementName: "Caption 1",
 							fontDescriptorCss: 'italic bold 16px "Arial"',
-							geometry: { lineCount: 1, clipped: false },
+							geometry: {
+								lineCount: 1,
+								clipped: false,
+								textEffects: {
+									outline: { color: "#00ff00", width: expect.any(Number) },
+									shadow: { color: "#00000099", blur: expect.any(Number) },
+									extents: {
+										right: expect.any(Number),
+										bottom: expect.any(Number),
+									},
+								},
+							},
 						},
 					],
 				},
@@ -2202,6 +2247,26 @@ integrationTest(
 		);
 		expect(edited.status).toBe("applied");
 		const editedSnapshot = requireRecord(edited.snapshot, "snapshot");
+		const queriedAfterEdit = await recovery.callTool("opencut_query_timeline", {
+			...affinity(recoveryIdentity),
+			projectId,
+			expectedRevision: requireNumber(edited.revision, "revision"),
+			elementTypes: ["text"],
+		});
+		const queriedCaption = requireRecords(
+			queriedAfterEdit.tracks,
+			"tracks",
+		).flatMap((track) => requireRecords(track.elements, "elements"))[0];
+		if (!queriedCaption) throw new Error("expected queried caption");
+		expect(requireRecord(queriedCaption.params, "params")).toMatchObject({
+			"outline.color": "#ff00ff",
+			"outline.width": 2,
+			"outline.join": "round",
+			"shadow.color": "#00000099",
+			"shadow.offsetX": 2,
+			"shadow.offsetY": 3,
+			"shadow.blur": 3,
+		});
 		const contentHash = requireProjectContentHash(editedSnapshot);
 		expect(contentHash).toBe(
 			requireString(

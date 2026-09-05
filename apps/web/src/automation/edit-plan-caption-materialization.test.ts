@@ -29,7 +29,7 @@ const buildSubtitleTextElement = mock(
 );
 
 const geometryFixture = {
-	version: "opencut.caption-geometry.v1",
+	version: "opencut.caption-geometry.v2",
 	measurement: "opencut.text.measureTextLayout",
 	canvas: { width: 1080, height: 1920 },
 	position: { x: 0, y: 700 },
@@ -38,6 +38,11 @@ const geometryFixture = {
 	block: { left: -100, top: -40, width: 200, height: 80 },
 	bubble: null,
 	lineBubbles: null,
+	textEffects: {
+		outline: { color: "#000000", width: 0, join: "round" },
+		shadow: { color: "#00000000", offsetX: 0, offsetY: 0, blur: 0 },
+		extents: { left: 0, top: 0, right: 0, bottom: 0 },
+	},
 	visual: { left: 440, top: 1620, width: 200, height: 80 },
 	overflow: { left: 0, top: 0, right: 0, bottom: 0 },
 	clipped: false,
@@ -57,7 +62,11 @@ const measureSubtitleCaption = mock(
 		calls.push("measure");
 		return {
 			element: buildSubtitleTextElement(input),
-			fontParams: { fontFamily: "Arial", fontWeight: "bold", fontStyle: "normal" },
+			fontParams: {
+				fontFamily: "Arial",
+				fontWeight: "bold",
+				fontStyle: "normal",
+			},
 			local: null,
 			geometry: { ...geometryFixture, canvas: input.canvasSize },
 		};
@@ -100,7 +109,9 @@ const readinessFixture = {
 	descriptorsSha256: "f".repeat(64),
 };
 const waitForFonts = mock(async (descriptors: readonly { css: string }[]) => {
-	calls.push(`fonts:${descriptors.map((descriptor) => descriptor.css).join("|")}`);
+	calls.push(
+		`fonts:${descriptors.map((descriptor) => descriptor.css).join("|")}`,
+	);
 	return readinessFixture;
 });
 
@@ -159,7 +170,7 @@ describe("edit-plan caption materialization", () => {
 		expect(captionLayout).toMatchObject({
 			layoutVersion: CAPTION_LAYOUT_VERSION,
 			layoutEngine: CAPTION_LAYOUT_ENGINE,
-			geometryVersion: "opencut.caption-geometry.v1",
+			geometryVersion: "opencut.caption-geometry.v2",
 			measurement: "opencut.text.measureTextLayout",
 			fontReadiness: readinessFixture,
 			captions: [

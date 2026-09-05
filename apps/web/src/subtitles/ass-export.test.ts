@@ -134,6 +134,56 @@ describe("ASS export", () => {
 		expect(() => toAssColor("red")).toThrow("unsupported colour");
 	});
 
+	test("imports ASS outline and shadow through the Rust style mapper", () => {
+		const parsed = parseAss({
+			input: `[Script Info]
+PlayResX: 1280
+PlayResY: 720
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, BorderStyle, Outline, Shadow, Alignment
+Style: FX,Arial,48,&H00FFFFFF,&H0000FF00,&H66000000,1,16,24,2
+
+[Events]
+Format: Layer, Start, End, Style, Text
+Dialogue: 0,0:00:00.00,0:00:01.00,FX,Effects`,
+		});
+
+		expect(parsed.captions[0]?.style).toMatchObject({
+			outline: { color: "#00ff00", width: 2, join: "round" },
+			shadow: {
+				color: "#00000099",
+				offsetX: 3,
+				offsetY: 3,
+				blur: 0,
+			},
+		});
+		expect(parsed.warnings).toEqual([]);
+	});
+
+	test("round-trips representable outline and shadow styles", () => {
+		const caption: SubtitleCue = {
+			...PLAIN,
+			style: {
+				outline: { color: "#00ff00", width: 2, join: "round" },
+				shadow: {
+					color: "#00000099",
+					offsetX: 3,
+					offsetY: 3,
+					blur: 0,
+				},
+			},
+		};
+		const exported = serializeAss({ captions: [caption], playRes: PLAY_RES });
+		const parsed = parseAss({ input: exported.content });
+
+		expect(exported.lossReport.dropped).toEqual([]);
+		expect(exported.lossReport.supported).toEqual(
+			expect.arrayContaining(["outline", "shadow"]),
+		);
+		expect(parsed.captions[0]?.style).toMatchObject(caption.style!);
+	});
+
 	test("is deterministic", () => {
 		const first = serializeAss({
 			captions: [STYLED, PLAIN],

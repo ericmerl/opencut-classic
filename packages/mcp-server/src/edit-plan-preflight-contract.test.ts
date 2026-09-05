@@ -124,6 +124,7 @@ describe("edit-plan preflight contract", () => {
 				content: "Title",
 				startTime: 0,
 				duration: 120_000,
+				style: null,
 				autoTrackId: "text-track-1",
 				resolvedAllocations: [
 					{
@@ -279,6 +280,7 @@ describe("edit-plan preflight contract", () => {
 				text: null,
 				startTime: null,
 				duration: 60_000,
+				style: null,
 				resolvedAllocations,
 			},
 		];

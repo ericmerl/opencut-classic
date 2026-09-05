@@ -4,6 +4,19 @@ import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 
 mock.module("opencut-wasm", () => ({
 	captionStylePresets: () => ({ presets: [] }),
+	textStyleContract: () => ({
+		scaleReference: 90,
+		outline: {
+			default: { color: "#000000", width: 0, join: "round" },
+			width: { min: 0, max: 64, step: 0.1 },
+			joins: ["round", "bevel", "miter"],
+		},
+		shadow: {
+			default: { color: "#00000000", offsetX: 0, offsetY: 0, blur: 0 },
+			offset: { min: -256, max: 256, step: 0.1 },
+			blur: { min: 0, max: 64, step: 0.1 },
+		},
+	}),
 	TICKS_PER_SECOND: () => 120_000,
 	formatTimecode: () => "00:00",
 	lastFrameTime: () => 0,
@@ -14,9 +27,8 @@ mock.module("opencut-wasm", () => ({
 	snappedSeekTime: ({ time }: { time: number }) => time,
 }));
 
-const { buildSubtitleTextElement } = await import(
-	"./build-subtitle-text-element"
-);
+const { buildSubtitleTextElement } =
+	await import("./build-subtitle-text-element");
 
 describe("subtitle preflight measurement", () => {
 	beforeAll(() => {

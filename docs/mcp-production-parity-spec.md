@@ -640,6 +640,7 @@ Production parity MUST include:
 - Merge, split, rechunk, shift, overlap repair, reading-speed enforcement, and selector-based restyling.
 - Speaker styling and word-level highlighting.
 - Independent per-line caption bubbles with measured padding, radius, fill, and opacity.
+- Typed text outline (colour, width, join) and drop shadow (colour, two-axis offset, blur), with Rust-owned defaults, ranges, canonicalization, ASS mapping, and conservative measured visual extents.
 - Safe-zone and clipping validation.
 - Captions-on and captions-off render overlays without project mutation.
 - SRT and WebVTT behavior already present, plus ASS round-trip for the supported style subset enumerated in the audit row `Subtitle import`, with a structured loss report for every feature that row lists as dropped.
@@ -654,6 +655,8 @@ Preview and export MUST use the same font descriptors, wrapping rules, line geom
 The exact realistic filter values already represented in the audit MUST remain discoverable as a stable preset and render identically in preview and export.
 
 Production parity also requires stable, discoverable, typed implementations of the named Simple Media treatments identified in audit section E: Film Frame, Play Pendulum, Technicolor Flash, Scanner Bar, Glitch, Chromatic, Dark Night, Mirror, required body or meme treatments, and exact Pull In, Pull Out, and Swipe Left behavior.
+
+Named text treatments MUST use the canonical outline and shadow controls rather than duplicate offset text elements. Their preview, export, caption-layout evidence, and MCP query readback MUST resolve through the same measured-text and Rust style contracts.
 
 Each treatment MUST define defaults, parameter ranges, applicability, persistence, renderer behavior, and reference visual tolerances. A similarly named effect is not sufficient. Implementation of a treatment MUST NOT start until its audit row records the owner-supplied reference clip or frame and a numeric tolerance (audit owner decision 5). This work is low priority and is scheduled after the foundations, lifecycle, evidence, and job milestones.
 

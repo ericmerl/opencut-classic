@@ -1,6 +1,7 @@
 import { BUNDLED_FONT_FILES, ensureBundledFonts } from "@/fonts/bundled-fonts";
 import { thirdPartyFontFetchPolicy } from "@/fonts/font-policy";
 import { listCaptionStylePresets } from "@/subtitles/caption-presets";
+import { getTextStyleContract } from "@/text/effects";
 
 /**
  * Mirrors NAMED_FONT_PRESETS in packages/mcp-server/src/capability-snapshot.ts.
@@ -76,6 +77,7 @@ async function readFontReadiness() {
 	const catalog = readFontCatalog();
 	const thirdPartyFetch = thirdPartyFontFetchPolicy();
 	const captionStylePresets = listCaptionStylePresets();
+	const textStyleContract = getTextStyleContract();
 	if (!document.fonts) {
 		return {
 			status: "unavailable",
@@ -88,6 +90,7 @@ async function readFontReadiness() {
 			catalog,
 			thirdPartyFetch,
 			captionStylePresets,
+			textStyleContract,
 		};
 	}
 	try {
@@ -125,6 +128,7 @@ async function readFontReadiness() {
 			catalog,
 			thirdPartyFetch,
 			captionStylePresets,
+			textStyleContract,
 		};
 	} catch (error) {
 		return {
@@ -139,6 +143,7 @@ async function readFontReadiness() {
 			catalog,
 			thirdPartyFetch,
 			captionStylePresets,
+			textStyleContract,
 		};
 	}
 }

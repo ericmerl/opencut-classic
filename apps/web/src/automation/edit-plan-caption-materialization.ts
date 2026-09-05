@@ -26,7 +26,8 @@ import type {
 	AutomationEditOperation,
 } from "./types";
 
-export const CAPTION_LAYOUT_VERSION = "opencut.caption-layout.v1";
+export const CAPTION_LAYOUT_VERSION = "opencut.caption-layout.v2";
+const LEGACY_CAPTION_LAYOUT_VERSION = "opencut.caption-layout.v1";
 export const CAPTION_LAYOUT_ENGINE = "browser-canvas-2d";
 
 type CaptionOperation = Extract<
@@ -177,7 +178,10 @@ export function buildCaptionElementForNativeApply({
 	if (!materialization) {
 		return buildLegacyCaptionElement({ caption, index, style, canvasSize });
 	}
-	if (materialization.resolvedLayoutVersion !== CAPTION_LAYOUT_VERSION) {
+	if (
+		materialization.resolvedLayoutVersion !== CAPTION_LAYOUT_VERSION &&
+		materialization.resolvedLayoutVersion !== LEGACY_CAPTION_LAYOUT_VERSION
+	) {
 		throw new Error("unsupported resolved caption layout version");
 	}
 	if (materialization.resolvedLayoutEngine !== CAPTION_LAYOUT_ENGINE) {

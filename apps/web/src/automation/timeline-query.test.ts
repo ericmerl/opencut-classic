@@ -147,6 +147,37 @@ describe("timeline query", () => {
 		]);
 	});
 
+	test("returns canonical text params for MCP style readback", () => {
+		const snapshot = buildSnapshot();
+		const element = snapshot.elements[0]!;
+		element.type = "text";
+		element.params = {
+			content: "Outlined",
+			"outline.color": "#abcdef",
+			"outline.width": 2,
+			"outline.join": "round",
+			"shadow.color": "#00000099",
+			"shadow.offsetX": 2,
+			"shadow.offsetY": 3,
+			"shadow.blur": 4,
+		};
+
+		const result = queryTimelineSnapshot({
+			snapshot,
+			request: {
+				projectId: "project-1",
+				expectedRevision: 7,
+				elementTypes: ["text"],
+			},
+		});
+		expect(result.status).toBe("queried");
+		if (result.status !== "queried") return;
+		expect(result.tracks[0]?.elements[0]?.params).toMatchObject({
+			"outline.color": "#abcdef",
+			"shadow.blur": 4,
+		});
+	});
+
 	test("clips coverage to a requested range", () => {
 		const result = queryTimelineSnapshot({
 			snapshot: buildSnapshot(),

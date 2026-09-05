@@ -138,6 +138,15 @@ function allOperations(): AutomationEditOperation[] {
 			content: "Title",
 			startTime: tick(0),
 			duration: tick(10),
+			style: {
+				outline: { color: "#abcdef", width: 2, join: "round" },
+				shadow: {
+					color: "#00000099",
+					offsetX: 2,
+					offsetY: 3,
+					blur: 4,
+				},
+			},
 		},
 		{
 			kind: "insert_graphic",
@@ -177,7 +186,19 @@ function allOperations(): AutomationEditOperation[] {
 			kind: "insert_captions",
 			captions: [{ text: "Caption", startTime: tick(0), duration: tick(10) }],
 		},
-		{ kind: "update_caption", ...ref, text: "Corrected" },
+		{
+			kind: "update_caption",
+			...ref,
+			text: "Corrected",
+			style: {
+				outline: { color: "#abcdef", width: 2, join: "round" },
+			},
+			resolvedParams: {
+				"outline.color": "#abcdef",
+				"outline.width": 2,
+				"outline.join": "round",
+			},
+		},
 		{ kind: "delete", ...ref },
 		{ kind: "duplicate_elements", elements: [ref] },
 		{

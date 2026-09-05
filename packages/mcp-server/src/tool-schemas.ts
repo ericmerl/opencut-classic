@@ -538,6 +538,23 @@ const captionStyleSchema = z
 		textDecoration: z.enum(["none", "underline", "line-through"]).optional(),
 		letterSpacing: z.number().optional(),
 		lineHeight: z.number().positive().optional(),
+		outline: z
+			.object({
+				color: z.string().min(1),
+				width: z.number(),
+				join: z.enum(["round", "bevel", "miter"]),
+			})
+			.strict()
+			.optional(),
+		shadow: z
+			.object({
+				color: z.string().min(1),
+				offsetX: z.number(),
+				offsetY: z.number(),
+				blur: z.number(),
+			})
+			.strict()
+			.optional(),
 		background: z
 			.object({
 				enabled: z.boolean(),
@@ -777,6 +794,7 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 		content: z.string().min(1),
 		startTime: z.number().int().nonnegative(),
 		duration: z.number().int().positive(),
+		style: captionStyleSchema.optional(),
 		autoTrackId: z.string().trim().min(1).optional(),
 		resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 	}),
@@ -1137,13 +1155,16 @@ const baseEditOperationSchema = z.discriminatedUnion("kind", [
 			text: z.string().trim().min(1).optional(),
 			startTime: z.number().int().nonnegative().optional(),
 			duration: z.number().int().positive().optional(),
+			style: captionStyleSchema.optional(),
+			resolvedParams: elementParamRecordSchema.optional(),
 			resolvedAllocations: z.array(objectIdAllocationSchema).optional(),
 		})
 		.refine(
 			(value) =>
 				value.text !== undefined ||
 				value.startTime !== undefined ||
-				value.duration !== undefined,
+				value.duration !== undefined ||
+				value.style !== undefined,
 			{ message: "at least one caption correction is required" },
 		),
 	z.object({
@@ -1554,6 +1575,7 @@ const resolvedAllocationKinds = new Set([
 ]);
 /** Fields only the Rust evaluator may fill, per kind, beyond allocations. */
 const resolvedInternalFields = new Map<string, string[]>([
+	["update_caption", ["resolvedParams"]],
 	["restyle_captions", ["resolvedParams"]],
 	["rechunk_captions", ["resolvedChunks"]],
 ]);
@@ -1586,7 +1608,10 @@ const resolvedCaptionSchema = z
 		resolvedName: z.string().trim().min(1),
 		resolvedContent: z.string().trim().min(1),
 		resolvedParams: elementParamRecordSchema,
-		resolvedLayoutVersion: z.literal("opencut.caption-layout.v1"),
+		resolvedLayoutVersion: z.enum([
+			"opencut.caption-layout.v1",
+			"opencut.caption-layout.v2",
+		]),
 		resolvedLayoutEngine: z.literal("browser-canvas-2d"),
 	})
 	.strict();

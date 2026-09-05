@@ -127,7 +127,7 @@ describe("immutable export render overlays", () => {
 			endTicks: 120_000,
 			safeZoneId: "caption",
 			geometry: {
-				version: "opencut.caption-geometry.v1",
+				version: "opencut.caption-geometry.v2",
 				measurement: "opencut.text.measureTextLayout",
 				clipped: false,
 				safeZone: { inside: false },

@@ -143,7 +143,10 @@ describe("caption geometry golden", () => {
 				canvasSize: fixture.canvasSize,
 				ctx,
 			});
-			const element = { ...measured.element, id: "caption-golden" } as TextElement;
+			const element = {
+				...measured.element,
+				id: "caption-golden",
+			} as TextElement;
 
 			// The renderer measures the element it is handed with the same
 			// function on an identically configured context.
@@ -252,6 +255,103 @@ describe("caption geometry golden", () => {
 		).toBeGreaterThan(0);
 	});
 
+	test("outline and shadow expand every measured line and safe-zone visual", () => {
+		const measured = measureSubtitleCaption({
+			index: 0,
+			caption: {
+				text: "Effect extents",
+				startTime: 0,
+				duration: 2,
+				style: {
+					fontFamily: "TikTok Sans",
+					fontWeight: "bold",
+					outline: { color: "#000000", width: 2, join: "round" },
+					shadow: {
+						color: "#00000099",
+						offsetX: 2,
+						offsetY: 3,
+						blur: 3,
+					},
+				},
+			},
+			canvasSize: PORTRAIT,
+			ctx: measurementContext(),
+		});
+
+		expect(measured.geometry.version).toBe("opencut.caption-geometry.v2");
+		expect(measured.geometry.textEffects.outline.join).toBe("round");
+		expect(measured.geometry.textEffects.outline.width).toBeCloseTo(42.6667, 3);
+		expect(measured.geometry.textEffects.shadow.offsetX).toBeCloseTo(
+			42.6667,
+			3,
+		);
+		expect(measured.geometry.textEffects.shadow.offsetY).toBe(64);
+		expect(measured.geometry.textEffects.shadow.blur).toBe(64);
+		expect(measured.geometry.textEffects.extents.left).toBeCloseTo(21.3333, 3);
+		expect(measured.geometry.textEffects.extents.top).toBeCloseTo(21.3333, 3);
+		expect(measured.local.lines[0]!.box.width).toBeGreaterThan(
+			measured.local.lines[0]!.width,
+		);
+		expect(measured.local.visual.width).toBeGreaterThan(
+			measured.local.block.width,
+		);
+	});
+
+	test("shared measured-text drawing paints outline and shadow pixels", () => {
+		const measured = measureSubtitleCaption({
+			index: 0,
+			caption: {
+				text: "Title",
+				startTime: 0,
+				duration: 2,
+				style: {
+					fontFamily: "TikTok Sans",
+					fontWeight: "bold",
+					fontSize: 8,
+					outline: { color: "#ff0000", width: 1, join: "bevel" },
+					shadow: {
+						color: "#0000ff",
+						offsetX: 2,
+						offsetY: 2,
+						blur: 0,
+					},
+				},
+			},
+			canvasSize: { width: 500, height: 200 },
+			ctx: measurementContext(),
+		});
+		const canvas = createCanvas(500, 200);
+		const ctx = canvas.getContext("2d") as unknown as TextCanvasContext;
+		(ctx as unknown as CanvasRenderingContext2D).translate(250, 100);
+		drawMeasuredTextLayout({
+			ctx,
+			layout: measured.local.layout,
+			textColor: "#ffffff",
+			textEffects: measured.local.textEffects,
+		});
+		const pixels = (ctx as unknown as CanvasRenderingContext2D).getImageData(
+			0,
+			0,
+			500,
+			200,
+		).data;
+		let red = 0;
+		let blue = 0;
+		for (let offset = 0; offset < pixels.length; offset += 4) {
+			const [r, g, b, a] = [
+				pixels[offset]!,
+				pixels[offset + 1]!,
+				pixels[offset + 2]!,
+				pixels[offset + 3]!,
+			];
+			if (a < 200) continue;
+			if (r > 180 && g < 80 && b < 80) red += 1;
+			if (b > 180 && r < 80 && g < 80) blue += 1;
+		}
+		expect(red).toBeGreaterThan(0);
+		expect(blue).toBeGreaterThan(0);
+	});
+
 	test("the bubble follows the renderer's padding and corner rounding", () => {
 		const fixture = FIXTURES[2]!;
 		const measured = measureSubtitleCaption({
@@ -276,7 +376,8 @@ describe("caption geometry golden", () => {
 			6,
 		);
 		// Bottom placement with an 8% vertical margin in a 1080 px tall canvas.
-		const bottom = measured.geometry.visual.top + measured.geometry.visual.height;
+		const bottom =
+			measured.geometry.visual.top + measured.geometry.visual.height;
 		expect(bottom).toBeCloseTo(LANDSCAPE.height * (1 - 0.08), 6);
 		expect(measured.geometry.visual.left).toBeCloseTo(
 			LANDSCAPE.width * 0.12,
@@ -311,8 +412,14 @@ describe("caption geometry golden", () => {
 		expect(lines.length).toBeGreaterThan(1);
 		const ratio = layout.fontSizeRatio;
 		lineBubbles.forEach((lineBubble, index) => {
-			expect(lineBubble.width).toBeCloseTo(lines[index]!.width + 2 * 16 * ratio, 6);
-			expect(lineBubble.height).toBeCloseTo(layout.lineHeightPx + 2 * 8 * ratio, 6);
+			expect(lineBubble.width).toBeCloseTo(
+				lines[index]!.width + 2 * 16 * ratio,
+				6,
+			);
+			expect(lineBubble.height).toBeCloseTo(
+				layout.lineHeightPx + 2 * 8 * ratio,
+				6,
+			);
 			expect(lineBubble.cornerRadius).toBeCloseTo(
 				(Math.min(lineBubble.width, lineBubble.height) / 2) * 0.5,
 				6,
@@ -321,7 +428,9 @@ describe("caption geometry golden", () => {
 		// The line bubbles tile the block bubble's vertical extent exactly and
 		// the widest one matches the block bubble's width.
 		const top = Math.min(...lineBubbles.map((rect) => rect.top));
-		const bottom = Math.max(...lineBubbles.map((rect) => rect.top + rect.height));
+		const bottom = Math.max(
+			...lineBubbles.map((rect) => rect.top + rect.height),
+		);
 		expect(top).toBeCloseTo(bubble.top, 6);
 		expect(bottom).toBeCloseTo(bubble.top + bubble.height, 6);
 		expect(Math.max(...lineBubbles.map((rect) => rect.width))).toBeCloseTo(
@@ -349,7 +458,10 @@ describe("caption geometry golden", () => {
 			canvasSize: PORTRAIT,
 			ctx: measurementContext(),
 		});
-		const element = { ...measured.element, id: "caption-karaoke" } as TextElement;
+		const element = {
+			...measured.element,
+			id: "caption-karaoke",
+		} as TextElement;
 		expect(element.params["highlight.enabled"]).toBe(true);
 		const canvas = createCanvas(PORTRAIT.width, 400);
 		const ctx = canvas.getContext("2d") as unknown as TextCanvasContext;

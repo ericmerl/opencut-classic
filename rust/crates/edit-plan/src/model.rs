@@ -617,6 +617,362 @@ pub enum TextFontStyle {
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+pub enum TextOutlineJoin {
+    Round,
+    Bevel,
+    Miter,
+}
+
+pub const DEFAULT_TEXT_OUTLINE_COLOR: &str = "#000000";
+pub const DEFAULT_TEXT_OUTLINE_WIDTH: f64 = 0.0;
+pub const DEFAULT_TEXT_OUTLINE_JOIN: TextOutlineJoin = TextOutlineJoin::Round;
+pub const TEXT_OUTLINE_WIDTH_MIN: f64 = 0.0;
+pub const TEXT_OUTLINE_WIDTH_MAX: f64 = 64.0;
+pub const DEFAULT_TEXT_SHADOW_COLOR: &str = "#00000000";
+pub const DEFAULT_TEXT_SHADOW_OFFSET_X: f64 = 0.0;
+pub const DEFAULT_TEXT_SHADOW_OFFSET_Y: f64 = 0.0;
+pub const DEFAULT_TEXT_SHADOW_BLUR: f64 = 0.0;
+pub const TEXT_SHADOW_OFFSET_MIN: f64 = -256.0;
+pub const TEXT_SHADOW_OFFSET_MAX: f64 = 256.0;
+pub const TEXT_SHADOW_BLUR_MIN: f64 = 0.0;
+pub const TEXT_SHADOW_BLUR_MAX: f64 = 64.0;
+pub const TEXT_STYLE_SCALE_REFERENCE: f64 = 90.0;
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextOutline {
+    pub color: String,
+    pub width: f64,
+    pub join: TextOutlineJoin,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextShadow {
+    pub color: String,
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub blur: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NumericControlRange {
+    pub min: f64,
+    pub max: f64,
+    pub step: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextOutlineControlContract {
+    pub default: TextOutline,
+    pub width: NumericControlRange,
+    pub joins: Vec<TextOutlineJoin>,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextShadowControlContract {
+    pub default: TextShadow,
+    pub offset: NumericControlRange,
+    pub blur: NumericControlRange,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextStyleContract {
+    pub scale_reference: f64,
+    pub outline: TextOutlineControlContract,
+    pub shadow: TextShadowControlContract,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolveTextEffectGeometryOptions {
+    pub outline: TextOutline,
+    pub shadow: TextShadow,
+    pub pixels_per_unit: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextEffectExtents {
+    pub left: f64,
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolvedTextEffectGeometry {
+    pub outline: TextOutline,
+    pub shadow: TextShadow,
+    pub extents: TextEffectExtents,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ResolveTextEffectGeometryResponse {
+    Resolved {
+        geometry: ResolvedTextEffectGeometry,
+    },
+    Rejected {
+        reason: String,
+    },
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MapAssTextEffectsOptions {
+    pub outline: Option<String>,
+    pub outline_colour: Option<String>,
+    pub shadow: Option<String>,
+    pub back_colour: Option<String>,
+    pub border_style: Option<String>,
+    pub play_res_y: f64,
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum MapAssTextEffectsResponse {
+    Mapped { style: SubtitleStyleOverrides },
+    Rejected { reason: String },
+}
+
+pub fn compute_text_effect_geometry(
+    options: ResolveTextEffectGeometryOptions,
+) -> Result<ResolvedTextEffectGeometry, String> {
+    if !options.pixels_per_unit.is_finite()
+        || options.pixels_per_unit <= 0.0
+        || options.pixels_per_unit > 1_000.0
+    {
+        return Err("pixelsPerUnit must be finite and between 0 and 1000".into());
+    }
+    let mut style = SubtitleStyleOverrides {
+        outline: Some(options.outline),
+        shadow: Some(options.shadow),
+        ..Default::default()
+    };
+    canonicalize_text_effects(&mut style)?;
+    let mut outline = style.outline.expect("outline retained");
+    let mut shadow = style.shadow.expect("shadow retained");
+    outline.width *= options.pixels_per_unit;
+    shadow.offset_x *= options.pixels_per_unit;
+    shadow.offset_y *= options.pixels_per_unit;
+    shadow.blur *= options.pixels_per_unit;
+    let outline_extent = if color_is_visible(&outline.color) {
+        outline.width / 2.0
+    } else {
+        0.0
+    };
+    let shadow_visible = color_is_visible(&shadow.color);
+    let shadow_left = if shadow_visible {
+        (shadow.blur - shadow.offset_x).max(0.0)
+    } else {
+        0.0
+    };
+    let shadow_top = if shadow_visible {
+        (shadow.blur - shadow.offset_y).max(0.0)
+    } else {
+        0.0
+    };
+    let shadow_right = if shadow_visible {
+        (shadow.blur + shadow.offset_x).max(0.0)
+    } else {
+        0.0
+    };
+    let shadow_bottom = if shadow_visible {
+        (shadow.blur + shadow.offset_y).max(0.0)
+    } else {
+        0.0
+    };
+    Ok(ResolvedTextEffectGeometry {
+        outline,
+        shadow,
+        extents: TextEffectExtents {
+            left: outline_extent.max(shadow_left),
+            top: outline_extent.max(shadow_top),
+            right: outline_extent.max(shadow_right),
+            bottom: outline_extent.max(shadow_bottom),
+        },
+    })
+}
+
+fn color_is_visible(color: &str) -> bool {
+    color.len() == 7 || &color[7..9] != "00"
+}
+
+pub fn compute_ass_text_effects(
+    options: MapAssTextEffectsOptions,
+) -> Result<SubtitleStyleOverrides, String> {
+    if !options.play_res_y.is_finite() || options.play_res_y <= 0.0 {
+        return Err("playResY must be finite and positive".into());
+    }
+    let border_style = parse_optional_ass_number(options.border_style.as_deref(), "BorderStyle")?
+        .unwrap_or(1.0)
+        .round() as i32;
+    let outline_value = parse_optional_ass_number(options.outline.as_deref(), "Outline")?;
+    let shadow_value = parse_optional_ass_number(options.shadow.as_deref(), "Shadow")?;
+    if outline_value.is_some_and(|value| value < 0.0) {
+        return Err("Outline must be non-negative".into());
+    }
+    if shadow_value.is_some_and(|value| value < 0.0) {
+        return Err("Shadow must be non-negative".into());
+    }
+    let scale = TEXT_STYLE_SCALE_REFERENCE / options.play_res_y;
+    let outline = if outline_value.is_some() || options.outline_colour.is_some() {
+        Some(TextOutline {
+            color: options
+                .outline_colour
+                .as_deref()
+                .map(parse_ass_color)
+                .transpose()?
+                .unwrap_or_else(|| DEFAULT_TEXT_OUTLINE_COLOR.into()),
+            width: outline_value.unwrap_or(0.0) * scale,
+            join: TextOutlineJoin::Round,
+        })
+    } else {
+        None
+    };
+    let mapped_back = options
+        .back_colour
+        .as_deref()
+        .map(parse_ass_color)
+        .transpose()?;
+    let shadow = if shadow_value.is_some() || (border_style != 3 && mapped_back.is_some()) {
+        let offset = shadow_value.unwrap_or(0.0) * scale;
+        Some(TextShadow {
+            color: mapped_back
+                .clone()
+                .unwrap_or_else(|| DEFAULT_TEXT_SHADOW_COLOR.into()),
+            offset_x: offset,
+            offset_y: offset,
+            blur: 0.0,
+        })
+    } else {
+        None
+    };
+    let background = if border_style == 3 {
+        mapped_back.map(|color| SubtitleBackground {
+            enabled: color_is_visible(&color),
+            color,
+            per_line: None,
+            corner_radius: None,
+            padding_x: None,
+            padding_y: None,
+            offset_x: None,
+            offset_y: None,
+        })
+    } else {
+        None
+    };
+    resolve_caption_style(&SubtitleStyleOverrides {
+        outline,
+        shadow,
+        background,
+        ..Default::default()
+    })
+}
+
+fn parse_optional_ass_number(value: Option<&str>, field: &str) -> Result<Option<f64>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let parsed = value
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("{field} must be numeric"))?;
+    if !parsed.is_finite() {
+        return Err(format!("{field} must be finite"));
+    }
+    Ok(Some(parsed))
+}
+
+fn parse_ass_color(value: &str) -> Result<String, String> {
+    let normalized = value
+        .trim()
+        .trim_start_matches('&')
+        .trim_start_matches(|character| character == 'H' || character == 'h');
+    if normalized.len() > 8 || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("ASS color must be &HAABBGGRR hexadecimal".into());
+    }
+    let padded = format!("{normalized:0>8}");
+    let alpha = 255_u8
+        - u8::from_str_radix(&padded[0..2], 16).map_err(|_| "ASS alpha is invalid".to_owned())?;
+    let red = &padded[6..8];
+    let green = &padded[4..6];
+    let blue = &padded[2..4];
+    let rgb = format!("#{red}{green}{blue}").to_ascii_lowercase();
+    Ok(if alpha == 255 {
+        rgb
+    } else {
+        format!("{rgb}{alpha:02x}")
+    })
+}
+
+pub fn text_style_contract() -> TextStyleContract {
+    TextStyleContract {
+        scale_reference: TEXT_STYLE_SCALE_REFERENCE,
+        outline: TextOutlineControlContract {
+            default: TextOutline {
+                color: DEFAULT_TEXT_OUTLINE_COLOR.into(),
+                width: DEFAULT_TEXT_OUTLINE_WIDTH,
+                join: DEFAULT_TEXT_OUTLINE_JOIN,
+            },
+            width: NumericControlRange {
+                min: TEXT_OUTLINE_WIDTH_MIN,
+                max: TEXT_OUTLINE_WIDTH_MAX,
+                step: 0.1,
+            },
+            joins: vec![
+                TextOutlineJoin::Round,
+                TextOutlineJoin::Bevel,
+                TextOutlineJoin::Miter,
+            ],
+        },
+        shadow: TextShadowControlContract {
+            default: TextShadow {
+                color: DEFAULT_TEXT_SHADOW_COLOR.into(),
+                offset_x: DEFAULT_TEXT_SHADOW_OFFSET_X,
+                offset_y: DEFAULT_TEXT_SHADOW_OFFSET_Y,
+                blur: DEFAULT_TEXT_SHADOW_BLUR,
+            },
+            offset: NumericControlRange {
+                min: TEXT_SHADOW_OFFSET_MIN,
+                max: TEXT_SHADOW_OFFSET_MAX,
+                step: 0.1,
+            },
+            blur: NumericControlRange {
+                min: TEXT_SHADOW_BLUR_MIN,
+                max: TEXT_SHADOW_BLUR_MAX,
+                step: 0.1,
+            },
+        },
+    }
+}
+
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum VerticalAlign {
     Top,
     Middle,
@@ -705,6 +1061,10 @@ pub struct SubtitleStyleOverrides {
     pub placement: Option<SubtitlePlacementStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<SubtitleHighlight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<TextOutline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<TextShadow>,
 }
 
 /// A reusable social-caption style. The table lives in Rust so the editor,
@@ -765,6 +1125,8 @@ pub fn caption_style_presets() -> CaptionStylePresetList {
             margin_vertical_ratio: Some(0.12),
         }),
         highlight: None,
+        outline: None,
+        shadow: None,
     };
     CaptionStylePresetList {
         presets: vec![
@@ -795,6 +1157,26 @@ pub fn caption_style_presets() -> CaptionStylePresetList {
                 },
             },
             CaptionStylePreset {
+                id: "tiktok-outline-shadow".to_owned(),
+                description: "Bold white TikTok Sans with a black outline and soft offset shadow."
+                    .to_owned(),
+                style: SubtitleStyleOverrides {
+                    background: None,
+                    outline: Some(TextOutline {
+                        color: "#000000".to_owned(),
+                        width: 2.0,
+                        join: TextOutlineJoin::Round,
+                    }),
+                    shadow: Some(TextShadow {
+                        color: "#00000099".to_owned(),
+                        offset_x: 2.0,
+                        offset_y: 3.0,
+                        blur: 3.0,
+                    }),
+                    ..tiktok("#000000")
+                },
+            },
+            CaptionStylePreset {
                 id: "montserrat-clean".to_owned(),
                 description: "Bold white Montserrat with no block, for quieter narrative captions."
                     .to_owned(),
@@ -818,6 +1200,8 @@ pub fn caption_style_presets() -> CaptionStylePresetList {
                         margin_vertical_ratio: Some(0.12),
                     }),
                     highlight: None,
+                    outline: None,
+                    shadow: None,
                 },
             },
         ],
@@ -838,15 +1222,16 @@ pub fn is_caption_style_preset(id: &str) -> bool {
 pub fn resolve_caption_style(
     style: &SubtitleStyleOverrides,
 ) -> Result<SubtitleStyleOverrides, String> {
-    let Some(preset_id) = style.preset.as_deref() else {
-        return Ok(style.clone());
+    let base = if let Some(preset_id) = style.preset.as_deref() {
+        caption_style_presets()
+            .presets
+            .into_iter()
+            .find(|preset| preset.id == preset_id)
+            .ok_or_else(|| format!("unknown caption style preset: {preset_id}"))?
+            .style
+    } else {
+        SubtitleStyleOverrides::default()
     };
-    let preset = caption_style_presets()
-        .presets
-        .into_iter()
-        .find(|preset| preset.id == preset_id)
-        .ok_or_else(|| format!("unknown caption style preset: {preset_id}"))?;
-    let base = preset.style;
     let background = match (&base.background, &style.background) {
         (_, None) => base.background.clone(),
         (None, Some(override_)) => Some(override_.clone()),
@@ -881,7 +1266,7 @@ pub fn resolve_caption_style(
             color: override_.color.clone().or_else(|| base.color.clone()),
         }),
     };
-    Ok(SubtitleStyleOverrides {
+    let mut resolved = SubtitleStyleOverrides {
         preset: None,
         font_size: style.font_size.or(base.font_size),
         font_size_ratio_of_play_height: style
@@ -898,7 +1283,45 @@ pub fn resolve_caption_style(
         line_height: style.line_height.or(base.line_height),
         placement,
         highlight,
-    })
+        outline: style.outline.clone().or(base.outline),
+        shadow: style.shadow.clone().or(base.shadow),
+    };
+    canonicalize_text_effects(&mut resolved)?;
+    Ok(resolved)
+}
+
+fn canonicalize_text_effects(style: &mut SubtitleStyleOverrides) -> Result<(), String> {
+    if let Some(outline) = &mut style.outline {
+        outline.color = canonical_text_effect_color(&outline.color, "outline.color")?;
+        outline.width = bounded_text_effect_number(
+            outline.width,
+            TEXT_OUTLINE_WIDTH_MIN,
+            TEXT_OUTLINE_WIDTH_MAX,
+            "outline.width",
+        )?;
+    }
+    if let Some(shadow) = &mut style.shadow {
+        shadow.color = canonical_text_effect_color(&shadow.color, "shadow.color")?;
+        shadow.offset_x = bounded_text_effect_number(
+            shadow.offset_x,
+            TEXT_SHADOW_OFFSET_MIN,
+            TEXT_SHADOW_OFFSET_MAX,
+            "shadow.offsetX",
+        )?;
+        shadow.offset_y = bounded_text_effect_number(
+            shadow.offset_y,
+            TEXT_SHADOW_OFFSET_MIN,
+            TEXT_SHADOW_OFFSET_MAX,
+            "shadow.offsetY",
+        )?;
+        shadow.blur = bounded_text_effect_number(
+            shadow.blur,
+            TEXT_SHADOW_BLUR_MIN,
+            TEXT_SHADOW_BLUR_MAX,
+            "shadow.blur",
+        )?;
+    }
+    Ok(())
 }
 
 /// The text element params a caption style sets. Placement and play-height
@@ -983,10 +1406,88 @@ pub fn caption_style_params(style: &SubtitleStyleOverrides) -> Result<Params, St
         );
         put_string(&mut params, "highlight.color", highlight.color.clone());
     }
+    if let Some(outline) = &style.outline {
+        params.insert(
+            "outline.color".to_owned(),
+            Scalar::String(canonical_text_effect_color(
+                &outline.color,
+                "outline.color",
+            )?),
+        );
+        params.insert(
+            "outline.width".to_owned(),
+            Scalar::Number(bounded_text_effect_number(
+                outline.width,
+                TEXT_OUTLINE_WIDTH_MIN,
+                TEXT_OUTLINE_WIDTH_MAX,
+                "outline.width",
+            )?),
+        );
+        params.insert(
+            "outline.join".to_owned(),
+            Scalar::String(
+                match outline.join {
+                    TextOutlineJoin::Round => "round",
+                    TextOutlineJoin::Bevel => "bevel",
+                    TextOutlineJoin::Miter => "miter",
+                }
+                .to_owned(),
+            ),
+        );
+    }
+    if let Some(shadow) = &style.shadow {
+        params.insert(
+            "shadow.color".to_owned(),
+            Scalar::String(canonical_text_effect_color(&shadow.color, "shadow.color")?),
+        );
+        for (key, value, min, max) in [
+            (
+                "shadow.offsetX",
+                shadow.offset_x,
+                TEXT_SHADOW_OFFSET_MIN,
+                TEXT_SHADOW_OFFSET_MAX,
+            ),
+            (
+                "shadow.offsetY",
+                shadow.offset_y,
+                TEXT_SHADOW_OFFSET_MIN,
+                TEXT_SHADOW_OFFSET_MAX,
+            ),
+            (
+                "shadow.blur",
+                shadow.blur,
+                TEXT_SHADOW_BLUR_MIN,
+                TEXT_SHADOW_BLUR_MAX,
+            ),
+        ] {
+            params.insert(
+                key.to_owned(),
+                Scalar::Number(bounded_text_effect_number(value, min, max, key)?),
+            );
+        }
+    }
     if params.is_empty() {
         return Err("restyle sets no caption params".into());
     }
     Ok(Params(params))
+}
+
+fn canonical_text_effect_color(value: &str, path: &str) -> Result<String, String> {
+    let value = value.trim();
+    let digits = value.strip_prefix('#').unwrap_or("");
+    if !matches!(digits.len(), 6 | 8) || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!(
+            "{path} must be a six- or eight-digit hexadecimal color"
+        ));
+    }
+    Ok(format!("#{}", digits.to_ascii_lowercase()))
+}
+
+fn bounded_text_effect_number(value: f64, min: f64, max: f64, path: &str) -> Result<f64, String> {
+    if !value.is_finite() || value < min || value > max {
+        return Err(format!("{path} must be between {min} and {max}"));
+    }
+    Ok(if value == 0.0 { 0.0 } else { value })
 }
 
 fn put_string(
@@ -1028,6 +1529,17 @@ pub enum ResolveCaptionStyleResponse {
     Rejected { reason: String },
 }
 
+/// Result of resolving a caption style directly to canonical flat element params.
+#[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi))]
+#[cfg_attr(feature = "wasm", tsify(hashmap_as_object))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ResolveCaptionStyleParamsResponse {
+    Resolved { params: Params },
+    Rejected { reason: String },
+}
+
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1051,6 +1563,8 @@ pub enum EditOperation {
         content: String,
         start_time: MediaTime,
         duration: MediaTime,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<SubtitleStyleOverrides>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         auto_track_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1187,6 +1701,10 @@ pub enum EditOperation {
         text: Option<String>,
         start_time: Option<MediaTime>,
         duration: Option<MediaTime>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<SubtitleStyleOverrides>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolved_params: Option<Params>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolved_allocations: Option<Vec<ObjectIdAllocation>>,
     },

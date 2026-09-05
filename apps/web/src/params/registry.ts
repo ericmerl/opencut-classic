@@ -5,6 +5,7 @@ import type { ElementType, TimelineElement } from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
 import { VOLUME_DB_MAX, VOLUME_DB_MIN } from "@/timeline/audio-constants";
 import { CORNER_RADIUS_MAX, CORNER_RADIUS_MIN } from "@/text/background";
+import { getTextStyleContract } from "@/text/effects";
 
 export type ElementParamDefinition<TKey extends string = string> =
 	ParamDefinition<TKey> & {
@@ -380,6 +381,64 @@ const textElementParams: ElementParamDefinition[] = [
 	},
 ];
 
+function textEffectElementParams(): ElementParamDefinition[] {
+	const contract = getTextStyleContract();
+	return [
+		{
+			key: "outline.color",
+			label: "Outline Color",
+			type: "color",
+			default: contract.outline.default.color,
+		},
+		{
+			key: "outline.width",
+			label: "Outline Width",
+			type: "number",
+			default: contract.outline.default.width,
+			min: contract.outline.width.min,
+			max: contract.outline.width.max,
+			step: contract.outline.width.step,
+		},
+		{
+			key: "outline.join",
+			label: "Outline Join",
+			type: "select",
+			default: contract.outline.default.join,
+			keyframable: false,
+			options: contract.outline.joins.map((join) => ({
+				value: join,
+				label: join[0]!.toUpperCase() + join.slice(1),
+			})),
+		},
+		{
+			key: "shadow.color",
+			label: "Shadow Color",
+			type: "color",
+			default: contract.shadow.default.color,
+		},
+		...(["offsetX", "offsetY"] as const).map(
+			(axis): ElementParamDefinition => ({
+				key: `shadow.${axis}`,
+				label: `Shadow Offset ${axis === "offsetX" ? "X" : "Y"}`,
+				type: "number",
+				default: contract.shadow.default[axis],
+				min: contract.shadow.offset.min,
+				max: contract.shadow.offset.max,
+				step: contract.shadow.offset.step,
+			}),
+		),
+		{
+			key: "shadow.blur",
+			label: "Shadow Blur",
+			type: "number",
+			default: contract.shadow.default.blur,
+			min: contract.shadow.blur.min,
+			max: contract.shadow.blur.max,
+			step: contract.shadow.blur.step,
+		},
+	];
+}
+
 export const elementParamRegistry = new DefinitionRegistry<
 	ElementType,
 	readonly ElementParamDefinition[]
@@ -418,9 +477,11 @@ export function getElementParams({
 }: {
 	element: TimelineElement;
 }): readonly ElementParamDefinition[] {
-	return elementParamRegistry.has(element.type)
-		? elementParamRegistry.get(element.type)
-		: [];
+	if (!elementParamRegistry.has(element.type)) return [];
+	const params = elementParamRegistry.get(element.type);
+	return element.type === "text"
+		? [...params, ...textEffectElementParams()]
+		: params;
 }
 
 export function getBuiltInElementParams({
@@ -428,7 +489,9 @@ export function getBuiltInElementParams({
 }: {
 	type: ElementType;
 }): readonly ElementParamDefinition[] {
-	return elementParamRegistry.has(type) ? elementParamRegistry.get(type) : [];
+	if (!elementParamRegistry.has(type)) return [];
+	const params = elementParamRegistry.get(type);
+	return type === "text" ? [...params, ...textEffectElementParams()] : params;
 }
 
 export function getElementParam({

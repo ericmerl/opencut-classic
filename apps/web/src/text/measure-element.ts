@@ -4,6 +4,8 @@ import type { TextElement } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import { resolveNumberAtTime } from "@/animation/values";
 import { activeWordIndex, type ResolvedTextHighlight } from "./highlight";
+import { resolveTextEffects } from "./effects";
+import type { ResolvedTextEffectGeometry } from "opencut-wasm";
 import { getTextVisualRect } from "./layout";
 import {
 	measureTextLayout,
@@ -27,6 +29,7 @@ export interface ResolvedTextBackground extends TextBackground {
 export interface MeasuredTextElement extends MeasuredTextLayout {
 	resolvedBackground: ResolvedTextBackground;
 	highlight: ResolvedTextHighlight;
+	textEffects: ResolvedTextEffectGeometry;
 	visualRect: { left: number; top: number; width: number; height: number };
 }
 
@@ -139,17 +142,34 @@ export function measureTextElement({
 				: null,
 	};
 
-	const visualRect = getTextVisualRect({
+	const baseVisualRect = getTextVisualRect({
 		textAlign: text.textAlign,
 		block: measuredLayout.block,
 		background: resolvedBackground,
 		fontSizeRatio: measuredLayout.fontSizeRatio,
 	});
+	const textEffects = resolveTextEffects({
+		params: element.params,
+		canvasHeight,
+	});
+	const visualRect = {
+		left: baseVisualRect.left - textEffects.extents.left,
+		top: baseVisualRect.top - textEffects.extents.top,
+		width:
+			baseVisualRect.width +
+			textEffects.extents.left +
+			textEffects.extents.right,
+		height:
+			baseVisualRect.height +
+			textEffects.extents.top +
+			textEffects.extents.bottom,
+	};
 
 	return {
 		...measuredLayout,
 		resolvedBackground,
 		highlight,
+		textEffects,
 		visualRect,
 	};
 }

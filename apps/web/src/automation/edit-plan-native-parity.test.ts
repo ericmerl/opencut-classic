@@ -22,6 +22,19 @@ import type { AutomationEditOperation } from "./types";
 let activeEditor: EditorCore;
 mock.module("opencut-wasm", () => ({
 	TICKS_PER_SECOND: () => 120_000,
+	textStyleContract: () => ({
+		scaleReference: 90,
+		outline: {
+			default: { color: "#000000", width: 0, join: "round" },
+			width: { min: 0, max: 64, step: 0.1 },
+			joins: ["round", "bevel", "miter"],
+		},
+		shadow: {
+			default: { color: "#00000000", offsetX: 0, offsetY: 0, blur: 0 },
+			offset: { min: -256, max: 256, step: 0.1 },
+			blur: { min: 0, max: 64, step: 0.1 },
+		},
+	}),
 	evaluateEditPlan: () => {
 		throw new Error("native parity tests use the Rust JSON evaluator");
 	},

@@ -32,6 +32,23 @@ mock.module("opencut-wasm", () => ({
 	}: {
 		style: { preset?: string } & Record<string, unknown>;
 	}) => {
+		if (!style.preset) {
+			const outline = style.outline as Record<string, unknown> | undefined;
+			return {
+				status: "resolved",
+				style: {
+					...style,
+					...(outline
+						? {
+								outline: {
+									...outline,
+									color: String(outline.color).toLowerCase(),
+								},
+							}
+						: {}),
+				},
+			};
+		}
 		const preset = presets.find((candidate) => candidate.id === style.preset);
 		if (!preset) {
 			return {
@@ -62,9 +79,17 @@ describe("caption style presets", () => {
 		]);
 	});
 
-	test("passes styles without a preset through untouched", () => {
-		const style = { fontFamily: "Montserrat", fontSize: 4 };
-		expect(applyCaptionStylePreset(style)).toBe(style);
+	test("resolves every provided style through the Rust boundary", () => {
+		const style = {
+			fontFamily: "Montserrat",
+			fontSize: 4,
+			outline: { color: "#AABBCC", width: 2, join: "round" as const },
+		};
+		expect(applyCaptionStylePreset(style)).toEqual({
+			fontFamily: "Montserrat",
+			fontSize: 4,
+			outline: { color: "#aabbcc", width: 2, join: "round" },
+		});
 		expect(applyCaptionStylePreset(undefined)).toBeUndefined();
 	});
 

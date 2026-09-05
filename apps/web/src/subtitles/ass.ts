@@ -3,6 +3,7 @@ import type {
 	SubtitleCue,
 	SubtitleStyleOverrides,
 } from "./types";
+import * as nativeWasm from "opencut-wasm";
 
 const ASS_DEFAULT_PLAY_RES_X = 384;
 const ASS_DEFAULT_PLAY_RES_Y = 288;
@@ -252,7 +253,7 @@ export function parseAss({ input }: { input: string }): ParseSubtitleResult {
 
 	if (usesHeavilyUnsupportedStyles) {
 		warnings.add(
-			"Ignored unsupported ASS style features such as outline, shadow, rotation, or scaling.",
+			"Ignored unsupported ASS style features such as rotation or scaling.",
 		);
 	}
 
@@ -368,7 +369,6 @@ function mapAssStyleToSubtitleStyle({
 } {
 	const fontSize = parseFloat(style.fontsize ?? "");
 	const primaryColor = parseAssColor({ input: style.primarycolour });
-	const backColor = parseAssColor({ input: style.backcolour });
 	const bold = parseAssBoolean({ input: style.bold });
 	const italic = parseAssBoolean({ input: style.italic });
 	const underline = parseAssBoolean({ input: style.underline });
@@ -405,6 +405,17 @@ function mapAssStyleToSubtitleStyle({
 						: undefined,
 				}
 			: undefined;
+	const mappedEffects = nativeWasm.mapAssTextEffects({
+		outline: style.outline,
+		outlineColour: style.outlinecolour,
+		shadow: style.shadow,
+		backColour: style.backcolour,
+		borderStyle: style.borderstyle,
+		playResY: scriptInfo.playResY,
+	});
+	if (mappedEffects.status === "rejected") {
+		throw new Error(`invalid ASS text effects: ${mappedEffects.reason}`);
+	}
 
 	const styleOverrides: SubtitleStyleOverrides = {
 		...(style.fontname ? { fontFamily: style.fontname.trim() } : {}),
@@ -426,22 +437,13 @@ function mapAssStyleToSubtitleStyle({
 		...(Number.isFinite(spacing) ? { letterSpacing: spacing } : {}),
 		textAlign: mappedAlignment.textAlign,
 		...(placement ? { placement } : {}),
-		...(backColor?.cssColor && Math.round(borderStyle) === 3
-			? {
-					background: {
-						enabled: backColor.alpha > 0,
-						color: backColor.alpha > 0 ? backColor.cssColor : "transparent",
-					},
-				}
-			: {}),
+		...mappedEffects.style,
 	};
 
 	const hasUnsupportedFeatures =
 		Math.round(borderStyle) !== 1 && Math.round(borderStyle) !== 3
 			? true
-			: (parseFloat(style.outline ?? "") || 0) > 0 ||
-				(parseFloat(style.shadow ?? "") || 0) > 0 ||
-				(parseFloat(style.angle ?? "") || 0) !== 0 ||
+			: (parseFloat(style.angle ?? "") || 0) !== 0 ||
 				(Number.isFinite(parseFloat(style.scalex ?? "")) &&
 					parseFloat(style.scalex ?? "") !== 100) ||
 				(Number.isFinite(parseFloat(style.scaley ?? "")) &&

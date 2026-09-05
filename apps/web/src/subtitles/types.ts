@@ -6,6 +6,7 @@ import type {
 	TextFontWeight,
 } from "@/text/primitives";
 import type { CaptionChunk } from "@/transcription/types";
+import type { TextOutline, TextShadow } from "opencut-wasm";
 
 export interface SubtitlePlacementStyle {
 	verticalAlign?: "top" | "middle" | "bottom";
@@ -49,6 +50,8 @@ export interface SubtitleStyleOverrides {
 	 * caption's duration, takes `color` in preview and export.
 	 */
 	highlight?: { enabled: boolean; color?: string };
+	outline?: TextOutline;
+	shadow?: TextShadow;
 }
 
 export interface SubtitleCue extends CaptionChunk {

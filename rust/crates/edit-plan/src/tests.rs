@@ -224,6 +224,7 @@ fn insert_variants_allocate_auto_tracks_only_when_first_available_requires_one()
                 content: "text".into(),
                 start_time: MediaTime::ZERO,
                 duration: MediaTime::from_ticks(10_000),
+                style: None,
                 auto_track_id: None,
                 resolved_allocations: None,
             },
@@ -318,6 +319,7 @@ fn insert_variants_allocate_auto_tracks_only_when_first_available_requires_one()
             content: "first".into(),
             start_time: MediaTime::ZERO,
             duration: MediaTime::from_ticks(10_000),
+            style: None,
             auto_track_id: None,
             resolved_allocations: None,
         },
@@ -326,6 +328,7 @@ fn insert_variants_allocate_auto_tracks_only_when_first_available_requires_one()
             content: "second".into(),
             start_time: MediaTime::from_ticks(10_000),
             duration: MediaTime::from_ticks(10_000),
+            style: None,
             auto_track_id: None,
             resolved_allocations: None,
         },
@@ -391,6 +394,7 @@ fn hashes_and_allocated_ids_are_deterministic() {
         content: "Hello".into(),
         start_time: MediaTime::ZERO,
         duration: MediaTime::from_ticks(60_000),
+        style: None,
         auto_track_id: None,
         resolved_allocations: None,
     };
@@ -410,6 +414,7 @@ fn untouched_scene_and_media_are_preserved() {
         content: "Hello".into(),
         start_time: MediaTime::ZERO,
         duration: MediaTime::from_ticks(60_000),
+        style: None,
         auto_track_id: None,
         resolved_allocations: None,
     }]))
@@ -428,6 +433,7 @@ fn source_hash_mismatch_fails_closed() {
         content: "Hello".into(),
         start_time: MediaTime::ZERO,
         duration: MediaTime::from_ticks(60_000),
+        style: None,
         auto_track_id: None,
         resolved_allocations: None,
     }]);
@@ -921,6 +927,7 @@ fn all_61_operation_variants_have_valid_and_invalid_evaluator_coverage() {
                 content: "new".into(),
                 start_time: t(200_000),
                 duration: t(10_000),
+                style: None,
                 auto_track_id: None,
                 resolved_allocations: None,
             }],
@@ -1027,6 +1034,8 @@ fn all_61_operation_variants_have_valid_and_invalid_evaluator_coverage() {
                 text: Some("corrected".into()),
                 start_time: None,
                 duration: None,
+                style: None,
+                resolved_params: None,
                 resolved_allocations: None,
             }],
         ),
@@ -1628,6 +1637,7 @@ fn nonactive_scene_prediction_preserves_active_scene_and_uses_real_changed_objec
             content: "nonactive".into(),
             start_time: MediaTime::ZERO,
             duration: MediaTime::from_ticks(10_000),
+            style: None,
             auto_track_id: None,
             resolved_allocations: None,
         }],
@@ -1904,6 +1914,8 @@ fn caption_duration_update_pins_and_applies_deterministic_animation_boundaries()
             text: None,
             start_time: None,
             duration: Some(MediaTime::from_ticks(30_030)),
+            style: None,
+            resolved_params: None,
             resolved_allocations: None,
         }],
     ))
@@ -1955,6 +1967,7 @@ fn created_ids_are_fenced_against_owned_and_nonactive_project_objects() {
                 content: "collision".into(),
                 start_time: MediaTime::from_ticks(300_000),
                 duration: MediaTime::from_ticks(10_000),
+                style: None,
                 auto_track_id: None,
                 resolved_allocations: None,
             }],
@@ -3120,6 +3133,7 @@ fn untouched_elements_in_the_edited_scene_remain_canonical_byte_equivalent() {
             content: "additional".into(),
             start_time: MediaTime::from_ticks(200_000),
             duration: MediaTime::from_ticks(10_000),
+            style: None,
             auto_track_id: None,
             resolved_allocations: None,
         }],
@@ -3283,6 +3297,7 @@ fn caption_style_presets_name_bundled_faces_and_gate_insertion() {
             "tiktok-classic",
             "tiktok-classic-red",
             "tiktok-karaoke",
+            "tiktok-outline-shadow",
             "montserrat-clean"
         ]
     );
@@ -3325,7 +3340,383 @@ fn caption_style_presets_name_bundled_faces_and_gate_insertion() {
     };
     assert!(evaluate(options(vec![insert("tiktok-classic")])).is_ok());
     let error = evaluate(options(vec![insert("not-a-preset")])).unwrap_err();
-    assert_eq!(error.message, "unknown caption style preset");
+    assert_eq!(error.message, "unknown caption style preset: not-a-preset");
+}
+
+#[test]
+fn text_outline_and_shadow_style_resolve_to_canonical_params() {
+    let params = caption_style_params(&SubtitleStyleOverrides {
+        outline: Some(TextOutline {
+            color: "#AABBCC".into(),
+            width: 2.25,
+            join: TextOutlineJoin::Bevel,
+        }),
+        shadow: Some(TextShadow {
+            color: "#10203080".into(),
+            offset_x: -3.5,
+            offset_y: 4.25,
+            blur: 6.75,
+        }),
+        ..Default::default()
+    })
+    .unwrap();
+
+    assert_eq!(
+        params.get("outline.color"),
+        Some(&Scalar::String("#aabbcc".into()))
+    );
+    assert_eq!(params.get("outline.width"), Some(&Scalar::Number(2.25)));
+    assert_eq!(
+        params.get("outline.join"),
+        Some(&Scalar::String("bevel".into()))
+    );
+    assert_eq!(
+        params.get("shadow.color"),
+        Some(&Scalar::String("#10203080".into()))
+    );
+    assert_eq!(params.get("shadow.offsetX"), Some(&Scalar::Number(-3.5)));
+    assert_eq!(params.get("shadow.offsetY"), Some(&Scalar::Number(4.25)));
+    assert_eq!(params.get("shadow.blur"), Some(&Scalar::Number(6.75)));
+}
+
+#[test]
+fn plain_text_persists_rust_owned_no_op_outline_and_shadow_defaults() {
+    let params = default_text_params("title");
+    assert_eq!(
+        [
+            "outline.color",
+            "outline.width",
+            "outline.join",
+            "shadow.color",
+            "shadow.offsetX",
+            "shadow.offsetY",
+            "shadow.blur",
+        ]
+        .into_iter()
+        .map(|key| (key, params.get(key).cloned()))
+        .collect::<Vec<_>>(),
+        vec![
+            ("outline.color", Some(Scalar::String("#000000".into()))),
+            ("outline.width", Some(Scalar::Number(0.0))),
+            ("outline.join", Some(Scalar::String("round".into()))),
+            ("shadow.color", Some(Scalar::String("#00000000".into()))),
+            ("shadow.offsetX", Some(Scalar::Number(0.0))),
+            ("shadow.offsetY", Some(Scalar::Number(0.0))),
+            ("shadow.blur", Some(Scalar::Number(0.0))),
+        ]
+    );
+}
+
+#[test]
+fn text_style_contract_reports_rust_owned_defaults_and_ranges() {
+    let contract = text_style_contract();
+    assert_eq!(contract.scale_reference, 90.0);
+    assert_eq!(contract.outline.default.color, "#000000");
+    assert_eq!(contract.outline.default.width, 0.0);
+    assert_eq!(contract.outline.default.join, TextOutlineJoin::Round);
+    assert_eq!(
+        contract.outline.width,
+        NumericControlRange {
+            min: 0.0,
+            max: 64.0,
+            step: 0.1,
+        }
+    );
+    assert_eq!(contract.shadow.default.color, "#00000000");
+    assert_eq!(
+        contract.shadow.offset,
+        NumericControlRange {
+            min: -256.0,
+            max: 256.0,
+            step: 0.1,
+        }
+    );
+    assert_eq!(
+        contract.shadow.blur,
+        NumericControlRange {
+            min: 0.0,
+            max: 64.0,
+            step: 0.1,
+        }
+    );
+}
+
+#[test]
+fn public_caption_style_param_resolver_returns_canonical_flat_params() {
+    let response = resolve_caption_style_params(ResolveCaptionStyleOptions {
+        style: SubtitleStyleOverrides {
+            outline: Some(TextOutline {
+                color: "#ABCDEF".into(),
+                width: 2.0,
+                join: TextOutlineJoin::Round,
+            }),
+            shadow: Some(TextShadow {
+                color: "#00000099".into(),
+                offset_x: 2.0,
+                offset_y: 3.0,
+                blur: 4.0,
+            }),
+            ..Default::default()
+        },
+    });
+    let ResolveCaptionStyleParamsResponse::Resolved { params } = response else {
+        panic!("expected resolved params")
+    };
+    assert_eq!(
+        params.0.get("outline.color"),
+        Some(&Scalar::String("#abcdef".into()))
+    );
+    assert_eq!(params.0.get("shadow.blur"), Some(&Scalar::Number(4.0)));
+}
+
+#[test]
+fn caption_layout_v2_requires_materialized_text_effects_to_match_rust_style() {
+    let mut caption = resolved_caption("Outlined", MediaTime::ZERO, MediaTime::from_ticks(120_000));
+    caption.resolved_layout_version = Some("opencut.caption-layout.v2".into());
+    let style = SubtitleStyleOverrides {
+        outline: Some(TextOutline {
+            color: "#ABCDEF".into(),
+            width: 2.0,
+            join: TextOutlineJoin::Round,
+        }),
+        ..Default::default()
+    };
+    let CanonicalValue::Object(params) = caption.resolved_params.as_mut().unwrap() else {
+        panic!("caption params")
+    };
+    params.insert(
+        "outline.color".into(),
+        CanonicalValue::String("#abcdef".into()),
+    );
+    params.insert("outline.width".into(), CanonicalValue::Number(2.0));
+
+    let operation = EditOperation::InsertCaptions {
+        track_id: None,
+        captions: vec![caption.clone()],
+        style: Some(style.clone()),
+    };
+    evaluate(options(vec![operation])).unwrap();
+
+    let CanonicalValue::Object(params) = caption.resolved_params.as_mut().unwrap() else {
+        panic!("caption params")
+    };
+    params.insert("outline.width".into(), CanonicalValue::Number(9.0));
+    let error = evaluate(options(vec![EditOperation::InsertCaptions {
+        track_id: None,
+        captions: vec![caption],
+        style: Some(style),
+    }]))
+    .unwrap_err();
+    assert!(error.message.contains("text effects do not match"));
+}
+
+#[test]
+fn caption_catalog_exposes_a_stable_outline_and_shadow_preset() {
+    let preset = caption_style_presets()
+        .presets
+        .into_iter()
+        .find(|preset| preset.id == "tiktok-outline-shadow")
+        .expect("outline/shadow preset");
+    assert_eq!(preset.style.outline.unwrap().width, 2.0);
+    assert_eq!(preset.style.shadow.unwrap().blur, 3.0);
+}
+
+#[test]
+fn insert_text_resolves_outline_and_shadow_into_predicted_state() {
+    let result = evaluate(options(vec![EditOperation::InsertText {
+        element_id: Some("title".into()),
+        content: "Outlined title".into(),
+        start_time: MediaTime::ZERO,
+        duration: MediaTime::from_ticks(30_000),
+        style: Some(SubtitleStyleOverrides {
+            outline: Some(TextOutline {
+                color: "#FF0000".into(),
+                width: 3.0,
+                join: TextOutlineJoin::Miter,
+            }),
+            shadow: Some(TextShadow {
+                color: "#00000099".into(),
+                offset_x: 2.0,
+                offset_y: 4.0,
+                blur: 5.0,
+            }),
+            ..Default::default()
+        }),
+        auto_track_id: None,
+        resolved_allocations: None,
+    }]))
+    .unwrap();
+
+    let title = result.predicted_after.project.scenes[0]
+        .tracks
+        .iter()
+        .flat_map(|track| &track.elements)
+        .find(|element| element.common().id == "title")
+        .expect("inserted title")
+        .common();
+    assert_eq!(
+        scalar_string_of(&title.params, "outline.color"),
+        Some("#ff0000")
+    );
+    assert_eq!(
+        scalar_string_of(&title.params, "outline.join"),
+        Some("miter")
+    );
+    assert_eq!(
+        scalar_string_of(&title.params, "shadow.color"),
+        Some("#00000099")
+    );
+}
+
+#[test]
+fn public_style_resolver_canonicalizes_and_rejects_invalid_text_effects() {
+    let resolved = resolve_caption_style(ResolveCaptionStyleOptions {
+        style: SubtitleStyleOverrides {
+            outline: Some(TextOutline {
+                color: " #ABCDEF ".into(),
+                width: 4.0,
+                join: TextOutlineJoin::Round,
+            }),
+            ..Default::default()
+        },
+    });
+    let ResolveCaptionStyleResponse::Resolved { style } = resolved else {
+        panic!("valid style should resolve");
+    };
+    assert_eq!(style.outline.unwrap().color, "#abcdef");
+
+    let rejected = resolve_caption_style(ResolveCaptionStyleOptions {
+        style: SubtitleStyleOverrides {
+            shadow: Some(TextShadow {
+                color: "black".into(),
+                offset_x: 0.0,
+                offset_y: 0.0,
+                blur: 65.0,
+            }),
+            ..Default::default()
+        },
+    });
+    assert!(matches!(
+        rejected,
+        ResolveCaptionStyleResponse::Rejected { .. }
+    ));
+}
+
+#[test]
+fn update_caption_applies_rust_resolved_outline_and_shadow() {
+    let result = evaluate(options_with_before(
+        full_snapshot(),
+        vec![EditOperation::UpdateCaption {
+            track_id: "track-text".into(),
+            element_id: "text-1".into(),
+            text: None,
+            start_time: None,
+            duration: None,
+            style: Some(SubtitleStyleOverrides {
+                outline: Some(TextOutline {
+                    color: "#112233".into(),
+                    width: 2.0,
+                    join: TextOutlineJoin::Round,
+                }),
+                shadow: Some(TextShadow {
+                    color: "#44556677".into(),
+                    offset_x: 1.0,
+                    offset_y: 3.0,
+                    blur: 4.0,
+                }),
+                ..Default::default()
+            }),
+            resolved_params: None,
+            resolved_allocations: None,
+        }],
+    ))
+    .unwrap();
+
+    let caption = result.predicted_after.project.scenes[0]
+        .tracks
+        .iter()
+        .find(|track| track.id == "track-text")
+        .expect("text track")
+        .elements
+        .iter()
+        .find(|element| element.common().id == "text-1")
+        .expect("caption")
+        .common();
+    assert_eq!(
+        scalar_string_of(&caption.params, "outline.color"),
+        Some("#112233")
+    );
+    assert_eq!(
+        scalar_string_of(&caption.params, "shadow.color"),
+        Some("#44556677")
+    );
+}
+
+#[test]
+fn text_effect_geometry_reports_shared_draw_values_and_visual_extents() {
+    let response = resolve_text_effect_geometry(ResolveTextEffectGeometryOptions {
+        outline: TextOutline {
+            color: "#010203".into(),
+            width: 4.0,
+            join: TextOutlineJoin::Bevel,
+        },
+        shadow: TextShadow {
+            color: "#11223380".into(),
+            offset_x: -3.0,
+            offset_y: 5.0,
+            blur: 6.0,
+        },
+        pixels_per_unit: 2.0,
+    });
+    let ResolveTextEffectGeometryResponse::Resolved { geometry } = response else {
+        panic!("valid geometry should resolve");
+    };
+
+    assert_eq!(geometry.outline.width, 8.0);
+    assert_eq!(geometry.shadow.offset_x, -6.0);
+    assert_eq!(geometry.shadow.offset_y, 10.0);
+    assert_eq!(geometry.shadow.blur, 12.0);
+    assert_eq!(
+        geometry.extents,
+        TextEffectExtents {
+            left: 18.0,
+            top: 4.0,
+            right: 6.0,
+            bottom: 22.0,
+        }
+    );
+}
+
+#[test]
+fn ass_text_effect_fields_map_through_the_rust_contract() {
+    let response = map_ass_text_effects(MapAssTextEffectsOptions {
+        outline: Some("4".into()),
+        outline_colour: Some("&H00112233".into()),
+        shadow: Some("6".into()),
+        back_colour: Some("&H80445566".into()),
+        border_style: Some("1".into()),
+        play_res_y: 180.0,
+    });
+    let MapAssTextEffectsResponse::Mapped { style } = response else {
+        panic!("valid ASS effects should map");
+    };
+    assert_eq!(
+        style.outline,
+        Some(TextOutline {
+            color: "#332211".into(),
+            width: 2.0,
+            join: TextOutlineJoin::Round,
+        })
+    );
+    assert_eq!(
+        style.shadow,
+        Some(TextShadow {
+            color: "#6655447f".into(),
+            offset_x: 3.0,
+            offset_y: 3.0,
+            blur: 0.0,
+        })
+    );
 }
 
 fn caption_plan(operations: Vec<EditOperation>) -> Vec<EditOperation> {
@@ -3455,6 +3846,8 @@ fn fast_captions_warn_about_reading_speed() {
         text: Some("this caption carries far too many characters for one second".into()),
         start_time: None,
         duration: None,
+        style: None,
+        resolved_params: None,
         resolved_allocations: None,
     }])))
     .unwrap();

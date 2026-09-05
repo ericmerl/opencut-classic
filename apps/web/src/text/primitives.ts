@@ -10,6 +10,7 @@ import {
 	setCanvasLetterSpacing,
 } from "./layout";
 import { FONT_SIZE_SCALE_REFERENCE } from "./typography";
+import type { ResolvedTextEffectGeometry } from "opencut-wasm";
 
 export type TextAlign = "left" | "center" | "right";
 export type TextFontWeight = "normal" | "bold";
@@ -55,7 +56,11 @@ export interface ResolvedTextBackgroundLike {
 	cornerRadius: number;
 }
 
-export function quoteFontFamily({ fontFamily }: { fontFamily: string }): string {
+export function quoteFontFamily({
+	fontFamily,
+}: {
+	fontFamily: string;
+}): string {
 	return `"${fontFamily.replace(/"/g, '\\"')}"`;
 }
 
@@ -221,6 +226,7 @@ export function drawMeasuredTextLayout({
 	background,
 	backgroundColor,
 	highlight,
+	textEffects,
 	textBaseline = "middle",
 }: {
 	ctx: TextCanvasContext;
@@ -230,6 +236,7 @@ export function drawMeasuredTextLayout({
 	backgroundColor?: string;
 	/** The word to paint in `color` instead of `textColor`, if any. */
 	highlight?: { color: string; wordIndex: number } | null;
+	textEffects?: ResolvedTextEffectGeometry | null;
 	textBaseline?: CanvasTextBaseline;
 }): void {
 	ctx.font = layout.fontString;
@@ -282,6 +289,29 @@ export function drawMeasuredTextLayout({
 	const highlighted = highlight
 		? locateTextWord({ layout, wordIndex: highlight.wordIndex })
 		: null;
+	if (textEffects && textEffects.shadow.color !== "#00000000") {
+		ctx.save();
+		ctx.shadowColor = textEffects.shadow.color;
+		ctx.shadowOffsetX = textEffects.shadow.offsetX;
+		ctx.shadowOffsetY = textEffects.shadow.offsetY;
+		ctx.shadowBlur = textEffects.shadow.blur;
+		for (let index = 0; index < layout.lines.length; index++) {
+			const lineY =
+				index * layout.lineHeightPx - layout.block.visualCenterOffset;
+			ctx.fillText(layout.lines[index], 0, lineY);
+		}
+		ctx.restore();
+	}
+	if (textEffects && textEffects.outline.width > 0) {
+		strokeMeasuredTextLayout({
+			ctx,
+			layout,
+			strokeColor: textEffects.outline.color,
+			strokeWidth: textEffects.outline.width,
+			strokeJoin: textEffects.outline.join,
+			textBaseline,
+		});
+	}
 	for (let index = 0; index < layout.lines.length; index++) {
 		const lineY = index * layout.lineHeightPx - layout.block.visualCenterOffset;
 		if (highlight && highlighted && highlighted.lineIndex === index) {
@@ -351,12 +381,14 @@ export function strokeMeasuredTextLayout({
 	layout,
 	strokeColor,
 	strokeWidth,
+	strokeJoin = "round",
 	textBaseline = "middle",
 }: {
 	ctx: TextCanvasContext;
 	layout: MeasuredTextLayout;
 	strokeColor: string;
 	strokeWidth: number;
+	strokeJoin?: CanvasLineJoin;
 	textBaseline?: CanvasTextBaseline;
 }): void {
 	ctx.font = layout.fontString;
@@ -364,7 +396,7 @@ export function strokeMeasuredTextLayout({
 	ctx.textBaseline = textBaseline;
 	ctx.strokeStyle = strokeColor;
 	ctx.lineWidth = strokeWidth;
-	ctx.lineJoin = "round";
+	ctx.lineJoin = strokeJoin;
 	ctx.lineCap = "round";
 	setCanvasLetterSpacing({ ctx, letterSpacingPx: layout.letterSpacing });
 

@@ -94,6 +94,24 @@ describe("caption layout evidence contract", () => {
 		);
 	});
 
+	test("accepts v2 geometry with canonical outline and shadow extents", () => {
+		const value = evidence();
+		value.layoutVersion = "opencut.caption-layout.v2";
+		value.geometryVersion = "opencut.caption-geometry.v2";
+		const geometry = value.captions[0]!.geometry as unknown as Record<
+			string,
+			unknown
+		>;
+		geometry.version = "opencut.caption-geometry.v2";
+		geometry.textEffects = {
+			outline: { color: "#000000", width: 2, join: "round" },
+			shadow: { color: "#00000099", offsetX: 2, offsetY: 3, blur: 4 },
+			extents: { left: 2, top: 1, right: 6, bottom: 7 },
+		};
+
+		expect(captionLayoutEvidenceSchema.safeParse(value).success).toBe(true);
+	});
+
 	test("rejects evidence measured by anything but the renderer's function", () => {
 		const value = evidence();
 		value.measurement = "opencut.text.measureTextBlock";

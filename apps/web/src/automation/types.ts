@@ -639,6 +639,7 @@ export type AutomationEditOperation =
 			content: string;
 			startTime: MediaTime;
 			duration: MediaTime;
+			style?: SubtitleStyleOverrides | undefined;
 			autoTrackId?: string | undefined;
 			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
@@ -785,6 +786,9 @@ export type AutomationEditOperation =
 			text?: string | undefined;
 			startTime?: MediaTime | undefined;
 			duration?: MediaTime | undefined;
+			style?: SubtitleStyleOverrides | undefined;
+			/** Params the Rust evaluator resolved from the style; never caller-supplied. */
+			resolvedParams?: Record<string, string | number | boolean> | undefined;
 			resolvedAllocations?: ObjectIdAllocation[] | undefined;
 	  }
 	| {
@@ -1223,9 +1227,11 @@ export interface AutomationNoMutationObservation {
  * measurement function, bound to the plan by hash.
  */
 export interface AutomationCaptionLayoutEvidence {
-	layoutVersion: "opencut.caption-layout.v1";
+	layoutVersion: "opencut.caption-layout.v1" | "opencut.caption-layout.v2";
 	layoutEngine: "browser-canvas-2d";
-	geometryVersion: "opencut.caption-geometry.v1";
+	geometryVersion:
+		| "opencut.caption-geometry.v1"
+		| "opencut.caption-geometry.v2";
 	measurement: "opencut.text.measureTextLayout";
 	fontReadiness: AutomationRenderPreviewFrameCompletedResult["fontReadiness"];
 	captions: Array<{

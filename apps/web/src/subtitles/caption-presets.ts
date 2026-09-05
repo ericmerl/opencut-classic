@@ -12,10 +12,15 @@ let cachedPresets: CaptionStylePreset[] | null = null;
 
 export function listCaptionStylePresets(): CaptionStylePreset[] {
 	if (!cachedPresets) {
-		const read = (opencutWasm as { captionStylePresets?: () => { presets: CaptionStylePreset[] } })
-			.captionStylePresets;
+		const read = (
+			opencutWasm as {
+				captionStylePresets?: () => { presets: CaptionStylePreset[] };
+			}
+		).captionStylePresets;
 		if (typeof read !== "function") {
-			throw new Error("the native runtime does not export caption style presets");
+			throw new Error(
+				"the native runtime does not export caption style presets",
+			);
 		}
 		cachedPresets = read().presets;
 	}
@@ -31,7 +36,7 @@ export function listCaptionStylePresets(): CaptionStylePreset[] {
 export function applyCaptionStylePreset(
 	style: SubtitleStyleOverrides | undefined,
 ): SubtitleStyleOverrides | undefined {
-	if (!style?.preset) return style;
+	if (!style) return undefined;
 	const resolve = (
 		opencutWasm as {
 			resolveCaptionStyle?: (options: {

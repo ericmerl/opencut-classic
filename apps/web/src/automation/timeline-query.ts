@@ -25,6 +25,7 @@ export interface AutomationTimelineQueryElement {
 	trimStart: MediaTime;
 	trimEnd: MediaTime;
 	sourceDuration: MediaTime;
+	params: Record<string, string | number | boolean>;
 	mediaId?: string;
 	hidden?: boolean;
 }
@@ -256,6 +257,7 @@ function toQueryElement(
 		trimStart: element.trimStart,
 		trimEnd: element.trimEnd,
 		sourceDuration: element.sourceDuration,
+		params: { ...element.params },
 		...(element.mediaId ? { mediaId: element.mediaId } : {}),
 		...(element.hidden === undefined ? {} : { hidden: element.hidden }),
 	};

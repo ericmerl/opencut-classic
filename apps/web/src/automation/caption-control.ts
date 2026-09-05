@@ -44,7 +44,8 @@ export function buildCaptionCorrectionPatch({
 	if (
 		operation.text === undefined &&
 		operation.startTime === undefined &&
-		operation.duration === undefined
+		operation.duration === undefined &&
+		operation.style === undefined
 	) {
 		throw new Error("at least one caption correction is required");
 	}
@@ -67,12 +68,15 @@ export function buildCaptionCorrectionPatch({
 	}
 
 	return {
-		...(operation.text === undefined
+		...(operation.text === undefined && operation.resolvedParams === undefined
 			? {}
 			: {
 					params: {
 						...element.params,
-						content: operation.text,
+						...(operation.text === undefined
+							? {}
+							: { content: operation.text }),
+						...(operation.resolvedParams ?? {}),
 					},
 				}),
 		...(operation.startTime === undefined

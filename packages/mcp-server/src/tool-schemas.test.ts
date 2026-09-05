@@ -990,6 +990,43 @@ describe("OpenCut subtitle MCP contract", () => {
 		});
 		expect(result.success).toBe(false);
 	});
+
+	test("accepts typed outline and shadow styles across text edit operations", () => {
+		const style = {
+			outline: { color: "#102030", width: 2, join: "round" as const },
+			shadow: { color: "#00000099", offsetX: 2, offsetY: 3, blur: 4 },
+		};
+		for (const operation of [
+			{
+				kind: "insert_text",
+				content: "Title",
+				startTime: 0,
+				duration: 120000,
+				style,
+			},
+			{
+				kind: "update_caption",
+				trackId: "captions",
+				elementId: "caption-1",
+				style,
+			},
+			{
+				kind: "restyle_captions",
+				trackId: "captions",
+				style,
+			},
+		]) {
+			expect(
+				editPlanInputSchema.safeParse({
+					projectId: "project-1",
+					operationId: `style-${operation.kind}`,
+					expectedRevision: 4,
+					description: "Apply text effects",
+					operations: [operation],
+				}).success,
+			).toBe(true);
+		}
+	});
 });
 
 describe("OpenCut matte MCP contract", () => {

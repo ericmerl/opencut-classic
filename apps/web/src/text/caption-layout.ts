@@ -15,6 +15,12 @@ import {
 	type TextLayoutParams,
 } from "./primitives";
 import { clamp } from "@/utils/math";
+import { resolveTextEffectStyle } from "./effects";
+import type {
+	ResolvedTextEffectGeometry,
+	TextOutline,
+	TextShadow,
+} from "opencut-wasm";
 
 /**
  * The one measurement function both the caption materializer and the renderer
@@ -22,7 +28,7 @@ import { clamp } from "@/utils/math";
  * it reports was produced by the renderer's own measurement, not a look-alike.
  */
 export const CAPTION_MEASUREMENT_FUNCTION = "opencut.text.measureTextLayout";
-export const CAPTION_GEOMETRY_VERSION = "opencut.caption-geometry.v1";
+export const CAPTION_GEOMETRY_VERSION = "opencut.caption-geometry.v2";
 
 export interface Rect {
 	left: number;
@@ -60,6 +66,7 @@ export interface CaptionLocalLayout {
 	bubble: CaptionBubbleRect | null;
 	/** One bubble per line when the background is per-line; null otherwise. */
 	lineBubbles: CaptionBubbleRect[] | null;
+	textEffects: ResolvedTextEffectGeometry;
 	visual: Rect;
 }
 
@@ -81,6 +88,7 @@ export interface CaptionGeometry {
 	block: Rect;
 	bubble: CaptionBubbleRect | null;
 	lineBubbles: CaptionBubbleRect[] | null;
+	textEffects: ResolvedTextEffectGeometry;
 	visual: Rect;
 	/** Pixels of the visual rect that fall outside the canvas on each edge. */
 	overflow: EdgeOverflow;
@@ -141,16 +149,23 @@ export function wrapTextToWidth({
 export function measureCaptionLocalLayout({
 	text,
 	background,
+	outline,
+	shadow,
 	canvasHeight,
 	ctx,
 }: {
 	text: TextLayoutParams;
 	background: TextBackground;
+	outline?: TextOutline;
+	shadow?: TextShadow;
 	canvasHeight: number;
 	ctx: TextCanvasContext;
 }): CaptionLocalLayout {
 	const layout = measureTextLayout({ text, canvasHeight, ctx });
-	const block = getTextRect({ textAlign: layout.textAlign, block: layout.block });
+	const block = getTextRect({
+		textAlign: layout.textAlign,
+		block: layout.block,
+	});
 	const bubbleRect = getTextBackgroundRect({
 		textAlign: layout.textAlign,
 		block: layout.block,
@@ -179,15 +194,22 @@ export function measureCaptionLocalLayout({
 					fontSizeRatio: layout.fontSizeRatio,
 				}).map(withRadius)
 			: null;
-	const visual = getTextVisualRect({
+	const baseVisual = getTextVisualRect({
 		textAlign: layout.textAlign,
 		block: layout.block,
 		background,
 		fontSizeRatio: layout.fontSizeRatio,
 	});
+	const textEffects = resolveTextEffectStyle({ outline, shadow, canvasHeight });
+	const decoratedText = expandRect({
+		rect: block,
+		extents: textEffects.extents,
+	});
+	const visual = unionRects({ left: baseVisual, right: decoratedText });
 	const lines = layout.lines.map((line, index) => {
 		const metrics = layout.lineMetrics[index]!;
-		const anchorY = index * layout.lineHeightPx - layout.block.visualCenterOffset;
+		const anchorY =
+			index * layout.lineHeightPx - layout.block.visualCenterOffset;
 		const ascent = getMetricAscent({
 			metrics,
 			fallbackFontSize: layout.scaledFontSize,
@@ -202,6 +224,12 @@ export function measureCaptionLocalLayout({
 				: layout.textAlign === "right"
 					? -metrics.width
 					: -metrics.width / 2;
+		const textBox = {
+			left,
+			top: anchorY - ascent,
+			width: metrics.width,
+			height: ascent + descent,
+		};
 		return {
 			index,
 			text: line,
@@ -209,15 +237,10 @@ export function measureCaptionLocalLayout({
 			ascent,
 			descent,
 			anchorY,
-			box: {
-				left,
-				top: anchorY - ascent,
-				width: metrics.width,
-				height: ascent + descent,
-			},
+			box: expandRect({ rect: textBox, extents: textEffects.extents }),
 		};
 	});
-	return { layout, lines, block, bubble, lineBubbles, visual };
+	return { layout, lines, block, bubble, lineBubbles, textEffects, visual };
 }
 
 /** Places a local layout at a canvas-centred position, as the renderer does. */
@@ -270,6 +293,7 @@ export function placeCaptionGeometry({
 					cornerRadius: rect.cornerRadius,
 				}))
 			: null,
+		textEffects: local.textEffects,
 		visual,
 		overflow,
 		clipped: Object.values(overflow).some((value) => value > 0),
@@ -279,6 +303,29 @@ export function placeCaptionGeometry({
 			overflow: safeZoneOverflow,
 		},
 	};
+}
+
+function expandRect({
+	rect,
+	extents,
+}: {
+	rect: Rect;
+	extents: EdgeOverflow;
+}): Rect {
+	return {
+		left: rect.left - extents.left,
+		top: rect.top - extents.top,
+		width: rect.width + extents.left + extents.right,
+		height: rect.height + extents.top + extents.bottom,
+	};
+}
+
+function unionRects({ left, right }: { left: Rect; right: Rect }): Rect {
+	const x = Math.min(left.left, right.left);
+	const y = Math.min(left.top, right.top);
+	const farX = Math.max(left.left + left.width, right.left + right.width);
+	const farY = Math.max(left.top + left.height, right.top + right.height);
+	return { left: x, top: y, width: farX - x, height: farY - y };
 }
 
 function edgeOverflow(inner: Rect, outer: Rect): EdgeOverflow {
