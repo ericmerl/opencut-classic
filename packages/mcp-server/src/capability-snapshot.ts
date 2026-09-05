@@ -249,6 +249,10 @@ export interface CapabilitySnapshotServiceOptions {
 		workflowScriptPath: string | null;
 	}>;
 	mediaCapabilityCatalog?: () => Record<string, unknown>;
+	mediaProviderReadiness?: () => {
+		audioCleanup: Record<string, unknown>;
+		subjectTracking: Record<string, unknown>;
+	};
 }
 
 export class CapabilitySnapshotService {
@@ -597,14 +601,13 @@ export class CapabilitySnapshotService {
 	}
 
 	private async readProviderReadiness() {
-		const modelSelectionRequired = {
-			status: "model-selection-required",
-			canExecute: false,
-			reason:
-				"Owner approval of an exact model ID, immutable version, canonical source, license, and SHA-256 is required.",
-			command: null,
-			version: null,
-			model: { status: "model-selection-required", id: null, version: null },
+		const mediaProviderReadiness = this.options.mediaProviderReadiness?.() ?? {
+			audioCleanup: unavailableMediaProviderReadiness(
+				"Rust audio cleanup readiness is unavailable.",
+			),
+			subjectTracking: unavailableMediaProviderReadiness(
+				"Rust subject tracking readiness is unavailable.",
+			),
 		};
 		const entries = [
 			[
@@ -661,9 +664,9 @@ export class CapabilitySnapshotService {
 			}),
 		);
 		return {
-			audioCleanup: modelSelectionRequired,
+			audioCleanup: mediaProviderReadiness.audioCleanup,
 			...Object.fromEntries(results),
-			subjectTracking: modelSelectionRequired,
+			subjectTracking: mediaProviderReadiness.subjectTracking,
 		};
 	}
 
@@ -697,6 +700,17 @@ export class CapabilitySnapshotService {
 						readStringField(packageMetadata, "version") ?? "unknown",
 				};
 	}
+}
+
+function unavailableMediaProviderReadiness(reason: string) {
+	return {
+		status: "unavailable",
+		canExecute: false,
+		reason,
+		command: null,
+		version: null,
+		model: { status: "unavailable", id: null, version: null },
+	};
 }
 
 export function hashCapabilitySnapshot(value: unknown): string {

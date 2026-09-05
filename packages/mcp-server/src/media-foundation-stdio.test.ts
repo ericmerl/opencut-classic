@@ -97,10 +97,20 @@ test("discovers the Rust-owned model capability catalog without provider executi
 		audioCleanup: {
 			status: "model-selection-required",
 			canExecute: false,
+			reason: record(
+				tasks.find(
+					(task) => task.taskId === "opencut.task.audio-cleanup.v1",
+				)!.readiness,
+			).reason,
 		},
 		subjectTracking: {
 			status: "model-selection-required",
 			canExecute: false,
+			reason: record(
+				tasks.find(
+					(task) => task.taskId === "opencut.task.subject-tracking.v1",
+				)!.readiness,
+			).reason,
 		},
 	});
 	const blockedCleanup = await harness.call("opencut_clean_audio", {
@@ -156,7 +166,12 @@ test("persists canonical reusable tracking data and reads it after restart", asy
 				},
 				lifecycleEvents: [
 					{ sequence: 1, attempt: 1, kind: "submitted" },
-					{ sequence: 2, attempt: 1, kind: "completed" },
+					{ sequence: 2, attempt: 1, kind: "started" },
+					{ sequence: 3, attempt: 1, kind: "progress" },
+					{ sequence: 4, attempt: 2, kind: "retried" },
+					{ sequence: 5, attempt: 2, kind: "started" },
+					{ sequence: 6, attempt: 2, kind: "progress" },
+					{ sequence: 7, attempt: 2, kind: "completed" },
 				],
 				cost: { status: "not-incurred", amount: 0 },
 				outputArtifacts: [],
@@ -393,6 +408,188 @@ test("fails closed for unknown tasks, malformed results, incompatible attachment
 		operationDisposition: "not-applied",
 	});
 
+	const tooManyTrackingSamples = trackingAnalysis();
+	tooManyTrackingSamples.analysisId = "tracking-too-many-samples";
+	tooManyTrackingSamples.payload.subjects[0]!.samples.splice(1, 0, {
+		sampleId: "sample-middle",
+		sourceTimeTicks: 120_000,
+		box: { x: 0.15, y: 0.2, width: 0.3, height: 0.5 },
+		confidence: 0.93,
+		occlusion: "visible",
+	});
+	const tooManyTrackingSamplesResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:tracking-sample-bound"),
+			analysis: tooManyTrackingSamples,
+		},
+	);
+	expect(tooManyTrackingSamplesResult).toMatchObject({
+		status: "rejected",
+		code: "INCOMPATIBLE_SEMANTIC_INPUTS",
+		operationDisposition: "not-applied",
+	});
+
+	const tooManyTrackedSubjects = trackingAnalysis();
+	tooManyTrackedSubjects.analysisId = "tracking-too-many-subjects";
+	const secondSubject = structuredClone(
+		tooManyTrackedSubjects.payload.subjects[0]!,
+	);
+	secondSubject.subjectId = "person-2";
+	tooManyTrackedSubjects.payload.subjects.push(secondSubject);
+	const tooManyTrackedSubjectsResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:tracking-subject-bound"),
+			analysis: tooManyTrackedSubjects,
+		},
+	);
+	expect(tooManyTrackedSubjectsResult).toMatchObject({
+		status: "rejected",
+		code: "INCOMPATIBLE_SEMANTIC_INPUTS",
+		operationDisposition: "not-applied",
+	});
+
+	const mismatchedVadChannel = voiceActivityAnalysis();
+	mismatchedVadChannel.analysisId = "vad-channel-mismatch";
+	mismatchedVadChannel.payload.channel = "dialogue";
+	const mismatchedVadChannelResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:vad-channel-mismatch"),
+			analysis: mismatchedVadChannel,
+		},
+	);
+	expect(mismatchedVadChannelResult).toMatchObject({
+		status: "rejected",
+		code: "INCOMPATIBLE_SEMANTIC_INPUTS",
+		operationDisposition: "not-applied",
+	});
+
+	const shortVadRange = voiceActivityAnalysis();
+	shortVadRange.analysisId = "vad-short-range";
+	shortVadRange.payload.ranges.find(
+		(range) => range.rangeId === "speech-1",
+	)!.endTicks = 66_000;
+	const shortVadRangeResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:vad-minimum-duration"),
+			analysis: shortVadRange,
+		},
+	);
+	expect(shortVadRangeResult).toMatchObject({
+		status: "rejected",
+		code: "INCOMPATIBLE_SEMANTIC_INPUTS",
+		operationDisposition: "not-applied",
+	});
+
+	const vadOutsideRequestedRange = voiceActivityAnalysis();
+	vadOutsideRequestedRange.analysisId = "vad-outside-requested-range";
+	vadOutsideRequestedRange.semanticInputs.range = {
+		startTicks: 120_000,
+		endTicks: 240_000,
+	};
+	const vadOutsideRequestedRangeResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:vad-requested-range"),
+			analysis: vadOutsideRequestedRange,
+		},
+	);
+	expect(vadOutsideRequestedRangeResult).toMatchObject({
+		status: "rejected",
+		code: "INCOMPATIBLE_SEMANTIC_INPUTS",
+		operationDisposition: "not-applied",
+	});
+
+	const vadCorrectionOutsideRequestedRange = voiceActivityAnalysis();
+	vadCorrectionOutsideRequestedRange.analysisId =
+		"vad-correction-outside-requested-range";
+	vadCorrectionOutsideRequestedRange.semanticInputs.range = {
+		startTicks: 60_000,
+		endTicks: 240_000,
+	};
+	vadCorrectionOutsideRequestedRange.payload.corrections = [
+		{
+			correctionId: "correction-outside-request",
+			action: "upsert",
+			rangeId: "speech-outside-request",
+			range: {
+				rangeId: "speech-outside-request",
+				startTicks: 12_000,
+				endTicks: 36_000,
+				confidence: 1,
+			},
+			note: "This correction is outside the hashed request range.",
+		},
+	];
+	const vadCorrectionOutsideRequestedRangeResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:vad-correction-requested-range"),
+			analysis: vadCorrectionOutsideRequestedRange,
+		},
+	);
+	expect(vadCorrectionOutsideRequestedRangeResult).toMatchObject({
+		status: "rejected",
+		code: "INCOMPATIBLE_SEMANTIC_INPUTS",
+		operationDisposition: "not-applied",
+	});
+
+	const incompleteLifecycle = trackingAnalysis();
+	incompleteLifecycle.analysisId = "tracking-incomplete-lifecycle";
+	incompleteLifecycle.provenance.lifecycleEvents = [
+		{
+			sequence: 1,
+			attempt: 1,
+			kind: "completed",
+			occurredAt: "2026-09-05T00:00:01.000Z",
+		},
+	];
+	const incompleteLifecycleResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:incomplete-lifecycle"),
+			analysis: incompleteLifecycle,
+		},
+	);
+	expect(incompleteLifecycleResult).toMatchObject({
+		status: "rejected",
+		code: "INVALID_PROVIDER_LIFECYCLE",
+		operationDisposition: "not-applied",
+	});
+
+	const invalidRetryLifecycle = trackingAnalysis();
+	invalidRetryLifecycle.analysisId = "tracking-invalid-retry-lifecycle";
+	invalidRetryLifecycle.provenance.lifecycleEvents = [
+		...invalidRetryLifecycle.provenance.lifecycleEvents.slice(0, 3),
+		{
+			sequence: 4,
+			attempt: 2,
+			kind: "retried",
+			occurredAt: "2026-09-05T00:00:03.000Z",
+		},
+		{
+			sequence: 5,
+			attempt: 2,
+			kind: "completed",
+			occurredAt: "2026-09-05T00:00:04.000Z",
+		},
+	];
+	const invalidRetryLifecycleResult = await harness.call(
+		"opencut_create_media_analysis",
+		{
+			...mutation("media-analysis:reject:invalid-retry-lifecycle"),
+			analysis: invalidRetryLifecycle,
+		},
+	);
+	expect(invalidRetryLifecycleResult).toMatchObject({
+		status: "rejected",
+		code: "INVALID_PROVIDER_LIFECYCLE",
+		operationDisposition: "not-applied",
+	});
+
 	const incompatible = trackingAnalysis();
 	incompatible.payload.attachments[0]!.subjectId = "missing-subject";
 	const incompatibleResult = await harness.call(
@@ -520,11 +717,19 @@ test("fails closed for unknown tasks, malformed results, incompatible attachment
 
 	for (const analysisId of [
 		"tracking-malformed",
+		"tracking-too-many-samples",
+		"tracking-too-many-subjects",
+		"tracking-incomplete-lifecycle",
+		"tracking-invalid-retry-lifecycle",
 		"tracking-incompatible",
 		"tracking-stale",
 		"tracking-unavailable-model",
 		"vad-overlap",
 		"vad-duplicate-correction-target",
+		"vad-channel-mismatch",
+		"vad-short-range",
+		"vad-outside-requested-range",
+		"vad-correction-outside-requested-range",
 	]) {
 		expect(
 			await harness.call("opencut_get_media_analysis", { analysisId }),
@@ -744,10 +949,45 @@ function trackingAnalysis() {
 				{
 					sequence: 2,
 					attempt: 1,
-					kind: "completed" as const,
+					kind: "started" as const,
 					occurredAt: "2026-09-05T00:00:01.000Z",
 				},
-			],
+				{
+					sequence: 3,
+					attempt: 1,
+					kind: "progress" as const,
+					occurredAt: "2026-09-05T00:00:02.000Z",
+				},
+				{
+					sequence: 4,
+					attempt: 2,
+					kind: "retried" as const,
+					occurredAt: "2026-09-05T00:00:03.000Z",
+				},
+				{
+					sequence: 5,
+					attempt: 2,
+					kind: "started" as const,
+					occurredAt: "2026-09-05T00:00:04.000Z",
+				},
+				{
+					sequence: 6,
+					attempt: 2,
+					kind: "progress" as const,
+					occurredAt: "2026-09-05T00:00:05.000Z",
+				},
+				{
+					sequence: 7,
+					attempt: 2,
+					kind: "completed" as const,
+					occurredAt: "2026-09-05T00:00:06.000Z",
+				},
+			] as Array<{
+				sequence: number;
+				attempt: number;
+				kind: "submitted" | "started" | "progress" | "retried" | "completed";
+				occurredAt: string;
+			}>,
 			cost: { status: "not-incurred" as const, amount: 0, currency: null },
 			outputArtifacts: [],
 		},
@@ -846,10 +1086,27 @@ function voiceActivityAnalysis() {
 				{
 					sequence: 2,
 					attempt: 1,
-					kind: "completed" as const,
+					kind: "started" as const,
 					occurredAt: "2026-09-05T00:00:01.000Z",
 				},
-			],
+				{
+					sequence: 3,
+					attempt: 1,
+					kind: "progress" as const,
+					occurredAt: "2026-09-05T00:00:02.000Z",
+				},
+				{
+					sequence: 4,
+					attempt: 1,
+					kind: "completed" as const,
+					occurredAt: "2026-09-05T00:00:03.000Z",
+				},
+			] as Array<{
+				sequence: number;
+				attempt: number;
+				kind: "submitted" | "started" | "progress" | "retried" | "completed";
+				occurredAt: string;
+			}>,
 			cost: { status: "not-incurred" as const, amount: 0, currency: null },
 			outputArtifacts: [],
 		},
@@ -870,7 +1127,18 @@ function voiceActivityAnalysis() {
 					confidence: 0.96,
 				},
 			],
-			corrections: [],
+			corrections: [] as Array<{
+				correctionId: string;
+				action: "upsert" | "remove";
+				rangeId: string;
+				range: {
+					rangeId: string;
+					startTicks: number;
+					endTicks: number;
+					confidence: number;
+				} | null;
+				note: string;
+			}>,
 		},
 	};
 }

@@ -705,8 +705,26 @@ const cases: SchemaCase[] = [
 						{
 							sequence: 1,
 							attempt: 1,
-							kind: "completed",
+							kind: "submitted",
 							occurredAt: "2026-09-05T00:00:00.000Z",
+						},
+						{
+							sequence: 2,
+							attempt: 1,
+							kind: "started",
+							occurredAt: "2026-09-05T00:00:01.000Z",
+						},
+						{
+							sequence: 3,
+							attempt: 1,
+							kind: "progress",
+							occurredAt: "2026-09-05T00:00:02.000Z",
+						},
+						{
+							sequence: 4,
+							attempt: 1,
+							kind: "completed",
+							occurredAt: "2026-09-05T00:00:03.000Z",
 						},
 					],
 					cost: { status: "not-incurred", amount: 0, currency: null },

@@ -146,6 +146,12 @@ describe("CapabilitySnapshotService", () => {
 			bridge: fakeBridge(true),
 			worker: fakeWorker(directory),
 			stateDirectory: directory,
+			mediaProviderReadiness: () => ({
+				audioCleanup: blockedMediaReadiness("Rust audio cleanup blocker"),
+				subjectTracking: blockedMediaReadiness(
+					"Rust subject tracking blocker",
+				),
+			}),
 			queueState: async () => ({
 				jobs: {
 					total: 0,
@@ -264,6 +270,17 @@ function fakeBridge(connected: boolean, runtime: unknown = connectedRuntime()) {
 				: null,
 		}),
 		request: async () => runtime,
+	};
+}
+
+function blockedMediaReadiness(reason: string) {
+	return {
+		status: "model-selection-required",
+		canExecute: false,
+		reason,
+		command: null,
+		version: null,
+		model: { status: "model-selection-required", id: null, version: null },
 	};
 }
 

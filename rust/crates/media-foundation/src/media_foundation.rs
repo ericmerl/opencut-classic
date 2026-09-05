@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MEDIA_CAPABILITY_CATALOG_SCHEMA: &str = "opencut.media-capability-catalog.v1";
+const MODEL_SELECTION_REQUIRED_REASON: &str = "Owner approval of an exact model ID, immutable version, canonical source, license, and SHA-256 is required before provider execution.";
 
 #[cfg_attr(feature = "wasm", derive(tsify_next::Tsify))]
 #[cfg_attr(feature = "wasm", tsify(from_wasm_abi))]
@@ -228,7 +229,7 @@ pub fn media_execution_blocker(input: MediaExecutionBlockerInput) -> MediaExecut
     MediaExecutionBlocker {
         status: "rejected",
         code: "MODEL_SELECTION_REQUIRED",
-        reason: "Owner approval of an exact model ID, immutable version, canonical source, license, and SHA-256 is required before provider execution.",
+        reason: MODEL_SELECTION_REQUIRED_REASON,
         task_id: input.task_id,
         provider_execution: "forbidden",
     }
@@ -266,50 +267,52 @@ fn tasks() -> Vec<MediaCapabilityTask> {
         ),
     ]
     .into_iter()
-        .map(|(task_id, input_media, outputs, request_kind, output_contract)| MediaCapabilityTask {
-        task_id,
-        input_media,
-        outputs,
-        requirements: ProviderTaskRequirements {
-            contract_version: "opencut.provider-task-requirements.v1",
-            request_kind,
-            durable_job_type: "provider",
-            source_identity: &["assetId", "contentSha256", "bytes", "durationTicks"],
-            output_contract,
-            semantic_input_contract: match request_kind {
-                ProviderTaskKind::SubjectTracking => "opencut.subject-tracking-request.v1",
-                ProviderTaskKind::AudioCleanup => "opencut.audio-cleanup-request.v1",
-                ProviderTaskKind::StemSeparation => "opencut.stem-separation-request.v1",
-                ProviderTaskKind::VoiceActivityDetection => {
-                    "opencut.voice-activity-detection-request.v1"
-                }
+    .map(
+        |(task_id, input_media, outputs, request_kind, output_contract)| MediaCapabilityTask {
+            task_id,
+            input_media,
+            outputs,
+            requirements: ProviderTaskRequirements {
+                contract_version: "opencut.provider-task-requirements.v1",
+                request_kind,
+                durable_job_type: "provider",
+                source_identity: &["assetId", "contentSha256", "bytes", "durationTicks"],
+                output_contract,
+                semantic_input_contract: match request_kind {
+                    ProviderTaskKind::SubjectTracking => "opencut.subject-tracking-request.v1",
+                    ProviderTaskKind::AudioCleanup => "opencut.audio-cleanup-request.v1",
+                    ProviderTaskKind::StemSeparation => "opencut.stem-separation-request.v1",
+                    ProviderTaskKind::VoiceActivityDetection => {
+                        "opencut.voice-activity-detection-request.v1"
+                    }
+                },
+                option_requirements: provider_option_requirements(request_kind),
+                provenance_identity: &[
+                    "providerId",
+                    "adapterId",
+                    "adapterVersion",
+                    "modelId",
+                    "modelVersion",
+                    "modelSha256",
+                    "runtime",
+                    "device",
+                    "semanticInputHash",
+                ],
+                deterministic_cache_required: true,
+                cpu_fallback_required: true,
             },
-            option_requirements: provider_option_requirements(request_kind),
-            provenance_identity: &[
-                "providerId",
-                "adapterId",
-                "adapterVersion",
-                "modelId",
-                "modelVersion",
-                "modelSha256",
-                "runtime",
-                "device",
-                "semanticInputHash",
-            ],
-            deterministic_cache_required: true,
-            cpu_fallback_required: true,
+            readiness: CatalogReadiness {
+                status: "model-selection-required",
+                can_execute: false,
+                reason: MODEL_SELECTION_REQUIRED_REASON,
+            },
+            model_requirement: ModelRequirement {
+                owner_approval_required: true,
+                required_identity: &["modelId", "version", "sha256", "source", "license"],
+                selected_model: serde_json::Value::Null,
+            },
         },
-        readiness: CatalogReadiness {
-            status: "model-selection-required",
-            can_execute: false,
-            reason: "Owner approval of an exact model, license, source, and artifact hash is required.",
-        },
-        model_requirement: ModelRequirement {
-            owner_approval_required: true,
-            required_identity: &["modelId", "version", "sha256", "source", "license"],
-            selected_model: serde_json::Value::Null,
-        },
-    })
+    )
     .collect()
 }
 
@@ -487,6 +490,7 @@ pub struct ProviderLifecycleEvent {
 pub enum ProviderLifecycleEventKind {
     Submitted,
     Started,
+    Progress,
     Retried,
     Completed,
 }
@@ -883,6 +887,7 @@ fn build_media_analysis(
     validate_provenance(&mut draft.provenance)?;
     validate_semantic_inputs(&draft.task_id, &draft.source, &mut draft.semantic_inputs)?;
     validate_payload(&draft.task_id, &draft.source, &mut draft.payload)?;
+    validate_semantic_result_binding(&draft.task_id, &draft.semantic_inputs, &draft.payload)?;
     let semantic_input_hash = hash(&json!({
         "taskId": draft.task_id,
         "source": {
@@ -963,6 +968,40 @@ fn validate_provenance(provenance: &mut AnalysisProvenance) -> Result<(), (Strin
         }
         require_text("provider lifecycle timestamp", &event.occurred_at)?;
     }
+    let first = &provenance.lifecycle_events[0];
+    if first.kind != ProviderLifecycleEventKind::Submitted || first.attempt != 1 {
+        return reject(
+            "INVALID_PROVIDER_LIFECYCLE",
+            "provider lifecycle must begin with submitted attempt 1",
+        );
+    }
+    for pair in provenance.lifecycle_events.windows(2) {
+        let previous = &pair[0];
+        let current = &pair[1];
+        let valid = match (previous.kind, current.kind) {
+            (ProviderLifecycleEventKind::Submitted, ProviderLifecycleEventKind::Started) => {
+                current.attempt == previous.attempt
+            }
+            (ProviderLifecycleEventKind::Started, ProviderLifecycleEventKind::Progress)
+            | (ProviderLifecycleEventKind::Progress, ProviderLifecycleEventKind::Progress)
+            | (ProviderLifecycleEventKind::Progress, ProviderLifecycleEventKind::Completed) => {
+                current.attempt == previous.attempt
+            }
+            (ProviderLifecycleEventKind::Progress, ProviderLifecycleEventKind::Retried) => {
+                previous.attempt.checked_add(1) == Some(current.attempt)
+            }
+            (ProviderLifecycleEventKind::Retried, ProviderLifecycleEventKind::Started) => {
+                current.attempt == previous.attempt
+            }
+            _ => false,
+        };
+        if !valid {
+            return reject(
+                "INVALID_PROVIDER_LIFECYCLE",
+                "provider lifecycle events or attempt transitions are invalid",
+            );
+        }
+    }
     if provenance.lifecycle_events.last().map(|event| event.kind)
         != Some(ProviderLifecycleEventKind::Completed)
     {
@@ -1016,6 +1055,81 @@ fn validate_provenance(provenance: &mut AnalysisProvenance) -> Result<(), (Strin
             return reject(
                 "INVALID_PROVIDER_OUTPUT",
                 "provider output artifacts require unique IDs and positive safe byte counts",
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_semantic_result_binding(
+    task_id: &str,
+    inputs: &MediaAnalysisSemanticInputs,
+    payload: &AnalysisPayload,
+) -> Result<(), (String, String)> {
+    match (task_id, inputs, payload) {
+        (
+            "opencut.task.subject-tracking.v1",
+            MediaAnalysisSemanticInputs::SubjectTracking {
+                sampling,
+                max_subjects,
+                ..
+            },
+            AnalysisPayload::SubjectTracking { subjects, .. },
+        ) => {
+            if subjects.len() > usize::from(*max_subjects)
+                || subjects
+                    .iter()
+                    .any(|subject| subject.samples.len() > sampling.max_samples as usize)
+            {
+                return reject(
+                    "INCOMPATIBLE_SEMANTIC_INPUTS",
+                    "tracking results exceed the requested subject or sample limits",
+                );
+            }
+        }
+        (
+            "opencut.task.voice-activity-detection.v1",
+            MediaAnalysisSemanticInputs::VoiceActivityDetection {
+                channel,
+                minimum_duration_ticks,
+                range: requested_range,
+                ..
+            },
+            AnalysisPayload::VoiceActivity {
+                channel: result_channel,
+                ranges,
+                corrections,
+            },
+        ) => {
+            if result_channel != channel {
+                return reject(
+                    "INCOMPATIBLE_SEMANTIC_INPUTS",
+                    "voice activity result channel does not match the requested channel",
+                );
+            }
+            let range_matches_request = |range: &ActivityRange| {
+                range.start_ticks >= requested_range.start_ticks
+                    && range.end_ticks <= requested_range.end_ticks
+                    && range.end_ticks - range.start_ticks >= *minimum_duration_ticks
+            };
+            if ranges.iter().any(|range| !range_matches_request(range))
+                || corrections.iter().any(|correction| {
+                    correction
+                        .range
+                        .as_ref()
+                        .is_some_and(|range| !range_matches_request(range))
+                })
+            {
+                return reject(
+                    "INCOMPATIBLE_SEMANTIC_INPUTS",
+                    "voice activity ranges must satisfy the requested range and minimum duration",
+                );
+            }
+        }
+        _ => {
+            return reject(
+                "INCOMPATIBLE_SEMANTIC_INPUTS",
+                "task, semantic inputs, and analysis payload are incompatible",
             );
         }
     }
