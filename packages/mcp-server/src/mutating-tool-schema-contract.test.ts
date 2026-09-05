@@ -677,12 +677,19 @@ const cases: SchemaCase[] = [
 					contentSha256: hash,
 					bytes: 1,
 				},
-				semanticInputs: {},
+				semanticInputs: {
+					kind: "subject-tracking",
+					sampling: { intervalTicks: 120_000, maxSamples: 2 },
+					prompt: null,
+					initialBox: null,
+					maxSubjects: 1,
+				},
 				provenance: {
 					origin: "external-result",
 					approvalStatus: "unverified",
 					providerId: "external-provider",
 					adapterId: "external-adapter-v1",
+					adapterVersion: "1",
 					model: {
 						id: "fixture-model",
 						version: "1",
@@ -694,6 +701,16 @@ const cases: SchemaCase[] = [
 					device: "cpu",
 					warnings: [],
 					fallbackReason: null,
+					lifecycleEvents: [
+						{
+							sequence: 1,
+							attempt: 1,
+							kind: "completed",
+							occurredAt: "2026-09-05T00:00:00.000Z",
+						},
+					],
+					cost: { status: "not-incurred", amount: 0, currency: null },
+					outputArtifacts: [],
 				},
 				payload: {
 					kind: "subject-tracking",

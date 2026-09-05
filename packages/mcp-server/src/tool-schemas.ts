@@ -1872,6 +1872,7 @@ const mediaAnalysisProvenanceSchema = z
 		approvalStatus: z.enum(["unverified", "approved"]),
 		providerId: mediaAnalysisIdentifierSchema,
 		adapterId: mediaAnalysisIdentifierSchema,
+		adapterVersion: mediaAnalysisIdentifierSchema,
 		model: z
 			.object({
 				id: mediaAnalysisIdentifierSchema,
@@ -1888,6 +1889,38 @@ const mediaAnalysisProvenanceSchema = z
 			.max(1_000)
 			.default([]),
 		fallbackReason: z.string().trim().min(1).max(4_096).nullable(),
+		lifecycleEvents: z
+			.array(
+				z
+					.object({
+						sequence: z.number().int().positive(),
+						attempt: z.number().int().positive(),
+						kind: z.enum(["submitted", "started", "retried", "completed"]),
+						occurredAt: z.string().trim().min(1).max(4_096),
+					})
+					.strict(),
+			)
+			.min(1)
+			.max(10_000),
+		cost: z
+			.object({
+				status: z.enum(["not-incurred", "external-unverified"]),
+				amount: z.number().finite().nonnegative(),
+				currency: z.string().trim().min(1).max(64).nullable(),
+			})
+			.strict(),
+		outputArtifacts: z
+			.array(
+				z
+					.object({
+						artifactId: mediaAnalysisIdentifierSchema,
+						kind: mediaAnalysisIdentifierSchema,
+						contentSha256: mediaAnalysisSha256Schema,
+						bytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+					})
+					.strict(),
+			)
+			.max(100_000),
 	})
 	.strict();
 const normalizedTrackingBoxSchema = z
@@ -1995,6 +2028,37 @@ const voiceActivityPayloadSchema = z
 			.default([]),
 	})
 	.strict();
+const mediaAnalysisSemanticInputsSchema = z.discriminatedUnion("kind", [
+	z
+		.object({
+			kind: z.literal("subject-tracking"),
+			sampling: z
+				.object({
+					intervalTicks: z.number().int().positive(),
+					maxSamples: z.number().int().min(2).max(1_000_000),
+				})
+				.strict(),
+			prompt: z.string().trim().min(1).max(4_096).nullable(),
+			initialBox: normalizedTrackingBoxSchema.nullable(),
+			maxSubjects: z.number().int().min(1).max(1_024),
+		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("voice-activity-detection"),
+			channel: mediaAnalysisIdentifierSchema,
+			threshold: z.number().finite().min(0).max(1),
+			minimumDurationTicks: z.number().int().positive(),
+			paddingTicks: z.number().int().nonnegative(),
+			range: z
+				.object({
+					startTicks: z.number().int().nonnegative(),
+					endTicks: z.number().int().positive(),
+				})
+				.strict(),
+		})
+		.strict(),
+]);
 const mediaAnalysisDraftSchema = z
 	.object({
 		schemaVersion: z.literal("opencut.media-analysis.v1"),
@@ -2003,7 +2067,7 @@ const mediaAnalysisDraftSchema = z
 		sceneId: mediaAnalysisIdentifierSchema,
 		taskId: mediaAnalysisIdentifierSchema,
 		source: mediaAnalysisSourceSchema,
-		semanticInputs: z.record(z.string(), z.unknown()),
+		semanticInputs: mediaAnalysisSemanticInputsSchema,
 		provenance: mediaAnalysisProvenanceSchema,
 		payload: z.discriminatedUnion("kind", [
 			trackingPayloadSchema,
